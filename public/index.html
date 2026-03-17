@@ -1,0 +1,127 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Rei Ops Room</title>
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <div class="background-grid"></div>
+    <main class="shell">
+      <header class="topbar">
+        <div class="topbar-copy">
+          <p class="eyebrow">Rei Ops Room</p>
+        </div>
+
+        <div class="view-switch" aria-label="View mode">
+          <button class="view-button is-active" data-mode="room" type="button">Room</button>
+          <button class="view-button" data-mode="widget" type="button">Widget</button>
+        </div>
+      </header>
+
+      <section class="room-layout">
+        <article class="room-card">
+          <div class="room-overlay">
+            <div class="pill-row">
+              <span id="status-pill" class="status-pill status-idle">Idle</span>
+              <span id="phase-chip" class="chip">Standby</span>
+              <span id="focus-chip" class="chip">Lead Table</span>
+              <span id="mode-chip" class="chip">Solo</span>
+              <span id="confidence-chip" class="chip">focus 46%</span>
+            </div>
+            <span id="activity-age" class="activity-age">Belum ada data</span>
+          </div>
+
+          <canvas
+            id="room-canvas"
+            width="640"
+            height="420"
+            aria-label="Rei operations room"
+          ></canvas>
+
+          <div class="room-caption">
+            <div class="caption-block">
+              <p class="panel-label">Room Phase</p>
+              <h2 id="phase-title">Standby</h2>
+              <p id="phase-reason" class="dim">
+                Room lagi tenang dan belum ada gerakan berarti.
+              </p>
+            </div>
+
+            <div class="caption-block">
+              <p class="panel-label">Focus Zone</p>
+              <h2 id="focus-title">Lead Table</h2>
+              <p id="focus-reason" class="dim">
+                Belum ada desk aktif yang dominan.
+              </p>
+            </div>
+
+            <div class="caption-block mission-block">
+              <p class="panel-label">Current Task</p>
+              <h3 id="task-title">Standby di room aktif</h3>
+              <p id="task-repo" class="dim mono">workspace · solo</p>
+            </div>
+
+            <div class="legend">
+              <span class="legend-item frontend">Frontend</span>
+              <span class="legend-item backend">Backend</span>
+              <span class="legend-item database">Database</span>
+              <span class="legend-item review">Review</span>
+              <span class="legend-item lab">Lead</span>
+            </div>
+          </div>
+        </article>
+
+        <aside class="inspector">
+          <article class="panel compact-panel">
+            <p class="panel-label">Mission Brief</p>
+            <h3 id="repo-name">Loading...</h3>
+            <p id="cwd-display" class="mono dim">...</p>
+            <div class="meta-row">
+              <span id="branch-chip" class="chip">branch</span>
+              <span id="updated-chip" class="chip">update</span>
+            </div>
+            <p id="thread-title" class="thread-title">Memuat thread terbaru...</p>
+          </article>
+
+          <article class="panel compact-panel">
+            <p class="panel-label">Runtime Trail</p>
+            <h3 id="activity-summary">Memuat log...</h3>
+            <p id="activity-source" class="dim mono">thread</p>
+            <div class="mini-divider"></div>
+            <p class="panel-label">Last Specific Repo</p>
+            <h4 id="repo-context-name">-</h4>
+            <p id="repo-context-cwd" class="mono dim">-</p>
+            <p id="repo-context-title" class="dim">Belum ada repo spesifik lain.</p>
+          </article>
+        </aside>
+      </section>
+
+      <section class="panel-grid">
+        <article class="panel">
+          <p class="panel-label">Workstreams</p>
+          <ul id="workstream-list" class="stack-list"></ul>
+        </article>
+
+        <article class="panel">
+          <p class="panel-label">Squad Cast</p>
+          <ul id="crew-list" class="crew-list"></ul>
+        </article>
+
+        <article class="panel">
+          <p class="panel-label">Event Timeline</p>
+          <ul id="event-list" class="stack-list"></ul>
+        </article>
+
+        <article class="panel recent-panel">
+          <p class="panel-label">Recent Threads</p>
+          <ul id="recent-list" class="stack-list"></ul>
+        </article>
+      </section>
+    </main>
+
+    <script type="module" src="/app.js"></script>
+  </body>
+</html>

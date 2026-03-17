@@ -1,0 +1,4 @@
+node_modules/
+.agent-pixel.log
+.agent-pixel.pid
+.DS_Store
