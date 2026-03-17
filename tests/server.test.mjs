@@ -2,8 +2,11 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import {
+  buildAgentJobItemsSql,
+  contentType,
   buildThreadLogsSql,
   filterMeaningfulLogs,
+  stripWorkspacePrefix,
   SQLITE_JSON_MAX_BUFFER,
   sqliteJsonWithRunner
 } from "../server.mjs";
@@ -67,6 +70,15 @@ test("buildThreadLogsSql trims message payloads before exporting large log windo
   assert.match(sql, /WHERE thread_id = 'thread-123'/);
 });
 
+test("buildAgentJobItemsSql scopes multi-agent rows to the active thread", () => {
+  const sql = buildAgentJobItemsSql("thread-456");
+
+  assert.match(sql, /FROM agent_job_items/i);
+  assert.match(sql, /JOIN agent_jobs/i);
+  assert.match(sql, /assigned_thread_id = 'thread-456'/i);
+  assert.match(sql, /ORDER BY items\.updated_at DESC/i);
+});
+
 test("filterMeaningfulLogs ignores tool gate wait noise", () => {
   const logs = filterMeaningfulLogs([
     {
@@ -82,4 +94,18 @@ test("filterMeaningfulLogs ignores tool gate wait noise", () => {
 
   assert.equal(logs.length, 1);
   assert.equal(logs[0].message, 'ToolCall: functions.exec_command {"cmd":"npm test"}');
+});
+
+test("stripWorkspacePrefix handles Windows-style workspace paths", () => {
+  const workspaceRoot = "C:\\Users\\muham\\workSpace";
+
+  assert.equal(
+    stripWorkspacePrefix("C:\\Users\\muham\\workSpace\\rei-ops-room", workspaceRoot),
+    "rei-ops-room"
+  );
+  assert.equal(stripWorkspacePrefix(workspaceRoot, workspaceRoot), "workspace root");
+});
+
+test("contentType serves svg assets with the correct MIME type", () => {
+  assert.equal(contentType("public/favicon.svg"), "image/svg+xml");
 });

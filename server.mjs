@@ -172,6 +172,31 @@ export function buildThreadLogsSql(threadId, limit = 500, messageLimit = 320) {
     `;
 }
 
+export function buildAgentJobItemsSql(threadId, limit = 12) {
+  return `
+      SELECT
+        items.job_id,
+        items.item_id,
+        items.status,
+        items.assigned_thread_id,
+        items.row_json,
+        items.result_json,
+        items.last_error,
+        items.created_at,
+        items.updated_at,
+        items.completed_at,
+        jobs.name AS job_name,
+        jobs.status AS job_status,
+        jobs.instruction
+      FROM agent_job_items AS items
+      JOIN agent_jobs AS jobs
+        ON jobs.id = items.job_id
+      WHERE items.assigned_thread_id = ${quoteSql(threadId)}
+      ORDER BY items.updated_at DESC, items.created_at DESC
+      LIMIT ${limit};
+    `;
+}
+
 function buildPythonSqliteArgs(databasePath, sql) {
   const script = [
     "import json",
@@ -215,17 +240,24 @@ function toIso(seconds) {
   return seconds ? new Date(seconds * 1000).toISOString() : null;
 }
 
-function stripWorkspacePrefix(cwd) {
+function normalizeFsPath(value) {
+  return String(value || "").replaceAll("\\", "/");
+}
+
+export function stripWorkspacePrefix(cwd, root = workspaceRoot) {
   if (!cwd) {
     return "";
   }
 
-  if (cwd === workspaceRoot) {
+  const normalizedCwd = normalizeFsPath(cwd);
+  const normalizedRoot = normalizeFsPath(root);
+
+  if (normalizedCwd === normalizedRoot) {
     return "workspace root";
   }
 
-  if (cwd.startsWith(`${workspaceRoot}/`)) {
-    return cwd.slice(workspaceRoot.length + 1);
+  if (normalizedCwd.startsWith(`${normalizedRoot}/`)) {
+    return normalizedCwd.slice(normalizedRoot.length + 1);
   }
 
   return cwd;
@@ -638,6 +670,11 @@ async function getStatus() {
     }
   }
 
+  let agentJobs = [];
+  if (latestThread?.id) {
+    agentJobs = await sqliteJson(stateDb, buildAgentJobItemsSql(latestThread.id));
+  }
+
   const activityAgeSeconds = Math.max(0, nowSeconds - lastLogAt);
   const presence = presenceFromAge(activityAgeSeconds);
   if (threadLogs.length === 0 && presence !== "busy") {
@@ -661,7 +698,8 @@ async function getStatus() {
       lastLogAgo: relativeTime(activityAgeSeconds),
       lastLogAgeSeconds: activityAgeSeconds
     },
-    logs: threadLogs
+    logs: threadLogs,
+    agentJobs
   });
 
   return {
@@ -671,7 +709,7 @@ async function getStatus() {
   };
 }
 
-function contentType(filePath) {
+export function contentType(filePath) {
   if (filePath.endsWith(".html")) {
     return "text/html; charset=utf-8";
   }
@@ -686,6 +724,10 @@ function contentType(filePath) {
 
   if (filePath.endsWith(".json")) {
     return "application/json; charset=utf-8";
+  }
+
+  if (filePath.endsWith(".svg")) {
+    return "image/svg+xml";
   }
 
   return "text/plain; charset=utf-8";

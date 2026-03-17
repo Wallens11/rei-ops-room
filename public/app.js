@@ -84,6 +84,10 @@ const elements = {
   threadTitle: document.getElementById("thread-title"),
   activitySummary: document.getElementById("activity-summary"),
   activitySource: document.getElementById("activity-source"),
+  activeRoomRepo: document.getElementById("active-room-repo"),
+  activeRoomMeta: document.getElementById("active-room-meta"),
+  activeRoomTitle: document.getElementById("active-room-title"),
+  sleepingRoomList: document.getElementById("sleeping-room-list"),
   repoContextName: document.getElementById("repo-context-name"),
   repoContextCwd: document.getElementById("repo-context-cwd"),
   repoContextTitle: document.getElementById("repo-context-title"),
@@ -197,6 +201,19 @@ function createEmptyState() {
       summary: "Belum ada log thread",
       source: "thread",
       lastLogAgo: "belum ada data"
+    },
+    workspace: {
+      active_room: {
+        repo: "workspace",
+        cwd_display: "workspace",
+        recent_thread_count: 1,
+        active_lane_count: 1,
+        status: "idle",
+        phase: "standby",
+        latest_title: "No active room yet.",
+        updated_ago: "-"
+      },
+      sleeping_rooms: []
     },
     thread: null,
     repoContext: null,
@@ -424,6 +441,50 @@ function renderRecentThreads(threads) {
   });
 }
 
+function renderWorkspaceDock(workspace) {
+  const activeRoom = workspace?.active_room || {
+    repo: "workspace",
+    recent_thread_count: 1,
+    active_lane_count: 1,
+    status: "idle",
+    phase: "standby",
+    latest_title: "No active room yet.",
+    updated_ago: "-"
+  };
+  const sleepingRooms = workspace?.sleeping_rooms || [];
+
+  elements.activeRoomRepo.textContent = activeRoom.repo;
+  elements.activeRoomMeta.textContent = `${activeRoom.active_lane_count} active lane${activeRoom.active_lane_count > 1 ? "s" : ""} | ${activeRoom.phase} | ${activeRoom.status}`;
+  elements.activeRoomTitle.textContent = truncate(activeRoom.latest_title, 88);
+
+  elements.sleepingRoomList.innerHTML = "";
+
+  if (sleepingRooms.length === 0) {
+    const item = document.createElement("article");
+    item.className = "workspace-card workspace-card-sleeping";
+    item.innerHTML = `
+      <p class="panel-label">Sleeping Rooms</p>
+      <h4>No other repos</h4>
+      <p class="dim">Repo lain akan muncul di sini sebagai snapshot ringan.</p>
+    `;
+    elements.sleepingRoomList.appendChild(item);
+    return;
+  }
+
+  sleepingRooms.forEach((room) => {
+    const item = document.createElement("article");
+    item.className = "workspace-card workspace-card-sleeping";
+    item.dataset.status = room.status;
+    item.innerHTML = `
+      <p class="panel-label">Sleeping Room</p>
+      <h4>${room.repo}</h4>
+      <p class="dim mono">${room.recent_thread_count} recent thread${room.recent_thread_count > 1 ? "s" : ""} | ${room.status} | ${room.updated_ago}</p>
+      <p class="dim">${truncate(room.latest_title, 72)}</p>
+    `;
+    elements.sleepingRoomList.appendChild(item);
+  });
+}
+
 function renderWorkstreams(workstreams) {
   elements.workstreamList.innerHTML = "";
 
@@ -614,6 +675,7 @@ function applyStatus(data) {
   renderWorkstreams(data.workstreams || []);
   renderEvents(data.recent_events || []);
   renderCrewList(data.agents || [], data.workstreams || []);
+  renderWorkspaceDock(data.workspace || {});
   renderState.hotspots = buildInteractiveHotspots();
   updateSceneDetailCard();
 }

@@ -150,6 +150,406 @@ test("review wrap activates docs review flow after results come back", () => {
   );
 });
 
+test("assigned agent job items drive real multi-agent squad split", () => {
+  const state = buildRoomState({
+    status: "busy",
+    thread: makeThread({
+      id: "thread_multi_real",
+      title: "Coordinate frontend and backend fixes for the room"
+    }),
+    repoContext: null,
+    recentThreads: [],
+    activity: makeActivity({
+      summary: "Lead is coordinating active worker threads"
+    }),
+    logs: [
+      { ts: 1710000000, message: "Agent workers are running" }
+    ],
+    agentJobs: [
+      {
+        job_id: "job_1",
+        item_id: "item_frontend",
+        status: "running",
+        assigned_thread_id: "thread_multi_real",
+        instruction: "Fix clipping and CSS layout in the room shell",
+        row_json: JSON.stringify({
+          task: "Fix clipping and CSS layout in the room shell"
+        }),
+        result_json: null
+      },
+      {
+        job_id: "job_1",
+        item_id: "item_backend",
+        status: "running",
+        assigned_thread_id: "thread_multi_real",
+        instruction: "Refine runtime event mapping and state cleanup",
+        row_json: JSON.stringify({
+          task: "Refine runtime event mapping and state cleanup"
+        }),
+        result_json: null
+      }
+    ]
+  });
+
+  assert.equal(state.room.mode, "multi");
+  assert.equal(state.room.phase, "squad_split");
+  assert.ok(
+    state.workstreams.some(
+      (workstream) => workstream.id === "agent_item_frontend" && workstream.zone === "frontend"
+    )
+  );
+  assert.ok(
+    state.workstreams.some(
+      (workstream) => workstream.id === "agent_item_backend" && workstream.zone === "backend"
+    )
+  );
+  assert.ok(
+    state.recent_events.some(
+      (event) => event.type === "workstream_spawned" && event.workstream_id === "agent_item_frontend"
+    )
+  );
+  assert.match(
+    state.agents.find((agent) => agent.id === "ui")?.activity || "",
+    /coding|debugging|reading|reviewing|summarizing/
+  );
+  assert.match(
+    state.agents.find((agent) => agent.id === "api")?.activity || "",
+    /coding|debugging|reading|reviewing|summarizing/
+  );
+  assert.doesNotMatch(state.agents.find((agent) => agent.id === "ui")?.activity || "", /moving|waiting/);
+  assert.doesNotMatch(state.agents.find((agent) => agent.id === "api")?.activity || "", /moving|waiting/);
+});
+
+test("completed agent job items become returned results for review wrap", () => {
+  const state = buildRoomState({
+    status: "busy",
+    thread: makeThread({
+      id: "thread_multi_review",
+      title: "Wrap up multi-agent room stabilization"
+    }),
+    repoContext: null,
+    recentThreads: [],
+    activity: makeActivity({
+      summary: "Worker results came back and need final review"
+    }),
+    logs: [
+      { ts: 1710000000, message: "Agent workers completed their assigned tasks" }
+    ],
+    agentJobs: [
+      {
+        job_id: "job_2",
+        item_id: "item_frontend_done",
+        status: "completed",
+        assigned_thread_id: "thread_multi_review",
+        instruction: "Fix clipping and CSS layout in the room shell",
+        row_json: JSON.stringify({
+          task: "Fix clipping and CSS layout in the room shell"
+        }),
+        result_json: JSON.stringify({
+          summary: "Layout shell patched and overflow regression removed"
+        })
+      },
+      {
+        job_id: "job_2",
+        item_id: "item_backend_done",
+        status: "completed",
+        assigned_thread_id: "thread_multi_review",
+        instruction: "Refine runtime event mapping and state cleanup",
+        row_json: JSON.stringify({
+          task: "Refine runtime event mapping and state cleanup"
+        }),
+        result_json: JSON.stringify({
+          summary: "Cooldown cleanup and runtime lifecycle are now stable"
+        })
+      }
+    ]
+  });
+
+  assert.equal(state.room.mode, "multi");
+  assert.equal(state.room.phase, "review_wrap");
+  assert.ok(
+    state.recent_events.some(
+      (event) => event.type === "result_returned" && event.from === "frontend"
+    )
+  );
+  assert.ok(
+    state.recent_events.some(
+      (event) => event.type === "result_returned" && event.from === "backend"
+    )
+  );
+  assert.equal(state.agents.find((agent) => agent.id === "docs")?.activity, "reviewing");
+  assert.equal(state.scene.scout.reason, "result_returned");
+});
+
+test("fresh lane completion stays in a stable result-return review wrap before cooldown", () => {
+  const state = buildRoomState({
+    status: "cooldown",
+    thread: makeThread({
+      id: "thread_finish_hold",
+      title: "Wrap up multi-lane room stabilization",
+      updatedAt: 1710000060,
+      updatedAgeSeconds: 20,
+      updatedAgo: "20 dtk lalu"
+    }),
+    repoContext: null,
+    recentThreads: [],
+    activity: makeActivity({
+      summary: "Worker results returned and review wrap is starting",
+      lastLogAgeSeconds: 20,
+      lastLogAgo: "20 dtk lalu"
+    }),
+    logs: [{ ts: 1710000060, message: "Result returned from worker lane" }],
+    agentJobs: [
+      {
+        job_id: "job_finish_hold",
+        item_id: "item_frontend_done",
+        status: "completed",
+        assigned_thread_id: "thread_finish_hold",
+        instruction:
+          'spawn_child_async: "C:\\\\Windows\\\\System32\\\\WindowsPowerShell\\\\v1.0\\\\powershell.exe" ["npm","test"]',
+        row_json: JSON.stringify({
+          task: 'spawn_child_async: "C:\\\\Windows\\\\System32\\\\WindowsPowerShell\\\\v1.0\\\\powershell.exe" ["npm","test"]'
+        }),
+        result_json: JSON.stringify({
+          summary: "Verification completed and UI lane is ready for wrap"
+        }),
+        completed_at: 1710000060
+      }
+    ]
+  });
+
+  assert.equal(state.room.phase, "review_wrap");
+  assert.equal(state.room.review_stage, "results_returning");
+  assert.equal(state.room.substate, null);
+  assert.equal(state.scene.primary_bubble.text, "results in");
+  assert.equal(state.scene.scout.active, true);
+  assert.equal(state.agents.find((agent) => agent.id === "lead")?.activity, "summarizing");
+  assert.notEqual(state.agents.find((agent) => agent.id === "docs")?.activity, "idle");
+  assert.notEqual(state.workstreams.find((stream) => stream.id === "agent_item_frontend_done")?.task, undefined);
+  assert.doesNotMatch(
+    state.workstreams.find((stream) => stream.id === "agent_item_frontend_done")?.task || "",
+    /spawn_child_async|powershell|windows\\\\system32/i
+  );
+});
+
+test("review wrap regroups workers briefly before the room settles into cooldown", () => {
+  const state = buildRoomState({
+    status: "cooldown",
+    thread: makeThread({
+      id: "thread_finish_regroup",
+      title: "Wrap up multi-lane room stabilization",
+      updatedAt: 1710000100,
+      updatedAgeSeconds: 55,
+      updatedAgo: "55 dtk lalu"
+    }),
+    repoContext: null,
+    recentThreads: [],
+    activity: makeActivity({
+      summary: "Review wrap is consolidating returned lanes",
+      lastLogAgeSeconds: 55,
+      lastLogAgo: "55 dtk lalu"
+    }),
+    logs: [{ ts: 1710000100, message: "Review wrap is consolidating returned lanes" }],
+    agentJobs: [
+      {
+        job_id: "job_finish_regroup",
+        item_id: "item_frontend_done",
+        status: "completed",
+        assigned_thread_id: "thread_finish_regroup",
+        instruction: "Fix clipping and CSS layout in the room shell",
+        row_json: JSON.stringify({
+          task: "Fix clipping and CSS layout in the room shell"
+        }),
+        result_json: JSON.stringify({
+          summary: "Layout shell patched and ready for review wrap"
+        }),
+        completed_at: 1710000100
+      },
+      {
+        job_id: "job_finish_regroup",
+        item_id: "item_backend_done",
+        status: "completed",
+        assigned_thread_id: "thread_finish_regroup",
+        instruction: "Refine runtime event mapping and state cleanup",
+        row_json: JSON.stringify({
+          task: "Refine runtime event mapping and state cleanup"
+        }),
+        result_json: JSON.stringify({
+          summary: "Runtime mapping is stable and ready for review wrap"
+        }),
+        completed_at: 1710000100
+      }
+    ]
+  });
+
+  assert.equal(state.room.phase, "review_wrap");
+  assert.equal(state.room.review_stage, "regroup");
+  assert.equal(state.room.substate, null);
+  assert.equal(state.scene.scout.active, false);
+  assert.equal(state.agents.find((agent) => agent.id === "ui")?.assigned_zone, "lab");
+  assert.equal(state.agents.find((agent) => agent.id === "api")?.assigned_zone, "lab");
+  assert.match(state.agents.find((agent) => agent.id === "ui")?.activity || "", /gathering|summarizing/);
+  assert.match(state.agents.find((agent) => agent.id === "api")?.activity || "", /gathering|summarizing/);
+});
+
+test("human-readable summaries replace raw runtime strings in primary and lane copy", () => {
+  const state = buildRoomState({
+    status: "busy",
+    thread: makeThread({
+      title:
+        'spawn_child_async: "C:\\\\Windows\\\\System32\\\\WindowsPowerShell\\\\v1.0\\\\powershell.exe" ["npm","test"]'
+    }),
+    repoContext: null,
+    recentThreads: [],
+    activity: makeActivity({
+      summary:
+        'spawn_child_async: "C:\\\\Windows\\\\System32\\\\WindowsPowerShell\\\\v1.0\\\\powershell.exe" ["npm","test"]'
+    }),
+    logs: [
+      {
+        ts: 1710000000,
+        message:
+          'ToolCall: functions.exec_command {"cmd":"C:\\\\Windows\\\\System32\\\\WindowsPowerShell\\\\v1.0\\\\powershell.exe -NoProfile -Command npm test"}'
+      }
+    ],
+    agentJobs: [
+      {
+        job_id: "job_humanize",
+        item_id: "item_verify",
+        status: "running",
+        assigned_thread_id: "thread_1",
+        instruction:
+          'spawn_child_async: "C:\\\\Windows\\\\System32\\\\WindowsPowerShell\\\\v1.0\\\\powershell.exe" ["npm","test"]',
+        row_json: JSON.stringify({
+          task: 'spawn_child_async: "C:\\\\Windows\\\\System32\\\\WindowsPowerShell\\\\v1.0\\\\powershell.exe" ["npm","test"]'
+        }),
+        result_json: null
+      }
+    ]
+  });
+
+  assert.match(state.room.current_task, /verification|local process/i);
+  assert.doesNotMatch(state.room.current_task, /spawn_child_async|powershell|windows\\\\system32/i);
+  assert.doesNotMatch(
+    state.workstreams.find((stream) => stream.id === "agent_item_verify")?.task || "",
+    /spawn_child_async|powershell|windows\\\\system32/i
+  );
+});
+
+test("parallel tool-call bursts act as real multi-lane fallback when agent jobs are absent", () => {
+  const state = buildRoomState({
+    status: "busy",
+    thread: makeThread({
+      id: "thread_parallel_logs",
+      title: "Audit frontend and backend state in parallel"
+    }),
+    repoContext: null,
+    recentThreads: [],
+    activity: makeActivity({
+      summary: "Parallel checks are running across frontend and backend lanes"
+    }),
+    logs: [
+      {
+        ts: 1710000000,
+        message:
+          'ToolCall: shell_command {"command":"Get-Content C:\\\\repo\\\\public\\\\styles.css","workdir":"C:\\\\repo","timeout_ms":120000}'
+      },
+      {
+        ts: 1710000000,
+        message:
+          'ToolCall: shell_command {"command":"Get-Content C:\\\\repo\\\\server.mjs","workdir":"C:\\\\repo","timeout_ms":120000}'
+      },
+      {
+        ts: 1709999999,
+        message: "Parallel checks launched for multiple lanes"
+      }
+    ]
+  });
+
+  assert.equal(state.room.mode, "multi");
+  assert.equal(state.room.phase, "squad_split");
+  assert.ok(
+    state.workstreams.some((workstream) => workstream.zone === "frontend"),
+    "expected inferred frontend lane"
+  );
+  assert.ok(
+    state.workstreams.some((workstream) => workstream.zone === "backend"),
+    "expected inferred backend lane"
+  );
+  assert.ok(
+    state.recent_events.some((event) => event.type === "workstream_spawned"),
+    "expected spawned fallback lane event"
+  );
+});
+
+test("workspace state keeps one active room and groups other repos into sleeping rooms", () => {
+  const state = buildRoomState({
+    status: "busy",
+    thread: makeThread({
+      id: "thread_active",
+      repoName: "rei-ops-room",
+      cwdDisplay: "rei-ops-room",
+      title: "Refactor active room dock behavior"
+    }),
+    repoContext: {
+      id: "thread_budget_latest",
+      repoName: "budget-app",
+      cwdDisplay: "project/budget-app",
+      title: "Budget app OCR issue",
+      updatedAgo: "6 mnt lalu",
+      updatedAgeSeconds: 360
+    },
+    recentThreads: [
+      makeThread({
+        id: "thread_active",
+        repoName: "rei-ops-room",
+        cwdDisplay: "rei-ops-room",
+        title: "Refactor active room dock behavior",
+        updatedAgo: "12 dtk lalu",
+        updatedAgeSeconds: 12
+      }),
+      makeThread({
+        id: "thread_same_repo_2",
+        repoName: "rei-ops-room",
+        cwdDisplay: "rei-ops-room",
+        title: "Fix room overflow follow-up",
+        updatedAgo: "4 mnt lalu",
+        updatedAgeSeconds: 240
+      }),
+      makeThread({
+        id: "thread_budget_latest",
+        repoName: "budget-app",
+        cwdDisplay: "project/budget-app",
+        title: "Budget app OCR issue",
+        updatedAgo: "6 mnt lalu",
+        updatedAgeSeconds: 360
+      }),
+      makeThread({
+        id: "thread_pids_latest",
+        repoName: "pids-onprem-dashboard",
+        cwdDisplay: "project/pids-onprem-dashboard",
+        title: "Dashboard polish and release prep",
+        updatedAgo: "19 mnt lalu",
+        updatedAgeSeconds: 1140
+      })
+    ],
+    activity: makeActivity({
+      summary: "Wiring workspace dock into the active room"
+    }),
+    logs: [{ ts: 1710000000, message: "Workspace dock is being built" }]
+  });
+
+  assert.equal(state.workspace.active_room.repo, "rei-ops-room");
+  assert.equal(state.workspace.active_room.recent_thread_count, 2);
+  assert.equal(state.workspace.active_room.active_lane_count, 1);
+  assert.equal(state.workspace.sleeping_rooms.length, 2);
+  assert.equal(state.workspace.sleeping_rooms[0].repo, "budget-app");
+  assert.equal(state.workspace.sleeping_rooms[0].status, "cooldown");
+  assert.equal(state.workspace.sleeping_rooms[0].recent_thread_count, 1);
+  assert.equal(state.workspace.sleeping_rooms[1].repo, "pids-onprem-dashboard");
+  assert.equal(state.workspace.sleeping_rooms[1].status, "idle");
+});
+
 test("cooldown rest mode returns the room to standby with a visible break state", () => {
   const state = buildRoomState({
     status: "cooldown",
@@ -284,7 +684,7 @@ test("summarizePrimaryTask compresses long technical runtime strings for primary
     'spawn_child_async: "C:\\\\Windows\\\\System32\\\\WindowsPowerShell\\\\v1.0\\\\powershell.exe" ["npm","test"]'
   );
 
-  assert.equal(summary, "Started a local process");
+  assert.equal(summary, "verification pass");
 });
 
 test("cooldown cleans active review/request visuals into passive aftermath", () => {

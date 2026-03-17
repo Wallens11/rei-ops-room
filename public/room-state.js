@@ -48,9 +48,9 @@ const DEBUG_TERMS = ["debug", "fix", "error", "fail", "failing", "trace"];
 const READING_TERMS = ["read", "inspect", "parse", "mapping", "map", "log", "logs"];
 const SUMMARY_TERMS = ["summary", "summarize", "label", "wrap", "handoff", "review"];
 const SCOUT_EVENT_PRIORITY = [
+  "result_returned",
   "review_requested",
   "workstream_spawned",
-  "result_returned",
   "handoff_created",
   "reassignment_triggered"
 ];
@@ -68,6 +68,9 @@ const SKILL_HEURISTICS = [
     patterns: ["playwright", "browser_navigate", "browser_wait_for", "browser_click", "browser_take_screenshot"]
   }
 ];
+const REVIEW_STAGE_RESULT_RETURNING_MAX = 24;
+const REVIEW_STAGE_REGROUP_MAX = 60;
+const REVIEW_STAGE_COOLDOWN_MIN = 90;
 
 function clamp(value, min, max) {
   return Math.max(min, Math.min(max, value));
@@ -87,6 +90,192 @@ function normalizeText(...parts) {
 
 function unique(values) {
   return [...new Set(values)];
+}
+
+function parseJsonObject(value) {
+  if (!value || typeof value !== "string") {
+    return null;
+  }
+
+  try {
+    return JSON.parse(value);
+  } catch {
+    return null;
+  }
+}
+
+function parseTimestampSeconds(value) {
+  if (value === null || value === undefined || value === "") {
+    return null;
+  }
+
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return value > 1e12 ? Math.round(value / 1000) : Math.round(value);
+  }
+
+  const numeric = Number(value);
+  if (Number.isFinite(numeric)) {
+    return numeric > 1e12 ? Math.round(numeric / 1000) : Math.round(numeric);
+  }
+
+  const parsed = Date.parse(String(value));
+  return Number.isNaN(parsed) ? null : Math.round(parsed / 1000);
+}
+
+function inferNowSeconds(thread, activity) {
+  if (
+    Number.isFinite(thread?.updatedAt) &&
+    Number.isFinite(thread?.updatedAgeSeconds)
+  ) {
+    return Number(thread.updatedAt) + Number(thread.updatedAgeSeconds);
+  }
+
+  const lastLogAt = parseTimestampSeconds(activity?.lastLogAt);
+  if (Number.isFinite(lastLogAt) && Number.isFinite(activity?.lastLogAgeSeconds)) {
+    return lastLogAt + Number(activity.lastLogAgeSeconds);
+  }
+
+  return null;
+}
+
+function fallbackLabelForZone(zoneId, kind = "task") {
+  if (kind === "result") {
+    if (zoneId === "frontend") {
+      return "layout result";
+    }
+
+    if (zoneId === "backend") {
+      return "runtime result";
+    }
+
+    if (zoneId === "database") {
+      return "trace result";
+    }
+
+    if (zoneId === "review") {
+      return "review result";
+    }
+
+    return "result return";
+  }
+
+  if (zoneId === "frontend") {
+    return "layout check";
+  }
+
+  if (zoneId === "backend") {
+    return "runtime mapping";
+  }
+
+  if (zoneId === "database") {
+    return "trace reading";
+  }
+
+  if (zoneId === "review") {
+    return "review wrap";
+  }
+
+  return "coordination pass";
+}
+
+function humanizeSummary(summary, { zoneId = "lab", kind = "task" } = {}) {
+  const normalized = normalizeText(summary);
+
+  if (!normalized) {
+    return fallbackLabelForZone(zoneId, kind);
+  }
+
+  if (
+    normalized.includes("wait_agent") ||
+    normalized.includes("result returned") ||
+    normalized.includes("results returned") ||
+    normalized.includes("worker results")
+  ) {
+    return "result return";
+  }
+
+  if (
+    normalized.includes("review") ||
+    normalized.includes("wrap") ||
+    normalized.includes("summary") ||
+    normalized.includes("summarize") ||
+    normalized.includes("handoff") ||
+    normalized.includes("label")
+  ) {
+    return "review wrap";
+  }
+
+  if (
+    normalized.includes("npm test") ||
+    normalized.includes("node --test") ||
+    normalized.includes("verification") ||
+    normalized.includes("verify") ||
+    normalized.includes("playwright") ||
+    normalized.includes("browser_snapshot") ||
+    normalized.includes("browser_take_screenshot") ||
+    normalized.includes("test")
+  ) {
+    return "verification pass";
+  }
+
+  if (
+    normalized.includes("layout") ||
+    normalized.includes("css") ||
+    normalized.includes("style") ||
+    normalized.includes("responsive") ||
+    normalized.includes("widget") ||
+    normalized.includes("canvas") ||
+    normalized.includes("overflow") ||
+    normalized.includes("clipping")
+  ) {
+    return "layout check";
+  }
+
+  if (
+    normalized.includes("runtime") ||
+    normalized.includes("orchestration") ||
+    normalized.includes("server") ||
+    normalized.includes("api") ||
+    normalized.includes("state") ||
+    normalized.includes("mapping") ||
+    normalized.includes("session")
+  ) {
+    return "runtime mapping";
+  }
+
+  if (
+    normalized.includes("sqlite") ||
+    normalized.includes("logs") ||
+    normalized.includes("trace") ||
+    normalized.includes("parse") ||
+    normalized.includes("query")
+  ) {
+    return zoneId === "database" ? "trace reading" : "runtime trace";
+  }
+
+  if (
+    normalized.includes("debug") ||
+    normalized.includes("fix") ||
+    normalized.includes("error") ||
+    normalized.includes("fail")
+  ) {
+    return "debug pass";
+  }
+
+  if (
+    normalized.includes("spawn_child_async") ||
+    normalized.includes("spawn child") ||
+    normalized.includes("powershell") ||
+    normalized.includes("windows\\system32") ||
+    normalized.includes(".exe") ||
+    normalized.includes("bash -lc") ||
+    normalized.includes("cmd.exe")
+  ) {
+    return fallbackLabelForZone(zoneId, kind);
+  }
+
+  const cleaned = String(summary).replace(/\s+/g, " ").trim();
+  return cleaned.length > 72 ? `${cleaned.slice(0, 69)}...` : cleaned;
 }
 
 function countMatches(text, terms, weight = 1) {
@@ -113,11 +302,109 @@ function sourceScore(text, keywords, weight) {
   return countMatches(text.toLowerCase(), keywords, weight);
 }
 
+function inferZoneFromText(text) {
+  const haystack = normalizeText(text);
+  let bestZone = "lab";
+  let bestScore = 0;
+
+  for (const zone of ZONE_DEFINITIONS.filter((entry) => entry.id !== "lab")) {
+    const { score } = sourceScore(haystack, zone.keywords, 1);
+    if (score > bestScore) {
+      bestZone = zone.id;
+      bestScore = score;
+    }
+  }
+
+  return bestScore >= 1 ? bestZone : "lab";
+}
+
+function summarizeAgentJobTask(agentJob) {
+  const row = parseJsonObject(agentJob.row_json);
+  const result = parseJsonObject(agentJob.result_json);
+
+  return (
+    result?.summary ||
+    result?.title ||
+    row?.task ||
+    row?.title ||
+    row?.instruction ||
+    agentJob.instruction ||
+    "Agent workstream"
+  );
+}
+
+function normalizeAgentJobStatus(status) {
+  const normalized = String(status || "").toLowerCase();
+
+  if (["completed", "done", "succeeded", "success", "reported"].includes(normalized)) {
+    return "completed";
+  }
+
+  if (["running", "in_progress", "processing", "active"].includes(normalized)) {
+    return "active";
+  }
+
+  if (["queued", "pending", "created"].includes(normalized)) {
+    return "queued";
+  }
+
+  if (["failed", "error", "cancelled", "canceled"].includes(normalized)) {
+    return "failed";
+  }
+
+  return normalized || "queued";
+}
+
+function normalizeAgentJobs(agentJobs = []) {
+  return agentJobs.map((agentJob) => {
+    const task = summarizeAgentJobTask(agentJob);
+    const row = parseJsonObject(agentJob.row_json);
+    const zone = inferZoneFromText(
+      normalizeText(row?.task, row?.title, row?.instruction, agentJob.instruction)
+    );
+
+    return {
+      id: `agent_${agentJob.item_id}`,
+      item_id: agentJob.item_id,
+      job_id: agentJob.job_id,
+      zone,
+      owner: ZONE_TO_AGENT[zone] || "lead",
+      task: humanizeSummary(task, { zoneId: zone }),
+      status: normalizeAgentJobStatus(agentJob.status),
+      assigned_thread_id: agentJob.assigned_thread_id || null,
+      result_summary:
+        humanizeSummary(
+          parseJsonObject(agentJob.result_json)?.summary ||
+            parseJsonObject(agentJob.result_json)?.title,
+          { zoneId: zone, kind: "result" }
+        ) ||
+        null
+    };
+  });
+}
+
 function zoneFromId(zoneId) {
   return ZONE_BY_ID[zoneId] || ZONE_BY_ID.lab;
 }
 
-function baseSignals({ thread, repoContext, activity, logs, status }) {
+function inferCompletionAgeSeconds({ thread, activity, normalizedAgentJobs, rawAgentJobs }) {
+  const nowSeconds = inferNowSeconds(thread, activity);
+  const completionTimes = rawAgentJobs
+    .filter((job, index) => normalizedAgentJobs[index]?.status === "completed")
+    .map((job) => parseTimestampSeconds(job.completed_at || job.updated_at || job.created_at))
+    .filter(Number.isFinite);
+
+  if (completionTimes.length > 0 && Number.isFinite(nowSeconds)) {
+    const freshestCompletion = Math.max(...completionTimes);
+    return Math.max(0, nowSeconds - freshestCompletion);
+  }
+
+  return Number.isFinite(activity?.lastLogAgeSeconds)
+    ? Number(activity.lastLogAgeSeconds)
+    : Number.POSITIVE_INFINITY;
+}
+
+function baseSignals({ thread, repoContext, activity, logs, status, agentJobs = [] }) {
   const primaryText = normalizeText(thread?.title, activity?.summary);
   const secondaryText = normalizeText(thread?.cwd, thread?.gitBranch, repoContext?.title, repoContext?.cwd);
   const logText = normalizeText(logs.slice(0, 24).map((log) => log.message));
@@ -152,11 +439,21 @@ function baseSignals({ thread, repoContext, activity, logs, status }) {
   const newRequest = (thread?.updatedAgeSeconds ?? Number.POSITIVE_INFINITY) <= 45;
   const passiveMode = activity?.kind === "rest" || activity?.kind === "observer";
   const toolBurst = clamp(toolCalls / 3, 0, 4);
+  const normalizedAgentJobs = normalizeAgentJobs(agentJobs);
+  const activeAgentJobs = normalizedAgentJobs.filter((job) => job.status === "active");
+  const completedAgentJobs = normalizedAgentJobs.filter((job) => job.status === "completed");
+  const completionAgeSeconds = inferCompletionAgeSeconds({
+    thread,
+    activity,
+    normalizedAgentJobs,
+    rawAgentJobs: agentJobs
+  });
   const multiCandidate =
     delegation.score +
     (second.score >= Math.max(2.5, top.score * 0.45) ? 1.25 : 0) +
     (review.score >= 2.2 && top.zoneId !== "review" ? 0.75 : 0) +
     (toolBurst >= 1.5 ? 0.4 : 0);
+  const multiFromAgentJobs = activeAgentJobs.length > 0 || normalizedAgentJobs.length >= 2;
   const focusZone = passiveMode && status !== "busy" ? "lab" : top.score >= 1.2 ? top.zoneId : "lab";
   const focusConfidence =
     focusZone === "lab"
@@ -172,7 +469,12 @@ function baseSignals({ thread, repoContext, activity, logs, status }) {
         : activity?.summary || thread?.title || "Standby di room aktif",
     dominant_zone: focusZone,
     confidence: focusConfidence,
-    mode: passiveMode && status !== "busy" ? "solo" : multiCandidate >= 1.9 ? "multi" : "solo",
+    mode:
+      passiveMode && status !== "busy"
+        ? "solo"
+        : multiFromAgentJobs || multiCandidate >= 1.9
+          ? "multi"
+          : "solo",
     zone_scores: zoneScores,
     zone_hits: zoneHits,
     sorted_zones: sortedZones,
@@ -188,7 +490,14 @@ function baseSignals({ thread, repoContext, activity, logs, status }) {
       passive_mode: passiveMode,
       tool_burst: toolBurst,
       tool_calls: toolCalls,
-      status
+      status,
+      agent_jobs: {
+        items: normalizedAgentJobs,
+        total_count: normalizedAgentJobs.length,
+        active_count: activeAgentJobs.length,
+        completed_count: completedAgentJobs.length
+      },
+      completion_age_seconds: completionAgeSeconds
     }
   };
 }
@@ -199,6 +508,24 @@ function resolveCurrentRepo(thread, repoContext) {
   }
 
   return thread?.repoName || repoContext?.repoName || "workspace";
+}
+
+function inferReviewStage(signals, status) {
+  const completionAgeSeconds = signals.completion_age_seconds ?? Number.POSITIVE_INFINITY;
+
+  if (completionAgeSeconds <= REVIEW_STAGE_RESULT_RETURNING_MAX) {
+    return "results_returning";
+  }
+
+  if (completionAgeSeconds <= REVIEW_STAGE_REGROUP_MAX) {
+    return "regroup";
+  }
+
+  if (status === "cooldown" && completionAgeSeconds >= REVIEW_STAGE_COOLDOWN_MIN) {
+    return "cooldown";
+  }
+
+  return "wrap";
 }
 
 function inferOrchestration(taskIntelligence, { status, thread, activity }) {
@@ -212,16 +539,43 @@ function inferOrchestration(taskIntelligence, { status, thread, activity }) {
     !thread ||
     signals.passive_mode ||
     (status === "idle" && (activity?.lastLogAgeSeconds ?? Number.POSITIVE_INFINITY) > 20 * 60);
+  const explicitAgentJobs = signals.agent_jobs?.total_count > 0;
+  let reviewStage = null;
 
   let roomPhase = "execution";
   let reason = `${zoneFromId(dominantZone).title} jadi owner utama karena sinyalnya paling kuat.`;
 
-  if (standbyDueToInactivity) {
+  if (standbyDueToInactivity && !explicitAgentJobs) {
     roomPhase = "standby";
     reason = "Belum ada activity baru, jadi room kembali tenang di area tengah.";
+  } else if (
+    signals.agent_jobs?.completed_count > 0 &&
+    signals.agent_jobs?.active_count === 0
+  ) {
+    roomPhase = "review_wrap";
+    reviewStage = inferReviewStage(signals, status);
+    reason =
+      reviewStage === "results_returning"
+        ? "Lane selesai di desk masing-masing, lalu hasil balik ke review lane tanpa langsung collapse."
+        : reviewStage === "regroup"
+          ? "Hasil sudah masuk, jadi squad regroup sebentar sebelum wrap final."
+          : reviewStage === "cooldown"
+            ? "Wrap sudah selesai, jadi room masuk cooldown dengan ritme yang lebih tenang."
+            : "Room stay di review wrap sampai hasil rapi dan siap ditutup.";
+  } else if (signals.agent_jobs?.active_count > 0) {
+    roomPhase = "squad_split";
+    reason = "Ada worker thread aktif yang benar-benar assigned, jadi squad split pakai runtime orchestration.";
   } else if (signals.review.score >= 2.4 && (signals.results.score > 0 || mode === "multi")) {
     roomPhase = "review_wrap";
-    reason = "Ada pola review / result return, jadi hasil dipindah ke review lane.";
+    reviewStage = inferReviewStage(signals, status);
+    reason =
+      reviewStage === "results_returning"
+        ? "Ada pola result return baru, jadi room tahan dulu di review wrap yang stabil."
+        : reviewStage === "regroup"
+          ? "Result return sudah jelas, jadi squad regroup sebentar sebelum wrap final."
+          : reviewStage === "cooldown"
+            ? "Review wrap sudah lewat, jadi room bisa masuk cooldown dengan tenang."
+            : "Ada pola review / result return, jadi hasil dipindah ke review lane.";
   } else if (signals.delegation.score >= 1.25 && mode === "multi") {
     roomPhase = "squad_split";
     reason = "Delegation kebaca cukup jelas, jadi squad dipecah ke workstream yang relevan.";
@@ -249,6 +603,11 @@ function inferOrchestration(taskIntelligence, { status, thread, activity }) {
   return {
     room_phase: roomPhase,
     phase_confidence: phaseConfidence,
+    review_stage: roomPhase === "review_wrap" ? reviewStage || "wrap" : null,
+    cooling_down:
+      roomPhase === "review_wrap"
+        ? (reviewStage || "wrap") === "cooldown"
+        : roomPhase === "standby" && status === "cooldown",
     mode,
     assignment: {
       focus_zone: dominantZone,
@@ -269,33 +628,7 @@ function shortTask(summary, fallback) {
 }
 
 export function summarizePrimaryTask(summary) {
-  const normalized = normalizeText(summary);
-
-  if (!normalized) {
-    return "Standby di room aktif";
-  }
-
-  if (normalized.includes("spawn_child_async") || normalized.includes("spawn child")) {
-    return "Started a local process";
-  }
-
-  if (normalized.includes("wait_agent")) {
-    return "Waiting for delegated result";
-  }
-
-  if (normalized.includes("review")) {
-    return "Reviewing returned work";
-  }
-
-  if (normalized.includes("sqlite") || normalized.includes("logs") || normalized.includes("trace")) {
-    return "Reading runtime traces";
-  }
-
-  if (normalized.includes("powershell") || normalized.includes("windows\\system32")) {
-    return "Running a local shell command";
-  }
-
-  return shortTask(String(summary).replace(/\s+/g, " ").trim(), "Standby di room aktif");
+  return humanizeSummary(summary, { zoneId: "lab" }) || "Standby di room aktif";
 }
 
 function titleizeSkillSlug(slug) {
@@ -375,6 +708,8 @@ function buildWorkstreams(taskIntelligence, orchestration) {
   const streams = [];
   const dominantZone = taskIntelligence.dominant_zone;
   const focusOwner = ZONE_TO_AGENT[dominantZone] || "lead";
+  const agentJobs = taskIntelligence.signals.agent_jobs?.items || [];
+  const activeAgentJobs = agentJobs.filter((job) => job.status === "active");
   const secondaries = taskIntelligence.sorted_zones
     .filter((entry) => entry.zoneId !== dominantZone && entry.score >= 2.8)
     .slice(0, 2);
@@ -385,7 +720,7 @@ function buildWorkstreams(taskIntelligence, orchestration) {
         id: "ws_standby",
         owner: "lead",
         zone: "lab",
-        task: "Watch the room and wait for the next request",
+        task: "wait for the next request",
         status: "queued"
       }
     ];
@@ -396,7 +731,7 @@ function buildWorkstreams(taskIntelligence, orchestration) {
       id: "ws_plan",
       owner: "lead",
       zone: "lab",
-      task: "Clarify scope, lock repo context, and pick the first desk",
+      task: "lock scope and route the first lane",
       status: "active"
     });
   } else {
@@ -404,11 +739,40 @@ function buildWorkstreams(taskIntelligence, orchestration) {
       id: "ws_main",
       owner: focusOwner,
       zone: dominantZone,
-      task: shortTask(
-        taskIntelligence.current_task_summary,
-        zoneFromId(dominantZone).defaultTask
-      ),
+      task: humanizeSummary(taskIntelligence.current_task_summary, {
+        zoneId: dominantZone
+      }),
       status: orchestration.room_phase === "review_wrap" ? "completed" : "active"
+    });
+  }
+
+  if (agentJobs.length > 0) {
+    streams.push({
+      id: "ws_lead_coordination",
+      owner: "lead",
+      zone: "lab",
+      task:
+        activeAgentJobs.length > 0
+          ? "coordinate active lanes"
+          : orchestration.room_phase === "review_wrap"
+            ? "regroup returned lanes"
+            : "review returned lanes",
+      status: activeAgentJobs.length > 0 || orchestration.room_phase === "review_wrap" ? "active" : "queued"
+    });
+
+    agentJobs.forEach((job) => {
+      streams.push({
+        id: job.id,
+        owner: job.owner,
+        zone: job.zone,
+        task: job.task,
+        status:
+          orchestration.room_phase === "review_wrap" && job.status === "completed"
+            ? "completed"
+            : job.status === "failed"
+              ? "queued"
+              : job.status
+      });
     });
   }
 
@@ -419,7 +783,7 @@ function buildWorkstreams(taskIntelligence, orchestration) {
         id: `ws_${entry.zoneId}_${index + 1}`,
         owner: zone.ownerId,
         zone: zone.id,
-        task: zone.defaultTask,
+        task: humanizeSummary(zone.defaultTask, { zoneId: zone.id }),
         status: orchestration.room_phase === "squad_split" ? "active" : "queued"
       });
     });
@@ -436,17 +800,20 @@ function buildWorkstreams(taskIntelligence, orchestration) {
       zone: "review",
       task:
         orchestration.room_phase === "review_wrap"
-          ? "Review returned work and prepare concise wrap"
-          : "Prepare concise labels and handoff copy",
+          ? "review wrap"
+          : "prepare wrap notes",
       status: orchestration.room_phase === "review_wrap" ? "active" : "queued"
     });
   }
 
-  return streams;
+  return [...new Map(streams.map((stream) => [stream.id, stream])).values()];
 }
 
 function buildRecentEvents(taskIntelligence, orchestration, workstreams, thread) {
   const events = [];
+  const agentJobs = taskIntelligence.signals.agent_jobs?.items || [];
+  const activeAgentJobs = agentJobs.filter((job) => job.status === "active");
+  const completedAgentJobs = agentJobs.filter((job) => job.status === "completed");
 
   if (taskIntelligence.signals.new_request) {
     events.push({
@@ -468,7 +835,7 @@ function buildRecentEvents(taskIntelligence, orchestration, workstreams, thread)
     (workstream) => workstream.id !== "ws_main" && workstream.id !== "ws_plan"
   );
   if (orchestration.room_phase === "squad_split") {
-    spawned.forEach((workstream) => {
+    (activeAgentJobs.length > 0 ? activeAgentJobs : spawned).forEach((workstream) => {
       events.push({
         type: "workstream_spawned",
         workstream_id: workstream.id,
@@ -496,7 +863,16 @@ function buildRecentEvents(taskIntelligence, orchestration, workstreams, thread)
     });
   }
 
-  if (taskIntelligence.signals.results.score > 0) {
+  if (completedAgentJobs.length > 0) {
+    completedAgentJobs.forEach((job) => {
+      events.push({
+        type: "result_returned",
+        from: job.zone,
+        to: orchestration.room_phase === "review_wrap" ? "review" : "lab",
+        workstream_id: job.id
+      });
+    });
+  } else if (taskIntelligence.signals.results.score > 0) {
     events.push({
       type: "result_returned",
       from: taskIntelligence.dominant_zone,
@@ -605,7 +981,13 @@ function buildSceneDirector(room, workstreams, recentEvents) {
   const cooldownActive = room.substate === "cooldown";
   const scoutEvent = findScoutEvent(recentEvents);
   const activeWorkstreams = workstreams.filter((workstream) => workstream.status === "active");
-  const highlightZones = unique(activeWorkstreams.map((workstream) => workstream.zone));
+  const completedWorkstreams = workstreams.filter((workstream) => workstream.status === "completed");
+  const highlightZones = unique(
+    [...activeWorkstreams, ...completedWorkstreams].map((workstream) => workstream.zone)
+  );
+  const allowScoutMovement =
+    !cooldownActive &&
+    (room.phase !== "review_wrap" || room.review_stage === "results_returning");
 
   let scout = {
     active: false,
@@ -615,7 +997,7 @@ function buildSceneDirector(room, workstreams, recentEvents) {
     reason: null
   };
 
-  if (scoutEvent && !cooldownActive) {
+  if (scoutEvent && allowScoutMovement) {
     if (scoutEvent.type === "workstream_spawned") {
       scout = {
         active: true,
@@ -645,7 +1027,7 @@ function buildSceneDirector(room, workstreams, recentEvents) {
         active: true,
         from_zone: scoutEvent.from || room.focus_zone,
         to_zone: scoutEvent.to || "lab",
-        payload: "result returned",
+        payload: "results in",
         reason: scoutEvent.type
       };
     } else if (scoutEvent.type === "reassignment_triggered") {
@@ -674,7 +1056,17 @@ function buildSceneDirector(room, workstreams, recentEvents) {
             tone: "busy"
           }
         : room.phase === "review_wrap"
-          ? { actor_id: "docs", text: "review + wrap", tone: "calm" }
+          ? room.review_stage === "results_returning"
+            ? {
+                actor_id: scout.active ? "scout" : "lead",
+                text: scout.payload || "results in",
+                tone: "steady"
+              }
+            : room.review_stage === "regroup"
+              ? { actor_id: "lead", text: "regrouping", tone: "steady" }
+              : room.review_stage === "cooldown"
+                ? { actor_id: "lead", text: "settling down", tone: "calm" }
+                : { actor_id: "docs", text: "review + wrap", tone: "calm" }
         : room.phase === "execution"
             ? {
                 actor_id: ZONE_TO_AGENT[room.focus_zone] || "lead",
@@ -690,7 +1082,8 @@ function buildSceneDirector(room, workstreams, recentEvents) {
     center_mode:
       cooldownActive
         ? "observed"
-        : room.phase === "planning_huddle" || room.phase === "review_wrap"
+        : room.phase === "planning_huddle" ||
+            (room.phase === "review_wrap" && room.review_stage !== "results_returning")
         ? "coordination"
         : room.phase === "standby"
           ? "observed"
@@ -704,7 +1097,9 @@ function buildSceneDirector(room, workstreams, recentEvents) {
         : room.phase === "standby"
         ? "calm"
         : room.phase === "review_wrap"
-          ? "steady"
+          ? room.review_stage === "regroup"
+            ? "steady"
+            : "calm"
           : room.status === "busy"
             ? "busy"
             : "steady",
@@ -714,11 +1109,26 @@ function buildSceneDirector(room, workstreams, recentEvents) {
         : room.mode === "multi"
           ? "wide"
           : `focus-${room.focus_zone}`,
-    visual_intensity: cooldownActive ? "low" : room.resting ? "low" : room.status === "busy" ? "high" : "medium",
+    visual_intensity:
+      cooldownActive
+        ? "low"
+        : room.resting
+          ? "low"
+          : room.phase === "review_wrap"
+            ? room.review_stage === "results_returning"
+              ? "medium"
+              : room.review_stage === "regroup"
+                ? "medium"
+                : "low"
+            : room.status === "busy"
+              ? "high"
+              : "medium",
     desk_highlights:
       cooldownActive || room.resting
         ? ["lab"]
-        : unique([room.focus_zone, ...highlightZones]).filter(Boolean),
+        : room.phase === "review_wrap" && room.review_stage !== "results_returning"
+          ? unique(["lab", "review"]).filter(Boolean)
+          : unique([room.focus_zone, ...highlightZones]).filter(Boolean),
     primary_bubble: primaryBubble,
     rest_corner: room.rest_corner || {
       active: false,
@@ -728,6 +1138,7 @@ function buildSceneDirector(room, workstreams, recentEvents) {
     props: buildSceneProps(room),
     ambient_cues: buildAmbientCues(room),
     scout,
+    review_stage: room.review_stage,
     skill_badges: room.skills || [],
     phase_title: phaseMeta.title,
     phase_reason: room.phase_reason,
@@ -736,18 +1147,26 @@ function buildSceneDirector(room, workstreams, recentEvents) {
   };
 }
 
-function inferWorkerActivity(agentId, roomPhase, stream, taskIntelligence) {
+function inferWorkerActivity(agentId, roomPhase, stream, taskIntelligence, reviewStage = null) {
   if (!stream) {
     return roomPhase === "planning_huddle" ? "gathering" : "waiting";
   }
 
-  if (roomPhase === "squad_split") {
+  if (roomPhase === "squad_split" && stream.status === "queued") {
     return "moving";
   }
 
   if (roomPhase === "review_wrap") {
+    if (reviewStage === "cooldown") {
+      return "idle";
+    }
+
     if (agentId === "docs") {
       return "reviewing";
+    }
+
+    if (reviewStage === "regroup") {
+      return stream.status === "completed" ? "gathering" : "waiting";
     }
 
     return stream.status === "completed" ? "summarizing" : "waiting";
@@ -816,7 +1235,7 @@ function buildAgentStates(workstreams, orchestration, taskIntelligence, scene) {
           scene.scout.active
             ? "moving"
             : (orchestration.room_phase === "standby" && taskIntelligence.signals.passive_mode) ||
-                taskIntelligence.signals.status === "cooldown"
+                orchestration.cooling_down
               ? "idle"
               : "waiting",
         idle_behavior: scene.scout.active ? null : idleBehavior,
@@ -831,11 +1250,21 @@ function buildAgentStates(workstreams, orchestration, taskIntelligence, scene) {
     const assignedZone =
       orchestration.room_phase === "planning_huddle"
         ? "lab"
+        : orchestration.room_phase === "review_wrap" &&
+            orchestration.review_stage !== "results_returning" &&
+            agent.id !== "docs"
+          ? "lab"
         : scene.rest_corner?.active && scene.rest_corner.allowed_agent_ids.includes(agent.id)
           ? "lab"
           : primaryStream?.zone || agent.defaultAssignedZone;
 
-    let activity = inferWorkerActivity(agent.id, orchestration.room_phase, primaryStream, taskIntelligence);
+    let activity = inferWorkerActivity(
+      agent.id,
+      orchestration.room_phase,
+      primaryStream,
+      taskIntelligence,
+      orchestration.review_stage
+    );
 
     if (agent.id === "lead") {
       activity =
@@ -846,12 +1275,16 @@ function buildAgentStates(workstreams, orchestration, taskIntelligence, scene) {
             : orchestration.room_phase === "squad_split"
               ? "moving"
               : orchestration.room_phase === "review_wrap"
-                ? "summarizing"
+                ? orchestration.review_stage === "regroup"
+                  ? "gathering"
+                  : orchestration.review_stage === "cooldown"
+                    ? "idle"
+                    : "summarizing"
                 : "reading";
     }
 
     if (agent.id === "docs" && orchestration.room_phase === "review_wrap") {
-      activity = "reviewing";
+      activity = orchestration.review_stage === "cooldown" ? "idle" : "reviewing";
     }
 
     if (orchestration.room_phase === "standby" && taskIntelligence.signals.passive_mode) {
@@ -862,7 +1295,7 @@ function buildAgentStates(workstreams, orchestration, taskIntelligence, scene) {
       activity = "idle";
     }
 
-    if (taskIntelligence.signals.status === "cooldown") {
+    if (orchestration.cooling_down) {
       activity = "idle";
     }
 
@@ -960,13 +1393,105 @@ function buildRestCorner(room, activity) {
   };
 }
 
-export function buildRoomState({ status, thread, repoContext, recentThreads = [], activity, logs = [] }) {
+function presenceFromAgeSeconds(secondsAgo = Number.POSITIVE_INFINITY) {
+  if (secondsAgo <= 90) {
+    return "busy";
+  }
+
+  if (secondsAgo <= 15 * 60) {
+    return "cooldown";
+  }
+
+  return "idle";
+}
+
+function buildWorkspaceState(room, thread, recentThreads = []) {
+  const activeRepo = room.current_repo || thread?.repoName || "workspace";
+  const activeRepoLabel = activeRepo === "workspace" ? "Workspace Hub" : activeRepo;
+  const threads = [thread, ...recentThreads]
+    .filter(Boolean)
+    .filter(
+      (entry, index, source) =>
+        source.findIndex((candidate) => candidate?.id === entry?.id) === index
+    );
+  const grouped = new Map();
+
+  threads.forEach((entry) => {
+    const repo = entry.repoName || activeRepo;
+    const current = grouped.get(repo) || {
+      repo,
+      cwdDisplay: entry.cwdDisplay || repo,
+      latestTitle: entry.title || "No recent thread",
+      latestAgeSeconds: entry.updatedAgeSeconds ?? Number.POSITIVE_INFINITY,
+      latestAgo: entry.updatedAgo || "-",
+      issueCount: 0
+    };
+
+    current.issueCount += 1;
+    if ((entry.updatedAgeSeconds ?? Number.POSITIVE_INFINITY) < current.latestAgeSeconds) {
+      current.cwdDisplay = entry.cwdDisplay || current.cwdDisplay;
+      current.latestTitle = entry.title || current.latestTitle;
+      current.latestAgeSeconds = entry.updatedAgeSeconds ?? current.latestAgeSeconds;
+      current.latestAgo = entry.updatedAgo || current.latestAgo;
+    }
+
+    grouped.set(repo, current);
+  });
+
+  const activeSummary = grouped.get(activeRepo) || {
+    repo: activeRepo,
+    cwdDisplay: thread?.cwdDisplay || activeRepo,
+    latestTitle: thread?.title || room.current_task,
+    latestAgeSeconds: thread?.updatedAgeSeconds ?? Number.POSITIVE_INFINITY,
+    latestAgo: thread?.updatedAgo || "-",
+    issueCount: 1
+  };
+
+  return {
+    active_room: {
+      repo: activeRepoLabel,
+      cwd_display: activeSummary.cwdDisplay,
+      recent_thread_count: activeSummary.issueCount,
+      active_lane_count: Math.max(
+        1,
+        room.mode === "multi" ? (room.phase === "standby" ? 1 : 2) : 1
+      ),
+      status: room.status,
+      phase: room.phase,
+      latest_title: activeSummary.latestTitle,
+      updated_ago: activeSummary.latestAgo
+    },
+    sleeping_rooms: [...grouped.values()]
+      .filter((entry) => entry.repo !== activeRepo)
+      .sort((left, right) => left.latestAgeSeconds - right.latestAgeSeconds)
+      .slice(0, 4)
+      .map((entry) => ({
+        repo: entry.repo === "workspace" ? "Workspace Hub" : entry.repo,
+        cwd_display: entry.cwdDisplay,
+        recent_thread_count: entry.issueCount,
+        status: presenceFromAgeSeconds(entry.latestAgeSeconds),
+        latest_title: entry.latestTitle,
+        updated_ago: entry.latestAgo
+      }))
+  };
+}
+
+export function buildRoomState({
+  status,
+  thread,
+  repoContext,
+  recentThreads = [],
+  activity,
+  logs = [],
+  agentJobs = []
+}) {
   const taskIntelligence = baseSignals({
     status,
     thread,
     repoContext,
     activity,
-    logs
+    logs,
+    agentJobs
   });
   const orchestration = inferOrchestration(taskIntelligence, { status, thread, activity });
   const reasons = roomReason(taskIntelligence, orchestration);
@@ -975,13 +1500,14 @@ export function buildRoomState({ status, thread, repoContext, recentThreads = []
     title: ROOM_TITLE,
     phase: orchestration.room_phase,
     phase_confidence: orchestration.phase_confidence,
+    review_stage: orchestration.review_stage,
     focus_zone: taskIntelligence.dominant_zone,
     focus_confidence: taskIntelligence.confidence,
     status,
     current_task: summarizePrimaryTask(taskIntelligence.current_task_summary),
     current_repo: taskIntelligence.current_repo,
     mode: orchestration.mode,
-    substate: status === "cooldown" ? "cooldown" : null,
+    substate: orchestration.cooling_down ? "cooldown" : null,
     resting: orchestration.room_phase === "standby" && taskIntelligence.signals.passive_mode,
     skills: extractSkills(logs),
     phase_reason: reasons.phase_reason,
@@ -998,6 +1524,7 @@ export function buildRoomState({ status, thread, repoContext, recentThreads = []
   return {
     status,
     room,
+    workspace: buildWorkspaceState(room, thread, recentThreads),
     taskIntelligence,
     orchestration,
     workstreams,

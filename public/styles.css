@@ -85,6 +85,50 @@ body[data-tone="rest"] {
   margin-bottom: clamp(10px, 1.8vw, 16px);
 }
 
+.workspace-dock {
+  display: grid;
+  grid-template-columns: minmax(260px, 1.1fr) minmax(0, 1.9fr);
+  gap: clamp(10px, 1.4vw, 16px);
+  margin-bottom: clamp(12px, 1.8vw, 18px);
+}
+
+.sleeping-room-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: clamp(10px, 1.2vw, 14px);
+}
+
+.workspace-card {
+  min-width: 0;
+  padding: clamp(12px, 1.4vw, 16px);
+  border-radius: 18px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.035), rgba(255, 255, 255, 0.02)),
+    rgba(7, 17, 26, 0.72);
+}
+
+.workspace-card h3,
+.workspace-card h4 {
+  margin-bottom: 4px;
+}
+
+.workspace-card-active {
+  box-shadow: inset 0 0 0 1px rgba(101, 228, 255, 0.08);
+}
+
+.workspace-card-sleeping[data-status="busy"] {
+  box-shadow: inset 0 0 0 1px rgba(124, 255, 186, 0.12);
+}
+
+.workspace-card-sleeping[data-status="cooldown"] {
+  box-shadow: inset 0 0 0 1px rgba(255, 204, 102, 0.1);
+}
+
+.workspace-card-sleeping[data-status="idle"] {
+  opacity: 0.9;
+}
+
 .topbar-copy {
   display: flex;
   align-items: center;
@@ -111,6 +155,9 @@ p {
   display: inline-flex;
   gap: 8px;
   align-items: center;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  max-width: 100%;
   padding: 8px;
   border: 1px solid var(--panel-border);
   border-radius: 999px;
@@ -122,6 +169,7 @@ p {
   border-radius: 999px;
   background: transparent;
   color: var(--muted);
+  flex: 1 1 auto;
   padding: 10px 15px;
   font: inherit;
   font-size: 14px;
@@ -173,6 +221,7 @@ p {
   gap: 8px;
   align-items: center;
   flex-wrap: wrap;
+  min-width: 0;
 }
 
 .status-pill,
@@ -187,6 +236,8 @@ p {
   background: rgba(255, 255, 255, 0.04);
   font-size: 12px;
   font-family: var(--mono-font);
+  max-width: 100%;
+  overflow-wrap: anywhere;
 }
 
 .item-chip {
@@ -536,7 +587,8 @@ body.widget-mode .topbar {
 }
 
 body.widget-mode .lede,
-body.widget-mode .panel-grid {
+body.widget-mode .panel-grid,
+body.widget-mode .workspace-dock {
   display: none;
 }
 
@@ -553,6 +605,10 @@ body.widget-mode .inspector {
 }
 
 @media (max-width: 1140px) {
+  .workspace-dock {
+    grid-template-columns: 1fr;
+  }
+
   .room-layout {
     grid-template-columns: 1fr;
   }

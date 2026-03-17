@@ -259,8 +259,20 @@ function createDispatchRoute(actor, zones, assignedZone) {
   };
 }
 
+function stableWorkRoute(actor, targetZone) {
+  const spots = targetZone.workSpot?.length ? targetZone.workSpot : targetZone.patrol;
+  const slotIndex = actor.id === "lead" || actor.id === "db" || actor.id === "docs" ? 0 : 1;
+  const point = spots[Math.min(slotIndex, spots.length - 1)];
+
+  return {
+    zoneId: targetZone.id,
+    points: [point]
+  };
+}
+
 function routeForActor(actor, agentState, { focusZone, roomPhase, zones, scene }) {
   const restCornerIds = scene?.rest_corner?.allowed_agent_ids || [];
+  const reviewStage = scene?.review_stage || null;
 
   if (scene?.rest_corner?.active && restCornerIds.includes(actor.id)) {
     return createRestRoute(zones, actor.id);
@@ -285,18 +297,31 @@ function routeForActor(actor, agentState, { focusZone, roomPhase, zones, scene }
     };
   }
 
-  if (roomPhase === "squad_split") {
+  if (roomPhase === "squad_split" && agentState.activity === "moving") {
     return createDispatchRoute(actor, zones, agentState.assigned_zone);
   }
 
   const assignedZoneId = agentState.assigned_zone || actor.home;
   const targetZone = zoneById(zones, assignedZoneId);
 
-  if (roomPhase === "review_wrap" && actor.id === "lead") {
-    return {
-      zoneId: "lab",
-      points: zoneById(zones, "lab").workSpot
-    };
+  if (roomPhase === "review_wrap") {
+    if (reviewStage === "regroup" && actor.id !== "docs" && actor.id !== "scout") {
+      return createMeetingRoute(zones, actor.id);
+    }
+
+    if (reviewStage === "wrap" && actor.id !== "docs" && actor.id !== "scout") {
+      return {
+        zoneId: "lab",
+        points: zoneById(zones, "lab").workSpot
+      };
+    }
+
+    if (actor.id === "lead" && reviewStage !== "results_returning") {
+      return {
+        zoneId: "lab",
+        points: zoneById(zones, "lab").workSpot
+      };
+    }
   }
 
   const settledActivities = new Set([
@@ -312,7 +337,7 @@ function routeForActor(actor, agentState, { focusZone, roomPhase, zones, scene }
     zoneId: assignedZoneId,
     points:
       settledActivities.has(agentState.activity) && roomPhase !== "standby"
-        ? targetZone.workSpot
+        ? stableWorkRoute(actor, targetZone).points
         : active
           ? targetZone.activePatrol
           : targetZone.patrol
@@ -330,6 +355,10 @@ function speedForActor(actor, agentState, { roomPhase, status, scene }) {
 
   if (roomPhase === "squad_split") {
     return 2.7;
+  }
+
+   if (roomPhase === "review_wrap" && scene?.review_stage === "regroup") {
+    return actor.id === "docs" ? 1.2 : 2.2;
   }
 
   if (actor.id === "scout") {

@@ -172,6 +172,36 @@ test("scout moves toward the target desk during a handoff", () => {
   );
 });
 
+test("assigned workers settle at their desks instead of pacing during squad split", () => {
+  const zones = createDefaultZones();
+  let actors = buildCrewActors(zones);
+  const backend = zones.find((zone) => zone.id === "backend");
+
+  for (let frame = 1; frame <= 120; frame += 1) {
+    actors = stepCrewActors(actors, {
+      frame,
+      status: "busy",
+      focusZone: "backend",
+      roomPhase: "squad_split",
+      agents: buildAgentState({
+        api: { activity: "coding", assigned_zone: "backend" },
+        lead: { activity: "reading", assigned_zone: "lab" }
+      }),
+      scene: {
+        scout: {
+          active: false
+        }
+      },
+      zones
+    });
+  }
+
+  const apiActor = actors.find((actor) => actor.id === "api");
+  const distance = Math.hypot(apiActor.x - backend.x, apiActor.y - backend.y);
+  assert.ok(distance < 54, `backend worker did not settle at the desk: ${distance}`);
+  assert.equal(apiActor.moving, false);
+});
+
 test("resting standby sends only allowed agents into the rest corner", () => {
   const zones = createDefaultZones();
   let actors = buildCrewActors(zones);
@@ -214,4 +244,42 @@ test("resting standby sends only allowed agents into the rest corner", () => {
     const distance = Math.hypot(actor.x - lab.x, actor.y - lab.y);
     assert.ok(distance < 86, `${actor.id} drifted away from lab while rest corner was active: ${distance}`);
   }
+});
+
+test("review regroup pulls finished workers back toward the lab instead of snapping idle", () => {
+  const zones = createDefaultZones();
+  let actors = buildCrewActors(zones);
+  const lab = zones.find((zone) => zone.id === "lab");
+
+  for (let frame = 1; frame <= 110; frame += 1) {
+    actors = stepCrewActors(actors, {
+      frame,
+      status: "cooldown",
+      focusZone: "review",
+      roomPhase: "review_wrap",
+      agents: buildAgentState({
+        lead: { activity: "summarizing", assigned_zone: "lab" },
+        ui: { activity: "gathering", assigned_zone: "lab" },
+        api: { activity: "gathering", assigned_zone: "lab" },
+        db: { activity: "gathering", assigned_zone: "lab" },
+        docs: { activity: "reviewing", assigned_zone: "review" },
+        scout: { activity: "waiting", assigned_zone: "lab" }
+      }),
+      scene: {
+        review_stage: "regroup",
+        scout: {
+          active: false
+        }
+      },
+      zones
+    });
+  }
+
+  for (const actor of actors.filter((entry) => ["lead", "ui", "api", "db"].includes(entry.id))) {
+    const distance = Math.hypot(actor.x - lab.x, actor.y - lab.y);
+    assert.ok(distance < 84, `${actor.id} did not regroup near the lab: ${distance}`);
+  }
+
+  const docs = actors.find((actor) => actor.id === "docs");
+  assert.equal(docs.currentZone, "review");
 });
