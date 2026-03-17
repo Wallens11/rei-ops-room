@@ -29,6 +29,36 @@ test("sqliteJsonWithRunner raises maxBuffer for larger runtime log payloads", as
   assert.ok(SQLITE_JSON_MAX_BUFFER >= 8 * 1024 * 1024);
 });
 
+test("sqliteJsonWithRunner falls back to python when sqlite3 CLI is unavailable", async () => {
+  const calls = [];
+
+  const rows = await sqliteJsonWithRunner(
+    async (file, args, options) => {
+      calls.push({ file, args, options });
+
+      if (file === "sqlite3") {
+        const error = new Error("spawn sqlite3 ENOENT");
+        error.code = "ENOENT";
+        throw error;
+      }
+
+      return {
+        stdout: '[{"thread_id":"thread_1","title":"room status"}]'
+      };
+    },
+    "/tmp/state.sqlite",
+    "SELECT thread_id, title FROM threads LIMIT 1;"
+  );
+
+  assert.deepEqual(rows, [{ thread_id: "thread_1", title: "room status" }]);
+  assert.equal(calls.length, 2);
+  assert.equal(calls[0].file, "sqlite3");
+  assert.equal(calls[1].file, "python");
+  assert.deepEqual(calls[1].args.slice(0, 2), ["-c", calls[1].args[1]]);
+  assert.equal(calls[1].args[2], "/tmp/state.sqlite");
+  assert.equal(calls[1].args[3], "SELECT thread_id, title FROM threads LIMIT 1;");
+});
+
 test("buildThreadLogsSql trims message payloads before exporting large log windows", () => {
   const sql = buildThreadLogsSql("thread-123");
 

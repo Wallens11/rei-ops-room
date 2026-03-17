@@ -6,6 +6,13 @@ export const DEFAULT_CREW = VISUAL_CAST.map((agent) => ({
   home: agent.homeZone
 }));
 
+export const REST_CORNER = {
+  id: "rest_corner",
+  title: "Recharge Nook",
+  x: 322,
+  y: 112
+};
+
 const BASE_ZONES = [
   {
     id: "frontend",
@@ -157,12 +164,12 @@ const MEETING_SPOT_OFFSETS = {
   scout: [{ x: 0, y: 68 }]
 };
 const REST_SPOT_OFFSETS = {
-  lead: [{ x: -10, y: 58 }],
-  ui: [{ x: -54, y: 60 }],
-  api: [{ x: 54, y: 60 }],
-  db: [{ x: -26, y: 78 }],
-  docs: [{ x: 26, y: 78 }],
-  scout: [{ x: 0, y: 84 }]
+  lead: [{ x: -10, y: 18 }],
+  ui: [{ x: -44, y: 26 }],
+  api: [{ x: 46, y: 24 }],
+  db: [{ x: -24, y: 44 }],
+  docs: [{ x: 24, y: 42 }],
+  scout: [{ x: 0, y: 52 }]
 };
 
 function zoneById(zones, id) {
@@ -234,10 +241,9 @@ function createMeetingRoute(zones, actorId) {
 }
 
 function createRestRoute(zones, actorId) {
-  const lab = zoneById(zones, "lab");
   return {
     zoneId: "lab",
-    points: withOffsets(lab, REST_SPOT_OFFSETS[actorId] || REST_SPOT_OFFSETS.scout)
+    points: withOffsets(REST_CORNER, REST_SPOT_OFFSETS[actorId] || REST_SPOT_OFFSETS.scout)
   };
 }
 
@@ -254,7 +260,9 @@ function createDispatchRoute(actor, zones, assignedZone) {
 }
 
 function routeForActor(actor, agentState, { focusZone, roomPhase, zones, scene }) {
-  if (scene?.resting) {
+  const restCornerIds = scene?.rest_corner?.allowed_agent_ids || [];
+
+  if (scene?.rest_corner?.active && restCornerIds.includes(actor.id)) {
     return createRestRoute(zones, actor.id);
   }
 
@@ -273,7 +281,7 @@ function routeForActor(actor, agentState, { focusZone, roomPhase, zones, scene }
     const lab = zoneById(zones, "lab");
     return {
       zoneId: "lab",
-      points: lab.workSpot
+      points: agentState.idle_behavior === "idle_patrol" ? lab.patrol : lab.workSpot
     };
   }
 

@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import {
+  REST_CORNER,
   buildCrewActors,
   createDefaultZones,
   stepCrewActors
@@ -171,7 +172,7 @@ test("scout moves toward the target desk during a handoff", () => {
   );
 });
 
-test("resting standby gathers the squad close to the lab lounge", () => {
+test("resting standby sends only allowed agents into the rest corner", () => {
   const zones = createDefaultZones();
   let actors = buildCrewActors(zones);
   const lab = zones.find((zone) => zone.id === "lab");
@@ -192,6 +193,10 @@ test("resting standby gathers the squad close to the lab lounge", () => {
       }),
       scene: {
         resting: true,
+        rest_corner: {
+          active: true,
+          allowed_agent_ids: ["lead", "ui", "docs"]
+        },
         scout: {
           active: false
         }
@@ -200,8 +205,13 @@ test("resting standby gathers the squad close to the lab lounge", () => {
     });
   }
 
-  for (const actor of actors) {
+  for (const actor of actors.filter((entry) => ["lead", "ui", "docs"].includes(entry.id))) {
+    const distance = Math.hypot(actor.x - REST_CORNER.x, actor.y - REST_CORNER.y);
+    assert.ok(distance < 88, `${actor.id} did not settle into the rest corner: ${distance}`);
+  }
+
+  for (const actor of actors.filter((entry) => !["lead", "ui", "docs"].includes(entry.id))) {
     const distance = Math.hypot(actor.x - lab.x, actor.y - lab.y);
-    assert.ok(distance < 86, `${actor.id} did not settle into the rest area: ${distance}`);
+    assert.ok(distance < 86, `${actor.id} drifted away from lab while rest corner was active: ${distance}`);
   }
 });

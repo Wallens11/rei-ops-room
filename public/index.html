@@ -34,12 +34,22 @@
             <span id="activity-age" class="activity-age">Belum ada data</span>
           </div>
 
-          <canvas
-            id="room-canvas"
-            width="640"
-            height="420"
-            aria-label="Rei operations room"
-          ></canvas>
+          <div class="scene-shell">
+            <canvas
+              id="room-canvas"
+              width="640"
+              height="420"
+              aria-label="Rei operations room"
+            ></canvas>
+          </div>
+
+          <div class="scene-detail-card">
+            <p class="panel-label">Scene Detail</p>
+            <h3 id="scene-detail-title">Room details</h3>
+            <p id="scene-detail-body" class="dim">
+              Hover a desk or click an agent to inspect the current room state.
+            </p>
+          </div>
 
           <div class="room-caption">
             <div class="caption-block">
@@ -61,7 +71,7 @@
             <div class="caption-block mission-block">
               <p class="panel-label">Current Task</p>
               <h3 id="task-title">Standby di room aktif</h3>
-              <p id="task-repo" class="dim mono">workspace · solo</p>
+              <p id="task-repo" class="dim mono">workspace | solo</p>
             </div>
 
             <div class="caption-block skill-block">
@@ -91,7 +101,7 @@
             <p id="thread-title" class="thread-title">Memuat thread terbaru...</p>
           </article>
 
-          <article class="panel compact-panel">
+          <article id="runtime-panel" class="panel compact-panel">
             <p class="panel-label">Runtime Trail</p>
             <h3 id="activity-summary">Memuat log...</h3>
             <p id="activity-source" class="dim mono">thread</p>

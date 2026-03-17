@@ -268,6 +268,36 @@ function shortTask(summary, fallback) {
   return summary.length > 72 ? `${summary.slice(0, 69)}...` : summary;
 }
 
+export function summarizePrimaryTask(summary) {
+  const normalized = normalizeText(summary);
+
+  if (!normalized) {
+    return "Standby di room aktif";
+  }
+
+  if (normalized.includes("spawn_child_async") || normalized.includes("spawn child")) {
+    return "Started a local process";
+  }
+
+  if (normalized.includes("wait_agent")) {
+    return "Waiting for delegated result";
+  }
+
+  if (normalized.includes("review")) {
+    return "Reviewing returned work";
+  }
+
+  if (normalized.includes("sqlite") || normalized.includes("logs") || normalized.includes("trace")) {
+    return "Reading runtime traces";
+  }
+
+  if (normalized.includes("powershell") || normalized.includes("windows\\system32")) {
+    return "Running a local shell command";
+  }
+
+  return shortTask(String(summary).replace(/\s+/g, " ").trim(), "Standby di room aktif");
+}
+
 function titleizeSkillSlug(slug) {
   return slug
     .split("-")
@@ -498,7 +528,81 @@ function findScoutEvent(recentEvents) {
   return null;
 }
 
+function buildSceneProps(room) {
+  return [
+    {
+      id: "planning_board",
+      kind: "briefing",
+      zone: "lab",
+      label: "Shared planning board",
+      emphasis: room.phase === "planning_huddle" || room.phase === "review_wrap" ? "active" : "idle"
+    },
+    {
+      id: "status_monitor",
+      kind: "monitor",
+      zone: room.focus_zone,
+      label: "Wall status monitor",
+      emphasis: room.phase === "execution" ? "active" : "idle"
+    },
+    {
+      id: "tool_rack",
+      kind: "storage",
+      zone: "backend",
+      label: "Tool rack",
+      emphasis: room.focus_zone === "backend" ? "active" : "idle"
+    },
+    {
+      id: "document_tray",
+      kind: "storage",
+      zone: "review",
+      label: "Document tray",
+      emphasis: room.phase === "review_wrap" ? "active" : "idle"
+    },
+    {
+      id: "rest_corner",
+      kind: "rest",
+      zone: "lab",
+      label: "Recharge nook",
+      emphasis: room.rest_corner?.active ? "active" : "idle"
+    }
+  ];
+}
+
+function buildAmbientCues(room) {
+  const cooldownActive = room.substate === "cooldown";
+  return [
+    {
+      id: "board_glow",
+      zone: "lab",
+      intensity:
+        cooldownActive
+          ? "low"
+          : room.phase === "planning_huddle"
+            ? "high"
+            : room.phase === "review_wrap"
+              ? "medium"
+              : "low"
+    },
+    {
+      id: "monitor_flicker",
+      zone: room.focus_zone,
+      intensity: cooldownActive ? "low" : room.phase === "execution" ? "medium" : "low"
+    },
+    {
+      id: "status_pulse",
+      zone: room.focus_zone,
+      intensity: cooldownActive ? "off" : room.status === "busy" ? "medium" : "low"
+    },
+    {
+      id: "rest_corner_steam",
+      zone: "lab",
+      intensity: room.rest_corner?.active ? "medium" : "off"
+    }
+  ];
+}
+
 function buildSceneDirector(room, workstreams, recentEvents) {
+  const cooldownActive = room.substate === "cooldown";
   const scoutEvent = findScoutEvent(recentEvents);
   const activeWorkstreams = workstreams.filter((workstream) => workstream.status === "active");
   const highlightZones = unique(activeWorkstreams.map((workstream) => workstream.zone));
@@ -511,7 +615,7 @@ function buildSceneDirector(room, workstreams, recentEvents) {
     reason: null
   };
 
-  if (scoutEvent) {
+  if (scoutEvent && !cooldownActive) {
     if (scoutEvent.type === "workstream_spawned") {
       scout = {
         active: true,
@@ -557,10 +661,12 @@ function buildSceneDirector(room, workstreams, recentEvents) {
 
   const phaseMeta = ROOM_PHASES[room.phase] || ROOM_PHASES.standby;
   const primaryBubble =
-    room.resting
+    cooldownActive && !room.resting
+      ? { actor_id: "lead", text: "settling down", tone: "calm" }
+      : room.resting
       ? { actor_id: "lead", text: "istirahat dulu", tone: "calm" }
       : room.phase === "planning_huddle"
-      ? { actor_id: "lead", text: "briefing route", tone: "steady" }
+        ? { actor_id: "lead", text: "briefing route", tone: "steady" }
       : room.phase === "squad_split"
         ? {
             actor_id: scout.active ? "scout" : "lead",
@@ -569,10 +675,10 @@ function buildSceneDirector(room, workstreams, recentEvents) {
           }
         : room.phase === "review_wrap"
           ? { actor_id: "docs", text: "review + wrap", tone: "calm" }
-          : room.phase === "execution"
+        : room.phase === "execution"
             ? {
                 actor_id: ZONE_TO_AGENT[room.focus_zone] || "lead",
-                text: shortTask(room.current_task, zoneFromId(room.focus_zone).shortTitle),
+                text: executionBubbleLabel(room),
                 tone: room.status === "busy" ? "busy" : "steady"
               }
             : { actor_id: "lead", text: "standby", tone: "calm" };
@@ -581,9 +687,19 @@ function buildSceneDirector(room, workstreams, recentEvents) {
     title: ROOM_TITLE,
     headline: DEFAULT_HEADLINE,
     description: DEFAULT_DESCRIPTION,
+    center_mode:
+      cooldownActive
+        ? "observed"
+        : room.phase === "planning_huddle" || room.phase === "review_wrap"
+        ? "coordination"
+        : room.phase === "standby"
+          ? "observed"
+          : "active_ops",
     resting: room.resting,
     tone:
-      room.resting
+      cooldownActive
+        ? "rest"
+        : room.resting
         ? "rest"
         : room.phase === "standby"
         ? "calm"
@@ -592,11 +708,25 @@ function buildSceneDirector(room, workstreams, recentEvents) {
           : room.status === "busy"
             ? "busy"
             : "steady",
-    camera: room.resting ? "rest-lab" : room.mode === "multi" ? "wide" : `focus-${room.focus_zone}`,
-    desk_highlights: room.resting
-      ? ["lab"]
-      : unique([room.focus_zone, ...highlightZones]).filter(Boolean),
+    camera:
+      cooldownActive || room.resting
+        ? "rest-lab"
+        : room.mode === "multi"
+          ? "wide"
+          : `focus-${room.focus_zone}`,
+    visual_intensity: cooldownActive ? "low" : room.resting ? "low" : room.status === "busy" ? "high" : "medium",
+    desk_highlights:
+      cooldownActive || room.resting
+        ? ["lab"]
+        : unique([room.focus_zone, ...highlightZones]).filter(Boolean),
     primary_bubble: primaryBubble,
+    rest_corner: room.rest_corner || {
+      active: false,
+      allowed_agent_ids: [],
+      reason: null
+    },
+    props: buildSceneProps(room),
+    ambient_cues: buildAmbientCues(room),
     scout,
     skill_badges: room.skills || [],
     phase_title: phaseMeta.title,
@@ -642,6 +772,30 @@ function inferWorkerActivity(agentId, roomPhase, stream, taskIntelligence) {
   return "coding";
 }
 
+function idleBehaviorForAgent(agent, orchestration, taskIntelligence, scene) {
+  if (scene.rest_corner?.active && scene.rest_corner.allowed_agent_ids.includes(agent.id)) {
+    return "idle_rest";
+  }
+
+  if (agent.id === "scout") {
+    return orchestration.room_phase === "standby" ? "idle_patrol" : "idle_observe";
+  }
+
+  if (agent.id === "lead") {
+    return orchestration.room_phase === "review_wrap" ? "idle_chat" : "idle_observe";
+  }
+
+  if (agent.id === "db" || agent.id === "api") {
+    return "idle_observe";
+  }
+
+  if (agent.id === "docs" && orchestration.room_phase === "review_wrap") {
+    return "idle_chat";
+  }
+
+  return "idle_at_desk";
+}
+
 function buildAgentStates(workstreams, orchestration, taskIntelligence, scene) {
   const workstreamsByOwner = workstreams.reduce((accumulator, workstream) => {
     accumulator[workstream.owner] ||= [];
@@ -651,6 +805,7 @@ function buildAgentStates(workstreams, orchestration, taskIntelligence, scene) {
 
   return VISUAL_CAST.map((agent) => {
     if (agent.id === "scout") {
+      const idleBehavior = idleBehaviorForAgent(agent, orchestration, taskIntelligence, scene);
       return {
         id: agent.id,
         display_name: agent.displayName,
@@ -660,9 +815,11 @@ function buildAgentStates(workstreams, orchestration, taskIntelligence, scene) {
         activity:
           scene.scout.active
             ? "moving"
-            : orchestration.room_phase === "standby" && taskIntelligence.signals.passive_mode
+            : (orchestration.room_phase === "standby" && taskIntelligence.signals.passive_mode) ||
+                taskIntelligence.signals.status === "cooldown"
               ? "idle"
               : "waiting",
+        idle_behavior: scene.scout.active ? null : idleBehavior,
         carrying: scene.scout.payload,
         assigned_workstream_ids: []
       };
@@ -670,10 +827,13 @@ function buildAgentStates(workstreams, orchestration, taskIntelligence, scene) {
 
     const ownedStreams = workstreamsByOwner[agent.id] || [];
     const primaryStream = ownedStreams.find((stream) => stream.status === "active") || ownedStreams[0];
+    const idleBehavior = idleBehaviorForAgent(agent, orchestration, taskIntelligence, scene);
     const assignedZone =
-      orchestration.room_phase === "planning_huddle" || taskIntelligence.signals.passive_mode
+      orchestration.room_phase === "planning_huddle"
         ? "lab"
-        : primaryStream?.zone || agent.defaultAssignedZone;
+        : scene.rest_corner?.active && scene.rest_corner.allowed_agent_ids.includes(agent.id)
+          ? "lab"
+          : primaryStream?.zone || agent.defaultAssignedZone;
 
     let activity = inferWorkerActivity(agent.id, orchestration.room_phase, primaryStream, taskIntelligence);
 
@@ -698,6 +858,14 @@ function buildAgentStates(workstreams, orchestration, taskIntelligence, scene) {
       activity = "idle";
     }
 
+    if (orchestration.room_phase === "standby" && !taskIntelligence.signals.passive_mode) {
+      activity = "idle";
+    }
+
+    if (taskIntelligence.signals.status === "cooldown") {
+      activity = "idle";
+    }
+
     return {
       id: agent.id,
       display_name: agent.displayName,
@@ -705,6 +873,7 @@ function buildAgentStates(workstreams, orchestration, taskIntelligence, scene) {
       assigned_zone: assignedZone,
       visual_role: agent.visualRole,
       activity,
+      idle_behavior: activity === "idle" || activity === "waiting" ? idleBehavior : null,
       assigned_workstream_ids: ownedStreams.map((stream) => stream.id)
     };
   });
@@ -720,6 +889,74 @@ function roomReason(taskIntelligence, orchestration) {
       taskIntelligence.dominant_zone === "lab"
         ? "Belum ada owner desk yang benar-benar ngunci fokus, jadi room tetap kumpul di tengah."
         : `${zone.detail}${hitPreview ? ` Kebaca dari: ${hitPreview}.` : ""}`
+  };
+}
+
+function executionBubbleLabel(room) {
+  const task = normalizeText(room.current_task);
+
+  if (task.includes("spawn_child_async") || task.includes("spawn child")) {
+    return "runtime sync";
+  }
+
+  if (task.includes("debug") || task.includes("error") || task.includes("fail")) {
+    return "debug pass";
+  }
+
+  if (task.includes("review") || task.includes("wrap")) {
+    return "wrap notes";
+  }
+
+  if (task.includes("sqlite") || task.includes("trace") || task.includes("logs")) {
+    return room.focus_zone === "database" ? "trace reading" : "trace sync";
+  }
+
+  if (room.focus_zone === "frontend") {
+    return "layout pass";
+  }
+
+  if (room.focus_zone === "backend") {
+    return "runtime sync";
+  }
+
+  if (room.focus_zone === "database") {
+    return "trace reading";
+  }
+
+  if (room.focus_zone === "review") {
+    return "review pass";
+  }
+
+  return "lock route";
+}
+
+function buildRestCorner(room, activity) {
+  const lowIntensityStandby = room.phase === "standby" && (room.resting || room.status === "cooldown");
+  const settledReviewWrap =
+    room.phase === "review_wrap" &&
+    room.status !== "busy" &&
+    (activity?.lastLogAgeSeconds ?? Number.POSITIVE_INFINITY) >= 90;
+
+  if (lowIntensityStandby) {
+    return {
+      active: true,
+      allowed_agent_ids: ["lead", "ui", "docs"],
+      reason: "Low-intensity standby lets a few agents recharge in-room."
+    };
+  }
+
+  if (settledReviewWrap) {
+    return {
+      active: true,
+      allowed_agent_ids: ["lead", "docs"],
+      reason: "Review wrap settled, so the room relaxes into a quieter corner."
+    };
+  }
+
+  return {
+    active: false,
+    allowed_agent_ids: [],
+    reason: null
   };
 }
 
@@ -741,9 +978,10 @@ export function buildRoomState({ status, thread, repoContext, recentThreads = []
     focus_zone: taskIntelligence.dominant_zone,
     focus_confidence: taskIntelligence.confidence,
     status,
-    current_task: taskIntelligence.current_task_summary,
+    current_task: summarizePrimaryTask(taskIntelligence.current_task_summary),
     current_repo: taskIntelligence.current_repo,
     mode: orchestration.mode,
+    substate: status === "cooldown" ? "cooldown" : null,
     resting: orchestration.room_phase === "standby" && taskIntelligence.signals.passive_mode,
     skills: extractSkills(logs),
     phase_reason: reasons.phase_reason,
@@ -752,7 +990,9 @@ export function buildRoomState({ status, thread, repoContext, recentThreads = []
 
   const workstreams = buildWorkstreams(taskIntelligence, orchestration);
   const recentEvents = buildRecentEvents(taskIntelligence, orchestration, workstreams, thread);
-  const scene = buildSceneDirector(room, workstreams, recentEvents);
+  const restCorner = buildRestCorner(room, activity);
+  room.rest_corner = restCorner;
+  const scene = buildSceneDirector({ ...room, rest_corner: restCorner }, workstreams, recentEvents);
   const agents = buildAgentStates(workstreams, orchestration, taskIntelligence, scene);
 
   return {

@@ -172,10 +172,37 @@ export function buildThreadLogsSql(threadId, limit = 500, messageLimit = 320) {
     `;
 }
 
+function buildPythonSqliteArgs(databasePath, sql) {
+  const script = [
+    "import json",
+    "import sqlite3",
+    "import sys",
+    "connection = sqlite3.connect(sys.argv[1])",
+    "connection.row_factory = sqlite3.Row",
+    "rows = [dict(row) for row in connection.execute(sys.argv[2]).fetchall()]",
+    "print(json.dumps(rows))"
+  ].join(";");
+
+  return ["-c", script, databasePath, sql];
+}
+
 export async function sqliteJsonWithRunner(runner, databasePath, sql) {
-  const { stdout } = await runner("sqlite3", ["-json", databasePath, sql], {
-    maxBuffer: SQLITE_JSON_MAX_BUFFER
-  });
+  let stdout = "";
+
+  try {
+    ({ stdout } = await runner("sqlite3", ["-json", databasePath, sql], {
+      maxBuffer: SQLITE_JSON_MAX_BUFFER
+    }));
+  } catch (error) {
+    if (error?.code !== "ENOENT") {
+      throw error;
+    }
+
+    ({ stdout } = await runner("python", buildPythonSqliteArgs(databasePath, sql), {
+      maxBuffer: SQLITE_JSON_MAX_BUFFER
+    }));
+  }
+
   const text = stdout.trim();
   return text ? JSON.parse(text) : [];
 }

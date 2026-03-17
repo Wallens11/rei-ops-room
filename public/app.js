@@ -5,10 +5,21 @@ import {
   VISUAL_CAST
 } from "./room-schema.js";
 import {
+  REST_CORNER,
   buildCrewActors,
   createDefaultZones,
   stepCrewActors
 } from "./room-engine.js";
+import { getCanvasRenderMetrics } from "./canvas-layout.js";
+import {
+  buildRuntimeEventSnapshot,
+  reduceRuntimeEventState
+} from "./runtime-events.js";
+import {
+  buildSceneHotspots,
+  describeSceneSelection,
+  findSceneHotspotAt
+} from "./scene-details.js";
 
 const canvas = document.getElementById("room-canvas");
 const context = canvas.getContext("2d");
@@ -76,11 +87,14 @@ const elements = {
   repoContextName: document.getElementById("repo-context-name"),
   repoContextCwd: document.getElementById("repo-context-cwd"),
   repoContextTitle: document.getElementById("repo-context-title"),
+  sceneDetailTitle: document.getElementById("scene-detail-title"),
+  sceneDetailBody: document.getElementById("scene-detail-body"),
   recentList: document.getElementById("recent-list"),
   crewList: document.getElementById("crew-list"),
   skillList: document.getElementById("skill-list"),
   workstreamList: document.getElementById("workstream-list"),
   eventList: document.getElementById("event-list"),
+  runtimePanel: document.getElementById("runtime-panel"),
   viewButtons: [...document.querySelectorAll("[data-mode]")]
 };
 
@@ -89,8 +103,55 @@ const renderState = {
   frame: 0,
   data: createEmptyState(),
   mode: "room",
-  actors: buildCrewActors(ZONES)
+  actors: buildCrewActors(ZONES),
+  hotspots: [],
+  hoveredHotspot: null,
+  selectedHotspot: null,
+  runtimeSnapshot: null,
+  runtimeEvent: {
+    lastEventId: null,
+    bubble: null,
+    badge: null
+  }
 };
+
+function cleanupOnPhaseEnter(nextPhase, nextSubstate = null) {
+  if (nextSubstate === "cooldown") {
+    renderState.runtimeSnapshot = null;
+    renderState.runtimeEvent = {
+      ...renderState.runtimeEvent,
+      bubble: null,
+      badge: null
+    };
+
+    if (renderState.selectedHotspot?.kind === "event") {
+      renderState.selectedHotspot = null;
+    }
+  }
+}
+
+function syncCanvasResolution() {
+  const metrics = getCanvasRenderMetrics({
+    clientWidth: canvas.clientWidth,
+    clientHeight: canvas.clientHeight,
+    devicePixelRatio: window.devicePixelRatio || 1
+  });
+
+  if (canvas.width !== metrics.pixelWidth || canvas.height !== metrics.pixelHeight) {
+    canvas.width = metrics.pixelWidth;
+    canvas.height = metrics.pixelHeight;
+  }
+
+  context.setTransform(
+    metrics.pixelWidth / metrics.logicalWidth,
+    0,
+    0,
+    metrics.pixelHeight / metrics.logicalHeight,
+    0,
+    0
+  );
+  context.imageSmoothingEnabled = false;
+}
 
 function createEmptyState() {
   return {
@@ -111,6 +172,13 @@ function createEmptyState() {
       headline: DEFAULT_HEADLINE,
       description: DEFAULT_DESCRIPTION,
       tone: "calm",
+      rest_corner: {
+        active: false,
+        allowed_agent_ids: []
+      },
+      center_mode: "observed",
+      props: [],
+      ambient_cues: [],
       primary_bubble: {
         actor_id: "lead",
         text: "standby",
@@ -170,6 +238,107 @@ function actorById(id) {
 
 function agentById(id) {
   return renderState.data.agents?.find((agent) => agent.id === id);
+}
+
+function currentSceneSelection() {
+  return renderState.hoveredHotspot || renderState.selectedHotspot;
+}
+
+function updateSceneDetailCard() {
+  const detail = describeSceneSelection(currentSceneSelection(), renderState.data);
+  elements.sceneDetailTitle.textContent = detail.title;
+  elements.sceneDetailBody.textContent = detail.body;
+}
+
+function eventBadgeHotspot(badge) {
+  const zone = zoneById(badge.zone);
+  return {
+    id: `event_${badge.zone}`,
+    kind: "event",
+    zone: badge.zone,
+    label: badge.label,
+    x: Math.min(640 - 96 - 18, zone.labelX + 92),
+    y: Math.max(18, zone.labelY),
+    width: Math.min(96, 24 + badge.label.length * 6),
+    height: 12
+  };
+}
+
+function buildInteractiveHotspots() {
+  const agents = renderState.actors.map((actor) => {
+    const agent = agentById(actor.id);
+    return {
+      id: actor.id,
+      kind: "agent",
+      zone: agent?.assigned_zone || actor.currentZone,
+      label: agent?.display_name || actor.id,
+      x: actor.x - 18,
+      y: actor.y - 2,
+      width: 36,
+      height: 48
+    };
+  });
+
+  const desks = ZONES.map((zone) => ({
+    id: zone.id,
+    kind: "desk",
+    zone: zone.id,
+    label: zone.title,
+    x: zone.x - 66,
+    y: zone.y - 58,
+    width: 132,
+    height: 108
+  }));
+
+  const props = (renderState.data.scene?.props || []).map((prop) => ({
+    id: prop.id,
+    kind: "prop",
+    zone: prop.zone,
+    label: prop.label,
+    x:
+      prop.id === "planning_board"
+        ? 266
+        : prop.id === "status_monitor"
+          ? 520
+          : prop.id === "tool_rack"
+            ? 548
+            : prop.id === "document_tray"
+              ? 468
+              : REST_CORNER.x - 50,
+    y:
+      prop.id === "planning_board"
+        ? 44
+        : prop.id === "status_monitor"
+          ? 32
+          : prop.id === "tool_rack"
+            ? 176
+            : prop.id === "document_tray"
+              ? 230
+              : REST_CORNER.y - 24,
+    width:
+      prop.id === "planning_board"
+        ? 108
+        : prop.id === "status_monitor"
+          ? 64
+          : prop.id === "tool_rack"
+            ? 34
+            : prop.id === "document_tray"
+              ? 40
+              : 112,
+    height:
+      prop.id === "planning_board"
+        ? 54
+        : prop.id === "status_monitor"
+          ? 34
+          : prop.id === "tool_rack"
+            ? 68
+            : prop.id === "document_tray"
+              ? 28
+              : 56
+  }));
+
+  const events = renderState.runtimeEvent.badge ? [eventBadgeHotspot(renderState.runtimeEvent.badge)] : [];
+  return buildSceneHotspots({ agents, desks, events, props });
 }
 
 function statusLabel(status, resting = false) {
@@ -347,11 +516,15 @@ function crewNote(agent, workstreams) {
   if (agent.id === "scout") {
     return agent.carrying
       ? `Courier aktif: ${truncate(agent.carrying, 50)}`
-      : "Nunggu handoff yang memang berarti.";
+      : agent.idle_behavior === "idle_patrol"
+        ? "Patrol ringan sambil nunggu handoff yang benar-benar berarti."
+        : "Nunggu handoff yang memang berarti.";
   }
 
   if (assigned.length === 0) {
-    return `${currentZone.title} standby sambil nunggu assignment.`;
+    return agent.idle_behavior
+      ? `${currentZone.title} | ${agent.idle_behavior}`
+      : `${currentZone.title} standby sambil nunggu assignment.`;
   }
 
   return truncate(task || `${currentZone.title} aktif.`, 76);
@@ -379,8 +552,19 @@ function renderCrewList(agents, workstreams) {
 }
 
 function applyStatus(data) {
+  const previousPhase = renderState.data?.room?.phase || null;
+  const previousSubstate = renderState.data?.room?.substate || null;
   renderState.data = data;
   renderState.status = data.status;
+  if (previousPhase !== data.room.phase || previousSubstate !== (data.room.substate || null)) {
+    cleanupOnPhaseEnter(data.room.phase, data.room.substate || null);
+  }
+  renderState.runtimeSnapshot = buildRuntimeEventSnapshot(data);
+  renderState.runtimeEvent = reduceRuntimeEventState(
+    renderState.runtimeEvent,
+    renderState.runtimeSnapshot,
+    Date.now()
+  );
 
   document.body.dataset.phase = data.room.phase;
   document.body.dataset.tone = data.scene.tone;
@@ -398,8 +582,8 @@ function applyStatus(data) {
   elements.phaseReason.textContent = data.scene.phase_reason || data.phase?.reason || "";
   elements.focusTitle.textContent = data.scene.focus_title || data.focus?.title || "Lead Table";
   elements.focusReason.textContent = data.scene.focus_reason || data.focus?.reason || "";
-  elements.taskTitle.textContent = truncate(data.room.current_task, 88);
-  elements.taskRepo.textContent = `${data.room.current_repo} · ${data.room.mode}`;
+  elements.taskTitle.textContent = truncate(data.room.current_task, 64);
+  elements.taskRepo.textContent = `${data.room.current_repo} | ${data.room.mode}`;
 
   elements.repoName.textContent = data.room.current_repo || "No thread";
   elements.cwdDisplay.textContent = data.thread?.cwdDisplay || "-";
@@ -412,7 +596,7 @@ function applyStatus(data) {
     160
   );
 
-  elements.activitySummary.textContent = truncate(data.activity.summary, 104);
+  elements.activitySummary.textContent = truncate(data.activity.summary, 88);
   elements.activitySource.textContent = data.activity.source;
 
   if (data.repoContext) {
@@ -430,6 +614,8 @@ function applyStatus(data) {
   renderWorkstreams(data.workstreams || []);
   renderEvents(data.recent_events || []);
   renderCrewList(data.agents || [], data.workstreams || []);
+  renderState.hotspots = buildInteractiveHotspots();
+  updateSceneDetailCard();
 }
 
 function drawPixelRect(x, y, w, h, color) {
@@ -438,16 +624,16 @@ function drawPixelRect(x, y, w, h, color) {
 }
 
 function drawRoomBase(tone = "calm") {
-  context.clearRect(0, 0, canvas.width, canvas.height);
+  context.clearRect(0, 0, 640, 420);
 
   context.fillStyle = COLORS.bg0;
-  context.fillRect(0, 0, canvas.width, canvas.height);
+  context.fillRect(0, 0, 640, 420);
 
   const wallGradient = context.createLinearGradient(0, 0, 0, 220);
   wallGradient.addColorStop(0, COLORS.bg2);
   wallGradient.addColorStop(1, COLORS.bg1);
   context.fillStyle = wallGradient;
-  context.fillRect(0, 0, canvas.width, 220);
+  context.fillRect(0, 0, 640, 220);
 
   const glowAlpha =
     tone === "busy" ? 0.22 : tone === "steady" ? 0.18 : tone === "rest" ? 0.08 : 0.12;
@@ -456,13 +642,13 @@ function drawRoomBase(tone = "calm") {
   context.fillRect(250, 42, 140, 72);
 
   context.fillStyle = COLORS.bg2;
-  context.fillRect(0, 220, canvas.width, 200);
+  context.fillRect(0, 220, 640, 200);
 
   for (let row = 0; row < 12; row += 1) {
     context.strokeStyle = COLORS.floorLine;
     context.beginPath();
     context.moveTo(0, 220 + row * 18);
-    context.lineTo(canvas.width, 220 + row * 18);
+    context.lineTo(640, 220 + row * 18);
     context.stroke();
   }
 
@@ -511,6 +697,78 @@ function drawDesk(x, y, accent, active) {
   if (active) {
     drawPixelRect(x - 60, y - 12, 120, 4, accent);
   }
+}
+
+function drawRestCorner(restCorner) {
+  const active = Boolean(restCorner?.active);
+  const accent = active ? "rgba(184, 162, 255, 0.9)" : "rgba(255, 255, 255, 0.12)";
+  const glow = active ? "rgba(184, 162, 255, 0.18)" : "rgba(255, 255, 255, 0.05)";
+
+  drawPixelRect(REST_CORNER.x - 76, REST_CORNER.y - 26, 152, 56, glow);
+  drawPixelRect(REST_CORNER.x - 62, REST_CORNER.y + 2, 54, 18, accent);
+  drawPixelRect(REST_CORNER.x - 62, REST_CORNER.y - 8, 54, 12, COLORS.bg1);
+  drawPixelRect(REST_CORNER.x - 8, REST_CORNER.y + 2, 22, 14, COLORS.violet);
+  drawPixelRect(REST_CORNER.x + 20, REST_CORNER.y - 2, 16, 18, COLORS.amber);
+  drawPixelRect(REST_CORNER.x + 24, REST_CORNER.y - 14, 8, 12, COLORS.white);
+  drawPixelRect(REST_CORNER.x + 42, REST_CORNER.y, 22, 12, COLORS.bg1);
+  drawPixelRect(REST_CORNER.x + 48, REST_CORNER.y - 10, 8, 10, COLORS.white);
+
+  if (active) {
+    drawPixelRect(REST_CORNER.x - 54, REST_CORNER.y - 16, 26, 4, COLORS.violet);
+    drawPixelRect(REST_CORNER.x + 28, REST_CORNER.y - 18, 18, 4, COLORS.cyan);
+  }
+}
+
+function cueIntensity(ambientCues, id) {
+  return ambientCues?.find((cue) => cue.id === id)?.intensity || "off";
+}
+
+function drawPlanningBoard(scene) {
+  const intensity = cueIntensity(scene.ambient_cues, "board_glow");
+  const glow =
+    intensity === "high" ? 0.22 : intensity === "medium" ? 0.14 : 0.08;
+
+  drawPixelRect(268, 44, 104, 52, `rgba(101, 228, 255, ${glow})`);
+  drawPixelRect(278, 52, 84, 36, COLORS.ink);
+  drawPixelRect(284, 58, 24, 4, COLORS.cyan);
+  drawPixelRect(314, 58, 18, 4, COLORS.amber);
+  drawPixelRect(338, 58, 14, 4, COLORS.rose);
+  drawPixelRect(284, 68, 48, 4, COLORS.white);
+  drawPixelRect(284, 76, 60, 4, COLORS.violet);
+}
+
+function drawStatusMonitor(scene, frame) {
+  const flicker = cueIntensity(scene.ambient_cues, "monitor_flicker");
+  const lit = flicker === "medium" ? (frame % 18 < 13 ? COLORS.cyan : COLORS.white) : COLORS.cyan;
+  drawPixelRect(520, 32, 62, 32, COLORS.ink);
+  drawPixelRect(526, 38, 50, 18, lit);
+  drawPixelRect(534, 60, 34, 4, COLORS.bg1);
+}
+
+function drawToolRack(scene, frame) {
+  const pulse = cueIntensity(scene.ambient_cues, "status_pulse");
+  drawPixelRect(548, 176, 30, 64, COLORS.bg1);
+  for (let row = 0; row < 4; row += 1) {
+    drawPixelRect(552, 184 + row * 14, 22, 4, COLORS.white);
+  }
+
+  if (pulse !== "off") {
+    const lit = frame % 20 < 10 ? COLORS.mint : COLORS.cyan;
+    drawPixelRect(558, 238, 8, 4, lit);
+  }
+}
+
+function drawDocumentTray(scene) {
+  drawPixelRect(468, 230, 38, 26, COLORS.white);
+  drawPixelRect(474, 236, 24, 4, COLORS.bg2);
+  drawPixelRect(474, 244, 18, 4, COLORS.rose);
+}
+
+function drawAmbientProps(scene, frame) {
+  drawPlanningBoard(scene);
+  drawStatusMonitor(scene, frame);
+  drawToolRack(scene, frame);
+  drawDocumentTray(scene);
 }
 
 function drawFurniture(zone, active) {
@@ -687,22 +945,57 @@ function drawSleepMarks(actor) {
   });
 }
 
-function drawBubble(actor, text, tone = "steady", verticalOffset = 0) {
+function drawBubble(actor, text, tone = "steady", verticalOffset = 0, opacity = 1) {
   const width = Math.min(220, 82 + text.length * 4);
-  const x = Math.max(18, Math.min(canvas.width - width - 18, actor.x - width / 2));
+  const x = Math.max(18, Math.min(640 - width - 18, actor.x - width / 2));
   const y = Math.max(18, actor.y - 78 - verticalOffset);
   const fill = bubbleColor(tone);
 
+  context.save();
+  context.globalAlpha = opacity;
   drawPixelRect(x, y, width, 30, fill);
   drawPixelRect(x + 18, y + 30, 8, 8, fill);
   context.fillStyle = COLORS.ink;
   context.font = "12px monospace";
   context.fillText(truncate(text, 34), x + 10, y + 19);
+  context.restore();
+}
+
+function badgeColor(severity) {
+  if (severity === "warn") {
+    return COLORS.rose;
+  }
+
+  if (severity === "calm") {
+    return COLORS.violet;
+  }
+
+  return COLORS.cyan;
+}
+
+function drawZoneBadge(badge) {
+  if (!badge) {
+    return;
+  }
+
+  const zone = zoneById(badge.zone);
+  const width = Math.min(96, 24 + badge.label.length * 6);
+  const x = Math.min(640 - width - 18, zone.labelX + 92);
+  const y = Math.max(18, zone.labelY);
+  const fill = badgeColor(badge.severity);
+
+  drawPixelRect(x, y, width, 12, fill);
+  context.fillStyle = COLORS.ink;
+  context.font = "10px monospace";
+  context.fillText(truncate(badge.label.toUpperCase(), 12), x + 5, y + 9);
 }
 
 function drawScene() {
+  syncCanvasResolution();
   const data = renderState.data;
   drawRoomBase(data.scene?.tone || "calm");
+  drawAmbientProps(data.scene || {}, renderState.frame);
+  drawRestCorner(data.scene?.rest_corner);
   drawSkillBadges(data.scene?.skill_badges || [], Boolean(data.scene?.resting));
 
   const highlightZones = new Set(data.scene?.desk_highlights || ["lab"]);
@@ -727,17 +1020,67 @@ function drawScene() {
     actorById(primaryBubble?.actor_id) || actorById("lead") || renderState.actors[0];
   drawBubble(bubbleActor, primaryBubble?.text || "standby", primaryBubble?.tone || "steady");
 
+  if (renderState.runtimeEvent.badge && renderState.data.room?.substate !== "cooldown") {
+    drawZoneBadge(renderState.runtimeEvent.badge);
+  }
+
+  if (renderState.runtimeEvent.bubble && renderState.data.room?.substate !== "cooldown") {
+    const eventZone = zoneById(renderState.runtimeEvent.bubble.zone || data.room?.focus_zone || "lab");
+    drawBubble(
+      { x: eventZone.x, y: eventZone.y - 8 },
+      renderState.runtimeEvent.bubble.label,
+      renderState.runtimeEvent.bubble.severity === "warn" ? "busy" : "steady",
+      24,
+      renderState.runtimeEvent.bubble.opacity ?? 1
+    );
+  }
+
   if (data.scene?.resting && bubbleActor) {
     drawSleepMarks(bubbleActor);
   }
 
-  if (data.scene?.scout?.active && data.scene.scout.payload && primaryBubble?.actor_id !== "scout") {
+  if (
+    data.scene?.scout?.active &&
+    data.scene.scout.payload &&
+    primaryBubble?.actor_id !== "scout" &&
+    data.room?.substate !== "cooldown"
+  ) {
     const scoutActor = actorById("scout");
     if (scoutActor) {
       drawBubble(scoutActor, data.scene.scout.payload, "steady", 34);
     }
   }
 }
+
+function scenePointer(event) {
+  const rect = canvas.getBoundingClientRect();
+  const x = ((event.clientX - rect.left) / rect.width) * 640;
+  const y = ((event.clientY - rect.top) / rect.height) * 420;
+  return { x, y };
+}
+
+canvas.addEventListener("mousemove", (event) => {
+  const pointer = scenePointer(event);
+  renderState.hoveredHotspot = findSceneHotspotAt(renderState.hotspots, pointer.x, pointer.y);
+  canvas.style.cursor = renderState.hoveredHotspot ? "pointer" : "default";
+  updateSceneDetailCard();
+});
+
+canvas.addEventListener("mouseleave", () => {
+  renderState.hoveredHotspot = null;
+  canvas.style.cursor = "default";
+  updateSceneDetailCard();
+});
+
+canvas.addEventListener("click", (event) => {
+  const pointer = scenePointer(event);
+  renderState.selectedHotspot = findSceneHotspotAt(renderState.hotspots, pointer.x, pointer.y);
+  updateSceneDetailCard();
+
+  if (renderState.selectedHotspot?.kind === "event") {
+    elements.runtimePanel?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+  }
+});
 
 async function refresh() {
   try {
@@ -756,6 +1099,11 @@ async function refresh() {
 
 function animate() {
   renderState.frame += 1;
+  renderState.runtimeEvent = reduceRuntimeEventState(
+    renderState.runtimeEvent,
+    renderState.runtimeSnapshot,
+    Date.now()
+  );
   renderState.actors = stepCrewActors(renderState.actors, {
     frame: renderState.frame,
     status: renderState.status,
@@ -765,6 +1113,7 @@ function animate() {
     scene: renderState.data.scene || {},
     zones: ZONES
   });
+  renderState.hotspots = buildInteractiveHotspots();
   drawScene();
 }
 
