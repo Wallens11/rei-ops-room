@@ -8,6 +8,40 @@ export const HEADLINE_ALTERNATIVES = [
 ];
 export const DEFAULT_DESCRIPTION =
   "Scene jadi sumber utama: phase, desk aktif, split kerja, dan handoff kebaca dari runtime lalu divisualkan di room.";
+export const SKILL_BADGE_LIBRARY = {
+  "test-driven-development": {
+    label: "TDD",
+    color: "#65e4ff"
+  },
+  "verification-before-completion": {
+    label: "Verify",
+    color: "#7cffba"
+  },
+  "webapp-testing": {
+    label: "UI Check",
+    color: "#ffcc66"
+  },
+  playwright: {
+    label: "Browser",
+    color: "#ff907c"
+  },
+  "playwright-interactive": {
+    label: "Play Live",
+    color: "#b8a2ff"
+  },
+  "requesting-code-review": {
+    label: "Review",
+    color: "#ff907c"
+  },
+  "systematic-debugging": {
+    label: "Debug",
+    color: "#ff907c"
+  },
+  "verification-before-completion/SKILL.md": {
+    label: "Verify",
+    color: "#7cffba"
+  }
+};
 
 export const ROOM_PHASES = {
   standby: {

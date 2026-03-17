@@ -52,6 +52,13 @@ body[data-tone="calm"] {
     linear-gradient(180deg, var(--bg-2), var(--bg-0));
 }
 
+body[data-tone="rest"] {
+  background:
+    radial-gradient(circle at top left, rgba(184, 162, 255, 0.12), transparent 26%),
+    radial-gradient(circle at bottom right, rgba(101, 228, 255, 0.06), transparent 28%),
+    linear-gradient(180deg, #11233a, #07111a);
+}
+
 .background-grid {
   position: fixed;
   inset: 0;
@@ -232,7 +239,7 @@ p {
 
 .room-caption {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) minmax(220px, 0.84fr);
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 14px;
   align-items: start;
   margin-top: 12px;
@@ -252,6 +259,30 @@ p {
   font-size: 18px;
   line-height: 1.2;
   margin-bottom: 6px;
+}
+
+.skill-list {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.skill-pill {
+  display: inline-flex;
+  align-items: center;
+  min-height: 28px;
+  padding: 6px 10px;
+  border-radius: 999px;
+  font-family: var(--mono-font);
+  font-size: 12px;
+  border: 1px solid color-mix(in srgb, var(--skill-color, var(--violet)) 28%, transparent);
+  background: color-mix(in srgb, var(--skill-color, var(--violet)) 16%, transparent);
+  color: var(--ink);
+}
+
+.skill-pill.is-dim {
+  --skill-color: var(--violet);
+  color: var(--muted);
 }
 
 .legend {

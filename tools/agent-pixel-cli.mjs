@@ -20,6 +20,48 @@ export function buildViewerUrl({ port = defaultPort, mode = "room" }) {
   return `http://localhost:${port}/?mode=${normalized}`;
 }
 
+export function inferServerRuntime({
+  reachable = false,
+  pidFilePid = null,
+  pidFileAlive = false,
+  pidFileCommand = "",
+  listenerPid = null,
+  listenerCommand = ""
+}) {
+  const pidLooksLikeAgent = pidFileAlive && pidFileCommand.includes("server.mjs");
+  const listenerLooksLikeAgent = Boolean(listenerPid) && listenerCommand.includes("server.mjs");
+
+  if (reachable) {
+    return {
+      running: true,
+      pid: listenerPid || pidFilePid || null,
+      source: "http"
+    };
+  }
+
+  if (listenerLooksLikeAgent) {
+    return {
+      running: true,
+      pid: listenerPid,
+      source: "listener"
+    };
+  }
+
+  if (pidLooksLikeAgent) {
+    return {
+      running: true,
+      pid: pidFilePid,
+      source: "pid"
+    };
+  }
+
+  return {
+    running: false,
+    pid: null,
+    source: "none"
+  };
+}
+
 export function parseCliArgs(argv) {
   const args = [...argv];
   let command = "activate";
@@ -68,12 +110,105 @@ export function parseCliArgs(argv) {
 async function isServerRunning(port) {
   try {
     const response = await fetch(`http://localhost:${port}/api/status`, {
-      signal: AbortSignal.timeout(1000)
+      signal: AbortSignal.timeout(1500)
     });
     return response.ok;
   } catch {
     return false;
   }
+}
+
+async function readPidFile() {
+  try {
+    const pidText = await fs.readFile(pidFile, "utf8");
+    const pid = Number(pidText.trim());
+    return Number.isFinite(pid) && pid > 0 ? pid : null;
+  } catch {
+    return null;
+  }
+}
+
+function isProcessAlive(pid) {
+  if (!pid) {
+    return false;
+  }
+
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function readProcessCommand(pid) {
+  if (!pid) {
+    return "";
+  }
+
+  try {
+    const { stdout } = await execFileAsync("ps", ["-p", String(pid), "-o", "command="]);
+    return stdout.trim();
+  } catch {
+    return "";
+  }
+}
+
+async function readListenerPid(port) {
+  try {
+    const { stdout } = await execFileAsync("lsof", [
+      "-nP",
+      "-t",
+      `-iTCP:${port}`,
+      "-sTCP:LISTEN"
+    ]);
+    const pid = Number(stdout.trim().split(/\s+/)[0]);
+    return Number.isFinite(pid) && pid > 0 ? pid : null;
+  } catch {
+    return null;
+  }
+}
+
+async function inspectServerRuntime(port) {
+  const [reachable, pidFilePid, listenerPid] = await Promise.all([
+    isServerRunning(port),
+    readPidFile(),
+    readListenerPid(port)
+  ]);
+  const pidFileAlive = isProcessAlive(pidFilePid);
+  const [pidFileCommand, listenerCommand] = await Promise.all([
+    readProcessCommand(pidFilePid),
+    listenerPid === pidFilePid ? Promise.resolve("") : readProcessCommand(listenerPid)
+  ]);
+  const mergedListenerCommand =
+    listenerPid && listenerPid === pidFilePid && pidFileCommand ? pidFileCommand : listenerCommand;
+  const runtime = inferServerRuntime({
+    reachable,
+    pidFilePid,
+    pidFileAlive,
+    pidFileCommand,
+    listenerPid,
+    listenerCommand: mergedListenerCommand
+  });
+
+  return {
+    ...runtime,
+    reachable,
+    pidFilePid,
+    pidFileAlive,
+    listenerPid,
+    pidFileCommand,
+    listenerCommand: mergedListenerCommand
+  };
+}
+
+async function syncPid(runtime) {
+  if (!runtime.pid) {
+    await fs.rm(pidFile, { force: true });
+    return;
+  }
+
+  await fs.writeFile(pidFile, `${runtime.pid}\n`, "utf8");
 }
 
 async function waitForServer(port, attempts = 30) {
@@ -126,8 +261,20 @@ async function openViewer(url) {
 }
 
 async function activate({ port, mode, open }) {
-  if (!(await isServerRunning(port))) {
+  const runtime = await inspectServerRuntime(port);
+
+  if (!runtime.running) {
     await startDetachedServer(port);
+  } else {
+    await syncPid(runtime);
+    if (!runtime.reachable) {
+      const ready = await waitForServer(port, 12);
+      if (!ready) {
+        throw new Error(
+          `Port ${port} is held by the pixel agent process, but /api/status is not responding`
+        );
+      }
+    }
   }
 
   const url = buildViewerUrl({ port, mode });
@@ -139,24 +286,30 @@ async function activate({ port, mode, open }) {
   console.log(`agent pixel active: ${url}`);
 }
 
-async function stopServer() {
-  try {
-    const pidText = await fs.readFile(pidFile, "utf8");
-    const pid = Number(pidText.trim());
-    if (pid) {
-      process.kill(pid);
-    }
+async function stopServer(port) {
+  const runtime = await inspectServerRuntime(port);
+  const targetPid =
+    runtime.listenerPid && runtime.listenerCommand.includes("server.mjs")
+      ? runtime.listenerPid
+      : runtime.pidFileAlive && runtime.pidFileCommand.includes("server.mjs")
+        ? runtime.pidFilePid
+        : null;
+
+  if (targetPid) {
+    process.kill(targetPid);
     await fs.rm(pidFile, { force: true });
     console.log("agent pixel stopped");
-  } catch {
-    console.log("agent pixel was not running");
+    return;
   }
+
+  await fs.rm(pidFile, { force: true });
+  console.log("agent pixel was not running");
 }
 
 async function printStatus(port) {
-  const running = await isServerRunning(port);
+  const runtime = await inspectServerRuntime(port);
   console.log(
-    running
+    runtime.running
       ? `agent pixel running at ${buildViewerUrl({ port, mode: "room" })}`
       : "agent pixel is not running"
   );
@@ -166,7 +319,7 @@ async function main() {
   const parsed = parseCliArgs(process.argv.slice(2));
 
   if (parsed.command === "stop") {
-    await stopServer();
+    await stopServer(parsed.port);
     return;
   }
 

@@ -156,6 +156,14 @@ const MEETING_SPOT_OFFSETS = {
   docs: [{ x: 30, y: 62 }],
   scout: [{ x: 0, y: 68 }]
 };
+const REST_SPOT_OFFSETS = {
+  lead: [{ x: -10, y: 58 }],
+  ui: [{ x: -54, y: 60 }],
+  api: [{ x: 54, y: 60 }],
+  db: [{ x: -26, y: 78 }],
+  docs: [{ x: 26, y: 78 }],
+  scout: [{ x: 0, y: 84 }]
+};
 
 function zoneById(zones, id) {
   return zones.find((zone) => zone.id === id) || zones[zones.length - 1];
@@ -225,6 +233,14 @@ function createMeetingRoute(zones, actorId) {
   };
 }
 
+function createRestRoute(zones, actorId) {
+  const lab = zoneById(zones, "lab");
+  return {
+    zoneId: "lab",
+    points: withOffsets(lab, REST_SPOT_OFFSETS[actorId] || REST_SPOT_OFFSETS.scout)
+  };
+}
+
 function createDispatchRoute(actor, zones, assignedZone) {
   const home = zoneById(zones, actor.home);
   const targetZone = zoneById(zones, assignedZone || actor.home);
@@ -238,6 +254,10 @@ function createDispatchRoute(actor, zones, assignedZone) {
 }
 
 function routeForActor(actor, agentState, { focusZone, roomPhase, zones, scene }) {
+  if (scene?.resting) {
+    return createRestRoute(zones, actor.id);
+  }
+
   if (roomPhase === "planning_huddle") {
     return createMeetingRoute(zones, actor.id);
   }
@@ -292,6 +312,10 @@ function routeForActor(actor, agentState, { focusZone, roomPhase, zones, scene }
 }
 
 function speedForActor(actor, agentState, { roomPhase, status, scene }) {
+  if (scene?.resting) {
+    return 1.85;
+  }
+
   if (roomPhase === "planning_huddle") {
     return 2.6;
   }

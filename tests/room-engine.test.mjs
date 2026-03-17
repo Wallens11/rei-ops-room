@@ -170,3 +170,38 @@ test("scout moves toward the target desk during a handoff", () => {
     `scout did not move toward the review desk: review=${reviewDistance} lab=${labDistance}`
   );
 });
+
+test("resting standby gathers the squad close to the lab lounge", () => {
+  const zones = createDefaultZones();
+  let actors = buildCrewActors(zones);
+  const lab = zones.find((zone) => zone.id === "lab");
+
+  for (let frame = 1; frame <= 100; frame += 1) {
+    actors = stepCrewActors(actors, {
+      frame,
+      status: "cooldown",
+      focusZone: "lab",
+      roomPhase: "standby",
+      agents: buildAgentState({
+        lead: { activity: "idle", assigned_zone: "lab" },
+        ui: { activity: "idle", assigned_zone: "lab" },
+        api: { activity: "idle", assigned_zone: "lab" },
+        db: { activity: "idle", assigned_zone: "lab" },
+        docs: { activity: "idle", assigned_zone: "lab" },
+        scout: { activity: "idle", assigned_zone: "lab" }
+      }),
+      scene: {
+        resting: true,
+        scout: {
+          active: false
+        }
+      },
+      zones
+    });
+  }
+
+  for (const actor of actors) {
+    const distance = Math.hypot(actor.x - lab.x, actor.y - lab.y);
+    assert.ok(distance < 86, `${actor.id} did not settle into the rest area: ${distance}`);
+  }
+});

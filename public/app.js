@@ -78,6 +78,7 @@ const elements = {
   repoContextTitle: document.getElementById("repo-context-title"),
   recentList: document.getElementById("recent-list"),
   crewList: document.getElementById("crew-list"),
+  skillList: document.getElementById("skill-list"),
   workstreamList: document.getElementById("workstream-list"),
   eventList: document.getElementById("event-list"),
   viewButtons: [...document.querySelectorAll("[data-mode]")]
@@ -142,6 +143,7 @@ function createEmptyState() {
       assigned_workstream_ids: []
     })),
     recent_events: [],
+    skills: [],
     recentThreads: [],
     ui: {
       headline: DEFAULT_HEADLINE,
@@ -268,6 +270,26 @@ function renderWorkstreams(workstreams) {
       <p class="dim mono">${workstream.zone}</p>
     `;
     elements.workstreamList.appendChild(item);
+  });
+}
+
+function renderSkillList(skills) {
+  elements.skillList.innerHTML = "";
+
+  if (!skills || skills.length === 0) {
+    const empty = document.createElement("span");
+    empty.className = "skill-pill is-dim";
+    empty.textContent = "No active skill";
+    elements.skillList.appendChild(empty);
+    return;
+  }
+
+  skills.forEach((skill) => {
+    const item = document.createElement("span");
+    item.className = "skill-pill";
+    item.style.setProperty("--skill-color", skill.color);
+    item.textContent = skill.label;
+    elements.skillList.appendChild(item);
   });
 }
 
@@ -404,6 +426,7 @@ function applyStatus(data) {
   }
 
   renderRecentThreads(data.recentThreads || []);
+  renderSkillList(data.skills || []);
   renderWorkstreams(data.workstreams || []);
   renderEvents(data.recent_events || []);
   renderCrewList(data.agents || [], data.workstreams || []);
@@ -426,7 +449,8 @@ function drawRoomBase(tone = "calm") {
   context.fillStyle = wallGradient;
   context.fillRect(0, 0, canvas.width, 220);
 
-  const glowAlpha = tone === "busy" ? 0.22 : tone === "steady" ? 0.18 : 0.12;
+  const glowAlpha =
+    tone === "busy" ? 0.22 : tone === "steady" ? 0.18 : tone === "rest" ? 0.08 : 0.12;
   context.fillStyle = `rgba(101, 228, 255, ${glowAlpha})`;
   context.fillRect(220, 26, 200, 14);
   context.fillRect(250, 42, 140, 72);
@@ -452,6 +476,20 @@ function drawRoomBase(tone = "calm") {
 
   drawPixelRect(300, 24, 40, 10, COLORS.amber);
   drawPixelRect(312, 34, 16, 18, COLORS.white);
+
+  if (tone === "rest") {
+    [
+      { x: 72, y: 40 },
+      { x: 112, y: 58 },
+      { x: 528, y: 46 },
+      { x: 570, y: 68 }
+    ].forEach((star) => {
+      drawPixelRect(star.x, star.y, 4, 4, "rgba(237, 243, 255, 0.82)");
+    });
+
+    drawPixelRect(286, 160, 72, 8, "rgba(184, 162, 255, 0.22)");
+    drawPixelRect(298, 168, 48, 6, "rgba(184, 162, 255, 0.12)");
+  }
 }
 
 function drawZoneLabel(zone, active) {
@@ -615,6 +653,40 @@ function bubbleColor(tone) {
   return COLORS.white;
 }
 
+function drawSkillBadges(skills, resting = false) {
+  if (!skills || skills.length === 0) {
+    return;
+  }
+
+  let x = 28;
+  const y = 24;
+
+  skills.slice(0, 3).forEach((skill) => {
+    const label = skill.label.toUpperCase();
+    const width = 22 + label.length * 6;
+    const fill = resting ? "rgba(184, 162, 255, 0.14)" : skill.color;
+
+    drawPixelRect(x, y, width, 14, fill);
+    context.fillStyle = resting ? COLORS.violet : COLORS.ink;
+    context.font = "10px monospace";
+    context.fillText(label, x + 6, y + 10);
+    x += width + 8;
+  });
+}
+
+function drawSleepMarks(actor) {
+  const marks = [
+    { x: actor.x + 18, y: actor.y - 24, size: 8 },
+    { x: actor.x + 30, y: actor.y - 38, size: 6 }
+  ];
+
+  context.fillStyle = COLORS.violet;
+  context.font = "12px monospace";
+  marks.forEach((mark) => {
+    context.fillText("Z", mark.x, mark.y);
+  });
+}
+
 function drawBubble(actor, text, tone = "steady", verticalOffset = 0) {
   const width = Math.min(220, 82 + text.length * 4);
   const x = Math.max(18, Math.min(canvas.width - width - 18, actor.x - width / 2));
@@ -631,6 +703,7 @@ function drawBubble(actor, text, tone = "steady", verticalOffset = 0) {
 function drawScene() {
   const data = renderState.data;
   drawRoomBase(data.scene?.tone || "calm");
+  drawSkillBadges(data.scene?.skill_badges || [], Boolean(data.scene?.resting));
 
   const highlightZones = new Set(data.scene?.desk_highlights || ["lab"]);
 
@@ -653,6 +726,10 @@ function drawScene() {
   const bubbleActor =
     actorById(primaryBubble?.actor_id) || actorById("lead") || renderState.actors[0];
   drawBubble(bubbleActor, primaryBubble?.text || "standby", primaryBubble?.tone || "steady");
+
+  if (data.scene?.resting && bubbleActor) {
+    drawSleepMarks(bubbleActor);
+  }
 
   if (data.scene?.scout?.active && data.scene.scout.payload && primaryBubble?.actor_id !== "scout") {
     const scoutActor = actorById("scout");

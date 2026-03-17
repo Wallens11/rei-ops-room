@@ -16,6 +16,7 @@ const codexHome = process.env.CODEX_HOME || path.join(os.homedir(), ".codex");
 const stateDb = process.env.CODEX_STATE_DB || path.join(codexHome, "state_5.sqlite");
 const logsDb = process.env.CODEX_LOGS_DB || path.join(codexHome, "logs_1.sqlite");
 const port = Number(process.env.PORT || 4317);
+export const SQLITE_JSON_MAX_BUFFER = 8 * 1024 * 1024;
 const FOCUS_PROFILES = [
   {
     zone: "frontend",
@@ -149,17 +150,38 @@ const NOISE_MESSAGE_PREFIXES = [
 const NOISE_MESSAGE_SNIPPETS = [
   "registering event source with poller",
   "token usage",
-  "tool gate released"
+  "tool gate released",
+  "waiting for tool gate"
 ];
 
 function quoteSql(value) {
   return `'${String(value).replaceAll("'", "''")}'`;
 }
 
-async function sqliteJson(databasePath, sql) {
-  const { stdout } = await execFileAsync("sqlite3", ["-json", databasePath, sql]);
+export function buildThreadLogsSql(threadId, limit = 500, messageLimit = 320) {
+  return `
+      SELECT
+        ts,
+        level,
+        target,
+        substr(message, 1, ${messageLimit}) AS message
+      FROM logs
+      WHERE thread_id = ${quoteSql(threadId)}
+      ORDER BY ts DESC, ts_nanos DESC, id DESC
+      LIMIT ${limit};
+    `;
+}
+
+export async function sqliteJsonWithRunner(runner, databasePath, sql) {
+  const { stdout } = await runner("sqlite3", ["-json", databasePath, sql], {
+    maxBuffer: SQLITE_JSON_MAX_BUFFER
+  });
   const text = stdout.trim();
   return text ? JSON.parse(text) : [];
+}
+
+async function sqliteJson(databasePath, sql) {
+  return sqliteJsonWithRunner(execFileAsync, databasePath, sql);
 }
 
 function toIso(seconds) {
@@ -283,7 +305,7 @@ function isObserverTool(toolName) {
   return OBSERVER_TOOL_PREFIXES.some((prefix) => toolName?.startsWith(prefix));
 }
 
-function filterMeaningfulLogs(logs) {
+export function filterMeaningfulLogs(logs) {
   return logs.filter((log) => {
     const message = log.message?.trim();
     if (!message) {
@@ -578,13 +600,7 @@ async function getStatus() {
   let threadLogs = [];
 
   if (latestThread?.id) {
-    const logSql = `
-      SELECT ts, level, target, message
-      FROM logs
-      WHERE thread_id = ${quoteSql(latestThread.id)}
-      ORDER BY ts DESC, ts_nanos DESC, id DESC
-      LIMIT 120;
-    `;
+    const logSql = buildThreadLogsSql(latestThread.id);
 
     threadLogs = await sqliteJson(logsDb, logSql);
     const meaningfulLogs = filterMeaningfulLogs(threadLogs);
@@ -695,6 +711,12 @@ const server = http.createServer(async (request, response) => {
   await serveStatic(url.pathname, response);
 });
 
-server.listen(port, () => {
-  console.log(`Pixel agent viewer ready at http://localhost:${port}`);
-});
+export function startServer(listenPort = port) {
+  server.listen(listenPort, () => {
+    console.log(`Pixel agent viewer ready at http://localhost:${listenPort}`);
+  });
+}
+
+if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+  startServer();
+}

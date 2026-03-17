@@ -4,6 +4,7 @@ import {
   DEFAULT_HEADLINE,
   ROOM_PHASES,
   ROOM_TITLE,
+  SKILL_BADGE_LIBRARY,
   VISUAL_CAST,
   ZONE_BY_ID,
   ZONE_DEFINITIONS,
@@ -52,6 +53,20 @@ const SCOUT_EVENT_PRIORITY = [
   "result_returned",
   "handoff_created",
   "reassignment_triggered"
+];
+const SKILL_HEURISTICS = [
+  {
+    id: "test-driven-development",
+    patterns: ["npm test", "node --test", "red-green", "regression test"]
+  },
+  {
+    id: "verification-before-completion",
+    patterns: ["git status", "curl -s http://localhost:4317/api/status", "console_messages", "browser_snapshot", "browser_take_screenshot", "verification"]
+  },
+  {
+    id: "webapp-testing",
+    patterns: ["playwright", "browser_navigate", "browser_wait_for", "browser_click", "browser_take_screenshot"]
+  }
 ];
 
 function clamp(value, min, max) {
@@ -251,6 +266,79 @@ function shortTask(summary, fallback) {
   }
 
   return summary.length > 72 ? `${summary.slice(0, 69)}...` : summary;
+}
+
+function titleizeSkillSlug(slug) {
+  return slug
+    .split("-")
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(" ");
+}
+
+function extractSkills(logs = []) {
+  const pathPattern = /(?:\.codex|\.agents)\/skills\/([^/\s]+)\/SKILL\.md/gi;
+  const explicitPattern = /\$([a-z0-9-]+)/gi;
+  const found = new Map();
+  const aggregateText = normalizeText(logs.map((log) => log.message || ""));
+
+  for (const log of logs) {
+    const haystack = `${log.message || ""} ${extractCommandLike(log.message || "")}`.trim();
+
+    for (const match of haystack.matchAll(pathPattern)) {
+      const skillId = match[1];
+      if (!found.has(skillId)) {
+        found.set(skillId, {
+          id: skillId,
+          source: "skill_file",
+          ts: Number(log.ts || 0)
+        });
+      }
+    }
+
+    for (const match of haystack.matchAll(explicitPattern)) {
+      const skillId = match[1];
+      if (SKILL_BADGE_LIBRARY[skillId] && !found.has(skillId)) {
+        found.set(skillId, {
+          id: skillId,
+          source: "skill_ref",
+          ts: Number(log.ts || 0)
+        });
+      }
+    }
+  }
+
+  SKILL_HEURISTICS.forEach((rule) => {
+    if (found.has(rule.id)) {
+      return;
+    }
+
+    if (rule.patterns.some((pattern) => aggregateText.includes(pattern))) {
+      found.set(rule.id, {
+        id: rule.id,
+        source: "heuristic",
+        ts: 0
+      });
+    }
+  });
+
+  return [...found.values()]
+    .sort((left, right) => right.ts - left.ts)
+    .slice(0, 4)
+    .map((entry) => ({
+      id: entry.id,
+      label: SKILL_BADGE_LIBRARY[entry.id]?.label || titleizeSkillSlug(entry.id),
+      color: SKILL_BADGE_LIBRARY[entry.id]?.color || "#b8a2ff",
+      source: entry.source
+    }));
+}
+
+function extractCommandLike(message) {
+  const command = message.match(/"cmd":"((?:\\.|[^"])*)"/);
+  if (!command) {
+    return "";
+  }
+
+  return command[1];
 }
 
 function buildWorkstreams(taskIntelligence, orchestration) {
@@ -493,18 +581,24 @@ function buildSceneDirector(room, workstreams, recentEvents) {
     title: ROOM_TITLE,
     headline: DEFAULT_HEADLINE,
     description: DEFAULT_DESCRIPTION,
+    resting: room.resting,
     tone:
-      room.phase === "standby"
+      room.resting
+        ? "rest"
+        : room.phase === "standby"
         ? "calm"
         : room.phase === "review_wrap"
           ? "steady"
           : room.status === "busy"
             ? "busy"
             : "steady",
-    camera: room.mode === "multi" ? "wide" : `focus-${room.focus_zone}`,
-    desk_highlights: unique([room.focus_zone, ...highlightZones]).filter(Boolean),
+    camera: room.resting ? "rest-lab" : room.mode === "multi" ? "wide" : `focus-${room.focus_zone}`,
+    desk_highlights: room.resting
+      ? ["lab"]
+      : unique([room.focus_zone, ...highlightZones]).filter(Boolean),
     primary_bubble: primaryBubble,
     scout,
+    skill_badges: room.skills || [],
     phase_title: phaseMeta.title,
     phase_reason: room.phase_reason,
     focus_title: zoneFromId(room.focus_zone).title,
@@ -577,7 +671,7 @@ function buildAgentStates(workstreams, orchestration, taskIntelligence, scene) {
     const ownedStreams = workstreamsByOwner[agent.id] || [];
     const primaryStream = ownedStreams.find((stream) => stream.status === "active") || ownedStreams[0];
     const assignedZone =
-      orchestration.room_phase === "planning_huddle"
+      orchestration.room_phase === "planning_huddle" || taskIntelligence.signals.passive_mode
         ? "lab"
         : primaryStream?.zone || agent.defaultAssignedZone;
 
@@ -651,6 +745,7 @@ export function buildRoomState({ status, thread, repoContext, recentThreads = []
     current_repo: taskIntelligence.current_repo,
     mode: orchestration.mode,
     resting: orchestration.room_phase === "standby" && taskIntelligence.signals.passive_mode,
+    skills: extractSkills(logs),
     phase_reason: reasons.phase_reason,
     focus_reason: reasons.focus_reason
   };
@@ -668,6 +763,7 @@ export function buildRoomState({ status, thread, repoContext, recentThreads = []
     workstreams,
     agents,
     recent_events: recentEvents,
+    skills: room.skills,
     scene,
     thread,
     repoContext,

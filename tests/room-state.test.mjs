@@ -169,5 +169,44 @@ test("cooldown rest mode returns the room to standby with a visible break state"
   assert.equal(state.room.resting, true);
   assert.equal(state.room.current_task, "Istirahat sejenak");
   assert.equal(state.scene.primary_bubble.text, "istirahat dulu");
+  assert.equal(state.scene.resting, true);
   assert.equal(state.agents.find((agent) => agent.id === "lead")?.activity, "idle");
+});
+
+test("skill badge awareness extracts active skills from runtime traces", () => {
+  const state = buildRoomState({
+    status: "busy",
+    thread: makeThread({
+      title: "Refactor room state with better verification"
+    }),
+    repoContext: null,
+    recentThreads: [],
+    activity: makeActivity({
+      summary: "Wire TDD and verification flow into the room"
+    }),
+    logs: [
+      {
+        ts: 1710000000,
+        message:
+          'ToolCall: functions.exec_command {"cmd":"sed -n \'1,220p\' /Users/funtoco/.codex/skills/test-driven-development/SKILL.md"}'
+      },
+      {
+        ts: 1709999999,
+        message:
+          'ToolCall: functions.exec_command {"cmd":"sed -n \'1,220p\' /Users/funtoco/.codex/skills/verification-before-completion/SKILL.md"}'
+      },
+      {
+        ts: 1709999998,
+        message:
+          'ToolCall: functions.exec_command {"cmd":"sed -n \'1,220p\' /Users/funtoco/.codex/skills/webapp-testing/SKILL.md"}'
+      }
+    ]
+  });
+
+  assert.deepEqual(
+    state.skills.map((skill) => skill.id),
+    ["test-driven-development", "verification-before-completion", "webapp-testing"]
+  );
+  assert.equal(state.scene.skill_badges.length, 3);
+  assert.equal(state.scene.skill_badges[0].label, "TDD");
 });
