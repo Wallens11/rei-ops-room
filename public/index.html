@@ -102,20 +102,24 @@
 
         <aside class="inspector">
           <article class="panel compact-panel">
-            <p class="panel-label">Mission Brief</p>
-            <h3 id="repo-name">Loading...</h3>
-            <p id="cwd-display" class="mono dim">...</p>
+            <p class="panel-label">Current Objective</p>
+            <h3 id="objective-title">Loading...</h3>
+            <p id="objective-meta" class="mono dim">...</p>
             <div class="meta-row">
-              <span id="branch-chip" class="chip">branch</span>
-              <span id="updated-chip" class="chip">update</span>
+              <span id="objective-repo-chip" class="chip">repo</span>
+              <span id="objective-phase-chip" class="chip">phase</span>
             </div>
-            <p id="thread-title" class="thread-title">Memuat thread terbaru...</p>
+            <p id="objective-detail" class="thread-title">Memuat objective aktif...</p>
           </article>
 
           <article id="runtime-panel" class="panel compact-panel">
-            <p class="panel-label">Runtime Trail</p>
-            <h3 id="activity-summary">Memuat log...</h3>
-            <p id="activity-source" class="dim mono">thread</p>
+            <p class="panel-label">Live Now</p>
+            <h3 id="runtime-live-title">Belum ada activity live.</h3>
+            <p id="runtime-live-meta" class="dim mono">room idle</p>
+            <div class="mini-divider"></div>
+            <p class="panel-label">Last Finished</p>
+            <h4 id="runtime-finished-title">Belum ada aksi terakhir.</h4>
+            <p id="runtime-finished-meta" class="dim mono">thread</p>
             <div class="mini-divider"></div>
             <p class="panel-label">Last Specific Repo</p>
             <h4 id="repo-context-name">-</h4>

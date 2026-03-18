@@ -601,6 +601,113 @@ test("workspace dock counts the real number of active lanes when multiple worker
   assert.equal(state.workspace.active_room.active_lane_count, 3);
 });
 
+test("current objective summarizes the active goal instead of echoing the raw thread opener", () => {
+  const state = buildRoomState({
+    status: "busy",
+    thread: makeThread({
+      title: "rei kita bisa buat agent pixel ga si disini wkwk",
+      cwd: "/Users/funtoco/workSpace",
+      cwdDisplay: "workspace root",
+      repoName: "workSpace"
+    }),
+    repoContext: makeThread({
+      id: "thread_repo_context",
+      title: "Refine room workspace and wrap transitions",
+      cwd: "/Users/funtoco/workSpace/codex-pixel-agent",
+      cwdDisplay: "codex-pixel-agent",
+      repoName: "codex-pixel-agent"
+    }),
+    recentThreads: [],
+    activity: makeActivity({
+      summary: "Sketch room behavior and define the first pixel agent flow",
+      lastLogAgeSeconds: 14,
+      lastLogAgo: "14 dtk lalu"
+    }),
+    logs: [{ ts: 1710000000, message: "Planning pixel room behavior" }]
+  });
+
+  assert.equal(state.objective.title, "bangun pixel ops room");
+  assert.match(state.objective.detail, /agent pixel/i);
+  assert.equal(state.objective.repo, "codex-pixel-agent");
+  assert.equal(state.room.current_task, "bangun pixel ops room");
+});
+
+test("runtime trail decays a finished command into last finished instead of keeping it live", () => {
+  const state = buildRoomState({
+    status: "busy",
+    thread: makeThread({
+      title: "Check LAN access for the pixel room"
+    }),
+    repoContext: null,
+    recentThreads: [],
+    activity: makeActivity({
+      summary: "Menjalankan: ipconfig getifaddr en1",
+      lastLogAgeSeconds: 26,
+      lastLogAgo: "26 dtk lalu"
+    }),
+    logs: [
+      {
+        ts: 1710000000,
+        message:
+          'ToolCall: functions.exec_command {"cmd":"ipconfig getifaddr en1"}'
+      },
+      {
+        ts: 1709999990,
+        message:
+          'ToolCall: functions.exec_command {"cmd":"ipconfig getifaddr en0"}'
+      }
+    ]
+  });
+
+  assert.equal(state.runtime.live_now, null);
+  assert.equal(state.runtime.last_finished.title, "network check");
+  assert.equal(state.runtime.last_finished.status, "recent");
+  assert.equal(state.room.current_task, state.objective.title);
+});
+
+test("runtime trail ignores low-level transport noise when there is no meaningful finished action", () => {
+  const state = buildRoomState({
+    status: "busy",
+    thread: makeThread({
+      title: "rei kita bisa buat agent pixel ga si disini wkwk",
+      cwd: "/Users/funtoco/workSpace",
+      cwdDisplay: "workspace root",
+      repoName: "workSpace",
+      updatedAgeSeconds: 0,
+      updatedAgo: "baru saja"
+    }),
+    repoContext: makeThread({
+      id: "thread_repo_context",
+      title: "Refine room workspace and wrap transitions",
+      cwd: "/Users/funtoco/workSpace/codex-pixel-agent",
+      cwdDisplay: "codex-pixel-agent",
+      repoName: "codex-pixel-agent"
+    }),
+    recentThreads: [],
+    activity: {
+      summary: "rei kita bisa buat agent pixel ga si disini wkwk",
+      source: "thread",
+      kind: "thread",
+      lastLogAgeSeconds: 0,
+      lastLogAgo: "baru saja"
+    },
+    logs: [
+      {
+        ts: 1710000000,
+        message: "registering event source with poller: token=Token(36376310912)"
+      },
+      {
+        ts: 1709999999,
+        message: "token usage"
+      }
+    ]
+  });
+
+  assert.equal(state.runtime.live_now, null);
+  assert.equal(state.runtime.last_finished, null);
+  assert.equal(state.room.current_task, "bangun pixel ops room");
+});
+
 test("cooldown rest mode returns the room to standby with a visible break state", () => {
   const state = buildRoomState({
     status: "cooldown",

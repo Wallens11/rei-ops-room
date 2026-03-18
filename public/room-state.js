@@ -71,6 +71,17 @@ const SKILL_HEURISTICS = [
 const REVIEW_STAGE_RESULT_RETURNING_MAX = 24;
 const REVIEW_STAGE_REGROUP_MAX = 60;
 const REVIEW_STAGE_COOLDOWN_MIN = 90;
+const LIVE_RUNTIME_MAX_SECONDS = 10;
+const RECENT_RUNTIME_MAX_SECONDS = 60;
+const RUNTIME_NOISE_SNIPPETS = [
+  "registering event source with poller",
+  "token usage",
+  "tool gate released",
+  "waiting for tool gate",
+  "websocket request:",
+  "websocket event:",
+  "unhandled responses event:"
+];
 
 function clamp(value, min, max) {
   return Math.max(min, Math.min(max, value));
@@ -216,6 +227,25 @@ function humanizeSummary(summary, { zoneId = "lab", kind = "task" } = {}) {
     normalized.includes("test")
   ) {
     return "verification pass";
+  }
+
+  if (
+    normalized.includes("agent pixel") ||
+    normalized.includes("pixel room") ||
+    normalized.includes("ops room")
+  ) {
+    return "pixel ops room";
+  }
+
+  if (
+    normalized.includes("ipconfig") ||
+    normalized.includes("getifaddr") ||
+    normalized.includes("networksetup") ||
+    normalized.includes("lan") ||
+    normalized.includes("ipad") ||
+    normalized.includes("wifi")
+  ) {
+    return "network check";
   }
 
   if (
@@ -631,6 +661,69 @@ export function summarizePrimaryTask(summary) {
   return humanizeSummary(summary, { zoneId: "lab" }) || "Standby di room aktif";
 }
 
+function summarizeObjectiveLabel(summary, { zoneId = "lab", phase = "standby" } = {}) {
+  const normalized = normalizeText(summary);
+
+  if (!normalized) {
+    return phase === "planning_huddle" ? "kunci arah kerja room" : fallbackLabelForZone(zoneId, "objective");
+  }
+
+  if (
+    normalized.includes("agent pixel") ||
+    normalized.includes("pixel room") ||
+    normalized.includes("ops room")
+  ) {
+    return "bangun pixel ops room";
+  }
+
+  if (
+    normalized.includes("ipad") ||
+    normalized.includes("lan") ||
+    normalized.includes("network") ||
+    normalized.includes("getifaddr") ||
+    normalized.includes("ipconfig")
+  ) {
+    return "cek akses room dari device lain";
+  }
+
+  if (
+    normalized.includes("issue") &&
+    (normalized.includes("split") ||
+      normalized.includes("pecah") ||
+      normalized.includes("wakeru") ||
+      normalized.includes("task"))
+  ) {
+    return "pecah issue jadi task kecil";
+  }
+
+  const humanized = humanizeSummary(summary, { zoneId, kind: "objective" });
+
+  switch (humanized) {
+    case "pixel ops room":
+      return "bangun pixel ops room";
+    case "network check":
+      return "cek akses room dari device lain";
+    case "review wrap":
+      return "rapihin hasil dan siapin wrap";
+    case "verification pass":
+      return "cek hasil dan verifikasi room";
+    case "layout check":
+      return "rapihin layout dan tampilan room";
+    case "runtime mapping":
+      return "rapihin runtime dan state room";
+    case "trace reading":
+      return "baca trace dan cari sinyal room";
+    case "debug pass":
+      return "beresin issue yang lagi aktif";
+    case "result return":
+      return "kumpulkan hasil lane untuk review";
+    case "coordination pass":
+      return "kunci arah kerja room";
+    default:
+      return humanized;
+  }
+}
+
 function titleizeSkillSlug(slug) {
   return slug
     .split("-")
@@ -702,6 +795,78 @@ function extractCommandLike(message) {
   }
 
   return command[1];
+}
+
+function extractToolNameFromMessage(message) {
+  const match = String(message || "").match(/^ToolCall:\s+([A-Za-z0-9_.-]+)/);
+  return match ? match[1] : "";
+}
+
+function summarizeToolName(toolName) {
+  const normalized = normalizeText(toolName);
+
+  if (!normalized) {
+    return null;
+  }
+
+  if (normalized.includes("exec_command") || normalized.includes("shell_command")) {
+    return "terminal task";
+  }
+
+  if (normalized.includes("spawn_agent")) {
+    return "spawn workstream";
+  }
+
+  if (normalized.includes("wait_agent")) {
+    return "wait result";
+  }
+
+  if (normalized.includes("send_input")) {
+    return "handoff context";
+  }
+
+  if (normalized.includes("playwright") || normalized.includes("browser")) {
+    return "browser check";
+  }
+
+  return null;
+}
+
+function cleanRuntimeSummary(summary) {
+  return String(summary || "")
+    .replace(/^menjalankan:\s*/i, "")
+    .replace(/^tool:\s*/i, "")
+    .trim();
+}
+
+function summarizeRuntimeLabel(summary, zoneId) {
+  return humanizeSummary(cleanRuntimeSummary(summary), {
+    zoneId,
+    kind: "task"
+  });
+}
+
+function summarizeRuntimeLog(log, zoneId) {
+  const message = String(log?.message || "").trim();
+  if (!message) {
+    return null;
+  }
+
+  if (RUNTIME_NOISE_SNIPPETS.some((snippet) => normalizeText(message).includes(snippet))) {
+    return null;
+  }
+
+  const command = extractCommandLike(log?.message || "");
+  if (command) {
+    return humanizeSummary(command, { zoneId, kind: "task" });
+  }
+
+  const toolSummary = summarizeToolName(extractToolNameFromMessage(log?.message || ""));
+  if (toolSummary) {
+    return toolSummary;
+  }
+
+  return humanizeSummary(message, { zoneId, kind: "task" });
 }
 
 function buildWorkstreams(taskIntelligence, orchestration) {
@@ -1421,6 +1586,136 @@ function countActiveLanes(room, workstreams = [], agentJobs = []) {
   return 1;
 }
 
+function buildObjectiveState(taskIntelligence, room, thread) {
+  const detail = thread?.title || taskIntelligence.request || "Belum ada objective aktif.";
+
+  return {
+    title: summarizeObjectiveLabel(taskIntelligence.request || taskIntelligence.current_task_summary, {
+      zoneId: room.focus_zone,
+      phase: room.phase
+    }),
+    detail,
+    repo: room.current_repo,
+    focus_title: zoneFromId(room.focus_zone).title,
+    phase_title: ROOM_PHASES[room.phase]?.title || ROOM_PHASES.standby.title,
+    mode: room.mode,
+    updated_ago: thread?.updatedAgo || "-"
+  };
+}
+
+function formatRelativeAge(secondsAgo) {
+  if (!Number.isFinite(secondsAgo) || secondsAgo < 0) {
+    return "-";
+  }
+
+  if (secondsAgo < 5) {
+    return "baru saja";
+  }
+
+  if (secondsAgo < 60) {
+    return `${Math.floor(secondsAgo)} dtk lalu`;
+  }
+
+  const minutes = Math.floor(secondsAgo / 60);
+  if (minutes < 60) {
+    return `${minutes} mnt lalu`;
+  }
+
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) {
+    return `${hours} jam lalu`;
+  }
+
+  return `${Math.floor(hours / 24)} hari lalu`;
+}
+
+function buildRuntimeState(taskIntelligence, room, activity, logs = [], nowSeconds = null) {
+  const zoneId = room.focus_zone;
+  const ageSeconds = activity?.lastLogAgeSeconds ?? Number.POSITIVE_INFINITY;
+  const activeAgentJobs = taskIntelligence.signals.agent_jobs?.active_count || 0;
+  const activityKind =
+    activity?.kind || (activity?.source === "tool" ? "work" : activity?.source === "presence" ? "rest" : "thread");
+  const currentTitle = summarizeRuntimeLabel(activity?.summary, zoneId);
+  const history = [];
+  const seen = new Set();
+
+  for (const log of logs) {
+    const title = summarizeRuntimeLog(log, zoneId);
+    if (!title || seen.has(title) || title === currentTitle) {
+      continue;
+    }
+
+    seen.add(title);
+    const logAgeSeconds = Number.isFinite(nowSeconds) && Number.isFinite(Number(log?.ts))
+      ? Math.max(0, nowSeconds - Number(log.ts))
+      : null;
+    history.push({
+      title,
+      detail: null,
+      source_label: "runtime history",
+      age_label: formatRelativeAge(logAgeSeconds ?? Number.POSITIVE_INFINITY),
+      status: "history"
+    });
+
+    if (history.length >= 3) {
+      break;
+    }
+  }
+
+  const hasLiveWork =
+    !room.resting &&
+    (activeAgentJobs > 0 ||
+      (activityKind === "work" &&
+        room.status === "busy" &&
+        ageSeconds <= LIVE_RUNTIME_MAX_SECONDS));
+
+  let liveNow = null;
+  let lastFinished = null;
+
+  if (hasLiveWork && currentTitle) {
+    liveNow = {
+      title: currentTitle,
+      detail: cleanRuntimeSummary(activity?.summary),
+      source_label:
+        activeAgentJobs > 0
+          ? `${activeAgentJobs} active lane${activeAgentJobs > 1 ? "s" : ""}`
+          : activity?.source || "runtime",
+      age_label: activity?.lastLogAgo || "-",
+      status: "active"
+    };
+  }
+
+  if (
+    !hasLiveWork &&
+    currentTitle &&
+    activityKind === "work" &&
+    ageSeconds <= RECENT_RUNTIME_MAX_SECONDS
+  ) {
+    lastFinished = {
+      title: currentTitle,
+      detail: cleanRuntimeSummary(activity?.summary),
+      source_label: activity?.source || "runtime",
+      age_label: activity?.lastLogAgo || "-",
+      status: "recent"
+    };
+  } else if (history[0]) {
+    lastFinished = history[0];
+  } else if (room.resting) {
+    lastFinished = {
+      title: "room settled",
+      detail: "Room lagi istirahat dan belum ada aksi baru.",
+      source_label: "presence",
+      age_label: activity?.lastLogAgo || "-",
+      status: "idle"
+    };
+  }
+
+  return {
+    live_now: liveNow,
+    last_finished: lastFinished
+  };
+}
+
 function buildWorkspaceState(room, thread, recentThreads = [], workstreams = [], agentJobs = []) {
   const activeRepo = room.current_repo || thread?.repoName || "workspace";
   const activeRepoLabel = activeRepo === "workspace" ? "Workspace Hub" : activeRepo;
@@ -1529,6 +1824,15 @@ export function buildRoomState({
 
   const workstreams = buildWorkstreams(taskIntelligence, orchestration);
   const recentEvents = buildRecentEvents(taskIntelligence, orchestration, workstreams, thread);
+  const objective = buildObjectiveState(taskIntelligence, room, thread);
+  const runtime = buildRuntimeState(
+    taskIntelligence,
+    room,
+    activity,
+    logs,
+    inferNowSeconds(thread, activity)
+  );
+  room.current_task = room.resting ? "Istirahat sejenak" : runtime.live_now?.title || objective.title;
   const restCorner = buildRestCorner(room, activity);
   room.rest_corner = restCorner;
   const scene = buildSceneDirector({ ...room, rest_corner: restCorner }, workstreams, recentEvents);
@@ -1537,6 +1841,8 @@ export function buildRoomState({
   return {
     status,
     room,
+    objective,
+    runtime,
     workspace: buildWorkspaceState(room, thread, recentThreads, workstreams, agentJobs),
     taskIntelligence,
     orchestration,

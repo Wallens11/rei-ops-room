@@ -355,8 +355,10 @@ p {
 }
 
 #task-title,
-#activity-summary,
-#thread-title,
+#objective-title,
+#objective-detail,
+#runtime-live-title,
+#runtime-finished-title,
 #repo-context-title,
 #scene-detail-body {
   overflow-wrap: anywhere;
@@ -371,8 +373,10 @@ p {
   max-height: 2.5em;
 }
 
-#activity-summary,
-#thread-title,
+#objective-title,
+#objective-detail,
+#runtime-live-title,
+#runtime-finished-title,
 #repo-context-title {
   display: -webkit-box;
   overflow: hidden;

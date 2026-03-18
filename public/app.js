@@ -77,13 +77,15 @@ const elements = {
   focusReason: document.getElementById("focus-reason"),
   taskTitle: document.getElementById("task-title"),
   taskRepo: document.getElementById("task-repo"),
-  repoName: document.getElementById("repo-name"),
-  cwdDisplay: document.getElementById("cwd-display"),
-  branchChip: document.getElementById("branch-chip"),
-  updatedChip: document.getElementById("updated-chip"),
-  threadTitle: document.getElementById("thread-title"),
-  activitySummary: document.getElementById("activity-summary"),
-  activitySource: document.getElementById("activity-source"),
+  objectiveTitle: document.getElementById("objective-title"),
+  objectiveMeta: document.getElementById("objective-meta"),
+  objectiveRepoChip: document.getElementById("objective-repo-chip"),
+  objectivePhaseChip: document.getElementById("objective-phase-chip"),
+  objectiveDetail: document.getElementById("objective-detail"),
+  runtimeLiveTitle: document.getElementById("runtime-live-title"),
+  runtimeLiveMeta: document.getElementById("runtime-live-meta"),
+  runtimeFinishedTitle: document.getElementById("runtime-finished-title"),
+  runtimeFinishedMeta: document.getElementById("runtime-finished-meta"),
   activeRoomRepo: document.getElementById("active-room-repo"),
   activeRoomMeta: document.getElementById("active-room-meta"),
   activeRoomTitle: document.getElementById("active-room-title"),
@@ -201,6 +203,19 @@ function createEmptyState() {
       summary: "Belum ada log thread",
       source: "thread",
       lastLogAgo: "belum ada data"
+    },
+    objective: {
+      title: "Belum ada objective aktif.",
+      detail: "Thread baru akan muncul di sini saat room mulai jalan.",
+      repo: "workspace",
+      focus_title: "Lead Table",
+      phase_title: ROOM_PHASES.standby.title,
+      mode: "solo",
+      updated_ago: "-"
+    },
+    runtime: {
+      live_now: null,
+      last_finished: null
     },
     workspace: {
       active_room: {
@@ -646,19 +661,32 @@ function applyStatus(data) {
   elements.taskTitle.textContent = truncate(data.room.current_task, 64);
   elements.taskRepo.textContent = `${data.room.current_repo} | ${data.room.mode}`;
 
-  elements.repoName.textContent = data.room.current_repo || "No thread";
-  elements.cwdDisplay.textContent = data.thread?.cwdDisplay || "-";
-  elements.branchChip.textContent = data.thread?.gitBranch || "no branch";
-  elements.updatedChip.textContent = data.thread
-    ? `thread ${data.thread.updatedAgo}`
-    : "thread ?";
-  elements.threadTitle.textContent = truncate(
-    data.thread?.title || "Belum ada thread aktif.",
+  elements.objectiveTitle.textContent = truncate(
+    data.objective?.title || data.room.current_task || "Belum ada objective aktif.",
+    76
+  );
+  elements.objectiveMeta.textContent = `${data.objective?.focus_title || data.scene.focus_title || "Lead Table"} | ${data.room.mode}`;
+  elements.objectiveRepoChip.textContent = data.objective?.repo || data.room.current_repo || "workspace";
+  elements.objectivePhaseChip.textContent = data.objective?.phase_title || data.scene.phase_title || "Standby";
+  elements.objectiveDetail.textContent = truncate(
+    data.objective?.detail || data.thread?.title || "Belum ada thread aktif.",
     160
   );
 
-  elements.activitySummary.textContent = truncate(data.activity.summary, 88);
-  elements.activitySource.textContent = data.activity.source;
+  elements.runtimeLiveTitle.textContent = truncate(
+    data.runtime?.live_now?.title || "Tidak ada activity live.",
+    88
+  );
+  elements.runtimeLiveMeta.textContent = data.runtime?.live_now
+    ? `${data.runtime.live_now.source_label} | ${data.runtime.live_now.age_label}`
+    : "room idle";
+  elements.runtimeFinishedTitle.textContent = truncate(
+    data.runtime?.last_finished?.title || "Belum ada aksi terakhir.",
+    88
+  );
+  elements.runtimeFinishedMeta.textContent = data.runtime?.last_finished
+    ? `${data.runtime.last_finished.source_label} | ${data.runtime.last_finished.age_label}`
+    : "thread";
 
   if (data.repoContext) {
     elements.repoContextName.textContent = data.repoContext.repoName;
@@ -1154,8 +1182,8 @@ async function refresh() {
     const data = await response.json();
     applyStatus(data);
   } catch (error) {
-    elements.activitySummary.textContent = "Gagal membaca status lokal.";
-    elements.activitySource.textContent = error instanceof Error ? error.message : String(error);
+    elements.runtimeLiveTitle.textContent = "Gagal membaca status lokal.";
+    elements.runtimeLiveMeta.textContent = error instanceof Error ? error.message : String(error);
   }
 }
 
