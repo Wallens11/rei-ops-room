@@ -96,6 +96,20 @@ test("filterMeaningfulLogs ignores tool gate wait noise", () => {
   assert.equal(logs[0].message, 'ToolCall: functions.exec_command {"cmd":"npm test"}');
 });
 
+test("filterMeaningfulLogs ignores internal write_stdin plumbing events", () => {
+  const logs = filterMeaningfulLogs([
+    {
+      message: "ToolCall: functions.write_stdin"
+    },
+    {
+      message: 'ToolCall: functions.exec_command {"cmd":"npm test"}'
+    }
+  ]);
+
+  assert.equal(logs.length, 1);
+  assert.equal(logs[0].message, 'ToolCall: functions.exec_command {"cmd":"npm test"}');
+});
+
 test("stripWorkspacePrefix handles Windows-style workspace paths", () => {
   const workspaceRoot = "C:\\Users\\muham\\workSpace";
 

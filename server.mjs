@@ -134,6 +134,7 @@ const OBSERVER_TOOL_PREFIXES = [
   "functions.mcp__playwright__browser_",
   "mcp__playwright__browser_"
 ];
+const INTERNAL_TOOL_NAMES = new Set(["functions.write_stdin", "write_stdin"]);
 const OBSERVER_COMMAND_SNIPPETS = [
   "http://localhost:4317",
   "localhost:4317/api/status",
@@ -389,6 +390,10 @@ export function filterMeaningfulLogs(logs) {
     }
 
     const toolName = extractToolName(log.message);
+    if (toolName && INTERNAL_TOOL_NAMES.has(toolName)) {
+      return false;
+    }
+
     if (toolName && isObserverTool(toolName)) {
       return false;
     }

@@ -550,6 +550,57 @@ test("workspace state keeps one active room and groups other repos into sleeping
   assert.equal(state.workspace.sleeping_rooms[1].status, "idle");
 });
 
+test("workspace dock counts the real number of active lanes when multiple worker jobs are running", () => {
+  const state = buildRoomState({
+    status: "busy",
+    thread: makeThread({
+      id: "thread_workspace_lanes",
+      repoName: "rei-ops-room",
+      cwdDisplay: "rei-ops-room",
+      title: "Split three live lanes across the room"
+    }),
+    repoContext: null,
+    recentThreads: [],
+    activity: makeActivity({
+      summary: "Lead is coordinating three active worker lanes"
+    }),
+    logs: [{ ts: 1710000000, message: "Worker lanes are active" }],
+    agentJobs: [
+      {
+        job_id: "job_workspace_lanes",
+        item_id: "item_frontend",
+        status: "running",
+        assigned_thread_id: "thread_workspace_lanes",
+        instruction: "Fix room shell overflow",
+        row_json: JSON.stringify({ task: "Fix room shell overflow" }),
+        result_json: null
+      },
+      {
+        job_id: "job_workspace_lanes",
+        item_id: "item_backend",
+        status: "running",
+        assigned_thread_id: "thread_workspace_lanes",
+        instruction: "Refine runtime event mapping",
+        row_json: JSON.stringify({ task: "Refine runtime event mapping" }),
+        result_json: null
+      },
+      {
+        job_id: "job_workspace_lanes",
+        item_id: "item_review",
+        status: "running",
+        assigned_thread_id: "thread_workspace_lanes",
+        instruction: "Prepare concise room wrap labels",
+        row_json: JSON.stringify({ task: "Prepare concise room wrap labels" }),
+        result_json: null
+      }
+    ]
+  });
+
+  assert.equal(state.room.mode, "multi");
+  assert.equal(state.room.phase, "squad_split");
+  assert.equal(state.workspace.active_room.active_lane_count, 3);
+});
+
 test("cooldown rest mode returns the room to standby with a visible break state", () => {
   const state = buildRoomState({
     status: "cooldown",

@@ -1405,7 +1405,23 @@ function presenceFromAgeSeconds(secondsAgo = Number.POSITIVE_INFINITY) {
   return "idle";
 }
 
-function buildWorkspaceState(room, thread, recentThreads = []) {
+function countActiveLanes(room, workstreams = [], agentJobs = []) {
+  const activeAgentJobs = agentJobs.filter((job) => job.status === "active");
+  if (activeAgentJobs.length > 0) {
+    return activeAgentJobs.length;
+  }
+
+  const activeWorkstreams = workstreams.filter(
+    (stream) => stream.status === "active" && stream.owner !== "lead"
+  );
+  if (activeWorkstreams.length > 0) {
+    return activeWorkstreams.length;
+  }
+
+  return 1;
+}
+
+function buildWorkspaceState(room, thread, recentThreads = [], workstreams = [], agentJobs = []) {
   const activeRepo = room.current_repo || thread?.repoName || "workspace";
   const activeRepoLabel = activeRepo === "workspace" ? "Workspace Hub" : activeRepo;
   const threads = [thread, ...recentThreads]
@@ -1452,10 +1468,7 @@ function buildWorkspaceState(room, thread, recentThreads = []) {
       repo: activeRepoLabel,
       cwd_display: activeSummary.cwdDisplay,
       recent_thread_count: activeSummary.issueCount,
-      active_lane_count: Math.max(
-        1,
-        room.mode === "multi" ? (room.phase === "standby" ? 1 : 2) : 1
-      ),
+      active_lane_count: countActiveLanes(room, workstreams, agentJobs),
       status: room.status,
       phase: room.phase,
       latest_title: activeSummary.latestTitle,
@@ -1524,7 +1537,7 @@ export function buildRoomState({
   return {
     status,
     room,
-    workspace: buildWorkspaceState(room, thread, recentThreads),
+    workspace: buildWorkspaceState(room, thread, recentThreads, workstreams, agentJobs),
     taskIntelligence,
     orchestration,
     workstreams,
