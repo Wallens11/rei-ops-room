@@ -20,6 +20,10 @@ import {
   describeSceneSelection,
   findSceneHotspotAt
 } from "./scene-details.js";
+import {
+  createStatusTransport,
+  STATUS_POLL_FALLBACK_MS
+} from "./status-stream.js";
 
 const canvas = document.getElementById("room-canvas");
 const context = canvas.getContext("2d");
@@ -109,6 +113,7 @@ const renderState = {
   frame: 0,
   data: createEmptyState(),
   mode: "room",
+  transportMode: "connecting",
   actors: buildCrewActors(ZONES),
   hotspots: [],
   hoveredHotspot: null,
@@ -389,6 +394,22 @@ function statusLabel(status, resting = false) {
   return "Idle";
 }
 
+function transportLabel(mode) {
+  if (mode === "stream") {
+    return "live stream";
+  }
+
+  if (mode === "polling") {
+    return `polling ${Math.round(STATUS_POLL_FALLBACK_MS / 1000)}s`;
+  }
+
+  if (mode === "stopped") {
+    return "transport off";
+  }
+
+  return "connecting";
+}
+
 function modeLabel(mode) {
   return mode === "multi" ? "Multi" : "Solo";
 }
@@ -407,6 +428,15 @@ function workstreamStatusLabel(status) {
 
 function formatConfidence(value) {
   return `${Math.round((value || 0) * 100)}%`;
+}
+
+function updateActivityAgeLabel() {
+  const prefix = transportLabel(renderState.transportMode);
+  const ageLabel = renderState.data?.activity?.lastLogAgo || "belum ada data";
+
+  elements.activityAge.textContent = renderState.data?.room?.resting
+    ? `${prefix} | idle ${ageLabel}`
+    : `${prefix} | last log ${ageLabel}`;
 }
 
 function setStatusPill(status, resting = false) {
@@ -650,9 +680,7 @@ function applyStatus(data) {
   elements.focusChip.textContent = data.scene.focus_title || data.focus?.title || "Lead Table";
   elements.modeChip.textContent = modeLabel(data.room.mode);
   elements.confidenceChip.textContent = `focus ${formatConfidence(data.room.focus_confidence)}`;
-  elements.activityAge.textContent = data.room.resting
-    ? `idle ${data.activity.lastLogAgo}`
-    : `last log ${data.activity.lastLogAgo}`;
+  updateActivityAgeLabel();
 
   elements.phaseTitle.textContent = data.scene.phase_title || data.phase?.title || "Standby";
   elements.phaseReason.textContent = data.scene.phase_reason || data.phase?.reason || "";
@@ -1172,19 +1200,9 @@ canvas.addEventListener("click", (event) => {
   }
 });
 
-async function refresh() {
-  try {
-    const response = await fetch("/api/status", { cache: "no-store" });
-    if (!response.ok) {
-      throw new Error(`HTTP ${response.status}`);
-    }
-
-    const data = await response.json();
-    applyStatus(data);
-  } catch (error) {
-    elements.runtimeLiveTitle.textContent = "Gagal membaca status lokal.";
-    elements.runtimeLiveMeta.textContent = error instanceof Error ? error.message : String(error);
-  }
+function showTransportError(error) {
+  elements.runtimeLiveTitle.textContent = "Gagal membaca status lokal.";
+  elements.runtimeLiveMeta.textContent = error instanceof Error ? error.message : String(error);
 }
 
 function animate() {
@@ -1210,5 +1228,21 @@ function animate() {
 initMode();
 drawScene();
 setInterval(animate, 160);
-refresh();
-setInterval(refresh, 3000);
+
+const statusTransport = createStatusTransport({
+  onStatus(data) {
+    applyStatus(data);
+  },
+  onModeChange(mode) {
+    renderState.transportMode = mode;
+    updateActivityAgeLabel();
+  },
+  onTransportError(error) {
+    showTransportError(error);
+  }
+});
+
+statusTransport.start();
+window.addEventListener("beforeunload", () => {
+  statusTransport.stop();
+});

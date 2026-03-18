@@ -80,7 +80,8 @@ const RUNTIME_NOISE_SNIPPETS = [
   "waiting for tool gate",
   "websocket request:",
   "websocket event:",
-  "unhandled responses event:"
+  "unhandled responses event:",
+  "successfully connected to websocket:"
 ];
 
 function clamp(value, min, max) {

@@ -4,6 +4,7 @@ import assert from "node:assert/strict";
 import {
   buildAgentJobItemsSql,
   contentType,
+  createSseFrame,
   buildThreadLogsSql,
   filterMeaningfulLogs,
   stripWorkspacePrefix,
@@ -110,6 +111,21 @@ test("filterMeaningfulLogs ignores internal write_stdin plumbing events", () => 
   assert.equal(logs[0].message, 'ToolCall: functions.exec_command {"cmd":"npm test"}');
 });
 
+test("filterMeaningfulLogs ignores codex websocket connection chatter", () => {
+  const logs = filterMeaningfulLogs([
+    {
+      message:
+        "successfully connected to websocket: wss://chatgpt.com/backend-api/codex/responses"
+    },
+    {
+      message: 'ToolCall: functions.exec_command {"cmd":"npm test"}'
+    }
+  ]);
+
+  assert.equal(logs.length, 1);
+  assert.equal(logs[0].message, 'ToolCall: functions.exec_command {"cmd":"npm test"}');
+});
+
 test("stripWorkspacePrefix handles Windows-style workspace paths", () => {
   const workspaceRoot = "C:\\Users\\muham\\workSpace";
 
@@ -122,4 +138,21 @@ test("stripWorkspacePrefix handles Windows-style workspace paths", () => {
 
 test("contentType serves svg assets with the correct MIME type", () => {
   assert.equal(contentType("public/favicon.svg"), "image/svg+xml");
+});
+
+test("createSseFrame formats named events with retry and JSON data", () => {
+  const frame = createSseFrame({
+    event: "status",
+    retry: 2500,
+    id: "evt-1",
+    data: {
+      ok: true,
+      repo: "rei-ops-room"
+    }
+  });
+
+  assert.equal(
+    frame,
+    'id: evt-1\nevent: status\nretry: 2500\ndata: {"ok":true,"repo":"rei-ops-room"}\n\n'
+  );
 });

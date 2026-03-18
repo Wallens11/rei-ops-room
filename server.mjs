@@ -17,6 +17,8 @@ const stateDb = process.env.CODEX_STATE_DB || path.join(codexHome, "state_5.sqli
 const logsDb = process.env.CODEX_LOGS_DB || path.join(codexHome, "logs_1.sqlite");
 const port = Number(process.env.PORT || 4317);
 export const SQLITE_JSON_MAX_BUFFER = 8 * 1024 * 1024;
+export const STATUS_STREAM_RETRY_MS = 2500;
+const STATUS_STREAM_INTERVAL_MS = Number(process.env.STATUS_STREAM_INTERVAL_MS || 2000);
 const FOCUS_PROFILES = [
   {
     zone: "frontend",
@@ -152,11 +154,39 @@ const NOISE_MESSAGE_SNIPPETS = [
   "registering event source with poller",
   "token usage",
   "tool gate released",
-  "waiting for tool gate"
+  "waiting for tool gate",
+  "successfully connected to websocket:"
 ];
+const statusStreamClients = new Set();
+let statusStreamTimer = null;
+let statusStreamSequence = 0;
+let statusStreamInflight = null;
 
 function quoteSql(value) {
   return `'${String(value).replaceAll("'", "''")}'`;
+}
+
+export function createSseFrame({ event = "message", retry = null, id = null, data = "" } = {}) {
+  const lines = [];
+
+  if (id) {
+    lines.push(`id: ${id}`);
+  }
+
+  if (event) {
+    lines.push(`event: ${event}`);
+  }
+
+  if (Number.isFinite(retry)) {
+    lines.push(`retry: ${retry}`);
+  }
+
+  const payload = typeof data === "string" ? data : JSON.stringify(data);
+  for (const line of String(payload).split(/\r?\n/)) {
+    lines.push(`data: ${line}`);
+  }
+
+  return `${lines.join("\n")}\n\n`;
 }
 
 export function buildThreadLogsSql(threadId, limit = 500, messageLimit = 320) {
@@ -714,6 +744,92 @@ async function getStatus() {
   };
 }
 
+function writeStatusStreamFrame(response, payload) {
+  response.write(
+    createSseFrame({
+      event: "status",
+      retry: STATUS_STREAM_RETRY_MS,
+      id: `status-${++statusStreamSequence}`,
+      data: payload
+    })
+  );
+}
+
+function writeStatusStreamError(response, error) {
+  response.write(
+    createSseFrame({
+      event: "status_error",
+      retry: STATUS_STREAM_RETRY_MS,
+      id: `status-error-${++statusStreamSequence}`,
+      data: {
+        error: "Failed to read Codex state",
+        detail: error instanceof Error ? error.message : String(error)
+      }
+    })
+  );
+}
+
+async function broadcastStatusSnapshot() {
+  if (statusStreamClients.size === 0) {
+    return;
+  }
+
+  if (statusStreamInflight) {
+    return statusStreamInflight;
+  }
+
+  statusStreamInflight = (async () => {
+    try {
+      const payload = await getStatus();
+      for (const client of statusStreamClients) {
+        writeStatusStreamFrame(client, payload);
+      }
+    } catch (error) {
+      for (const client of statusStreamClients) {
+        writeStatusStreamError(client, error);
+      }
+    } finally {
+      statusStreamInflight = null;
+    }
+  })();
+
+  return statusStreamInflight;
+}
+
+function ensureStatusStreamTimer() {
+  if (statusStreamTimer || statusStreamClients.size === 0) {
+    return;
+  }
+
+  statusStreamTimer = setInterval(() => {
+    void broadcastStatusSnapshot();
+  }, STATUS_STREAM_INTERVAL_MS);
+}
+
+function cleanupStatusStreamTimer() {
+  if (statusStreamClients.size > 0 || !statusStreamTimer) {
+    return;
+  }
+
+  clearInterval(statusStreamTimer);
+  statusStreamTimer = null;
+}
+
+async function attachStatusStream(response) {
+  response.writeHead(200, {
+    "Content-Type": "text/event-stream; charset=utf-8",
+    "Cache-Control": "no-cache, no-transform",
+    Connection: "keep-alive",
+    "X-Accel-Buffering": "no"
+  });
+  response.flushHeaders?.();
+  response.write(": connected\n\n");
+
+  statusStreamClients.add(response);
+  ensureStatusStreamTimer();
+  await broadcastStatusSnapshot();
+}
+
 export function contentType(filePath) {
   if (filePath.endsWith(".html")) {
     return "text/html; charset=utf-8";
@@ -779,6 +895,19 @@ const server = http.createServer(async (request, response) => {
         )
       );
     }
+    return;
+  }
+
+  if (url.pathname === "/api/status/stream") {
+    request.socket.setTimeout(0);
+    request.socket.setNoDelay(true);
+
+    request.on("close", () => {
+      statusStreamClients.delete(response);
+      cleanupStatusStreamTimer();
+    });
+
+    await attachStatusStream(response);
     return;
   }
 
