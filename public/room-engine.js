@@ -297,6 +297,16 @@ function routeForActor(actor, agentState, { focusZone, roomPhase, zones, scene }
     };
   }
 
+  if (
+    roomPhase === "standby" &&
+    agentState.activity === "idle" &&
+    agentState.idle_behavior !== "idle_patrol"
+  ) {
+    const assignedZoneId = agentState.assigned_zone || actor.home;
+    const targetZone = zoneById(zones, assignedZoneId);
+    return stableWorkRoute(actor, targetZone);
+  }
+
   if (roomPhase === "squad_split" && agentState.activity === "moving") {
     return createDispatchRoute(actor, zones, agentState.assigned_zone);
   }

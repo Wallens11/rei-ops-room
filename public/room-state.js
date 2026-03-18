@@ -33,6 +33,18 @@ const REVIEW_TERMS = [
   "label",
   "copy"
 ];
+const REVIEW_EVIDENCE_TERMS = [
+  "review requested",
+  "review request",
+  "result returned",
+  "returned result",
+  "returned results",
+  "wait_agent",
+  "prepare concise labels",
+  "summarize changes",
+  "human-readable wrap",
+  "review wrap"
+];
 const DELEGATION_TERMS = [
   "spawn_agent",
   "spawn agent",
@@ -43,7 +55,14 @@ const DELEGATION_TERMS = [
   "send_input",
   "wait_agent"
 ];
-const RESULT_TERMS = ["wait_agent", "result", "returned", "merged", "done", "completed"];
+const RESULT_TERMS = [
+  "wait_agent",
+  "result returned",
+  "returned result",
+  "returned results",
+  "results came back",
+  "worker results"
+];
 const DEBUG_TERMS = ["debug", "fix", "error", "fail", "failing", "trace"];
 const READING_TERMS = ["read", "inspect", "parse", "mapping", "map", "log", "logs"];
 const SUMMARY_TERMS = ["summary", "summarize", "label", "wrap", "handoff", "review"];
@@ -462,6 +481,7 @@ function baseSignals({ thread, repoContext, activity, logs, status, agentJobs = 
 
   const planning = countMatches(normalizeText(primaryText, logText), PLANNING_TERMS, 1.1);
   const review = countMatches(normalizeText(primaryText, logText), REVIEW_TERMS, 1.1);
+  const reviewEvidence = countMatches(normalizeText(primaryText, logText), REVIEW_EVIDENCE_TERMS, 1.25);
   const delegation = countMatches(normalizeText(primaryText, logText), DELEGATION_TERMS, 1.25);
   const results = countMatches(logText, RESULT_TERMS, 1.2);
   const debug = countMatches(normalizeText(primaryText, logText), DEBUG_TERMS, 1.1);
@@ -473,16 +493,24 @@ function baseSignals({ thread, repoContext, activity, logs, status, agentJobs = 
   const normalizedAgentJobs = normalizeAgentJobs(agentJobs);
   const activeAgentJobs = normalizedAgentJobs.filter((job) => job.status === "active");
   const completedAgentJobs = normalizedAgentJobs.filter((job) => job.status === "completed");
+  if (completedAgentJobs.length > 0) {
+    reviewEvidence.hits.push("completed_agent_job");
+    reviewEvidence.score += 2.6;
+    results.hits.push("completed_agent_job");
+    results.score += 2.4;
+  }
   const completionAgeSeconds = inferCompletionAgeSeconds({
     thread,
     activity,
     normalizedAgentJobs,
     rawAgentJobs: agentJobs
   });
+  const secondaryLaneEligible =
+    second.score >= Math.max(2.5, top.score * 0.45) &&
+    (delegation.score >= 1.25 || toolBurst >= 1.5 || activeAgentJobs.length > 0);
   const multiCandidate =
     delegation.score +
-    (second.score >= Math.max(2.5, top.score * 0.45) ? 1.25 : 0) +
-    (review.score >= 2.2 && top.zoneId !== "review" ? 0.75 : 0) +
+    (secondaryLaneEligible ? 1.6 : 0) +
     (toolBurst >= 1.5 ? 0.4 : 0);
   const multiFromAgentJobs = activeAgentJobs.length > 0 || normalizedAgentJobs.length >= 2;
   const focusZone = passiveMode && status !== "busy" ? "lab" : top.score >= 1.2 ? top.zoneId : "lab";
@@ -513,6 +541,10 @@ function baseSignals({ thread, repoContext, activity, logs, status, agentJobs = 
       new_request: newRequest,
       planning,
       review,
+      review_evidence: {
+        hits: unique(reviewEvidence.hits),
+        score: reviewEvidence.score
+      },
       delegation,
       results,
       debug,
@@ -596,7 +628,7 @@ function inferOrchestration(taskIntelligence, { status, thread, activity }) {
   } else if (signals.agent_jobs?.active_count > 0) {
     roomPhase = "squad_split";
     reason = "Ada worker thread aktif yang benar-benar assigned, jadi squad split pakai runtime orchestration.";
-  } else if (signals.review.score >= 2.4 && (signals.results.score > 0 || mode === "multi")) {
+  } else if (signals.review.score >= 2.4 && signals.review_evidence.score >= 1.25) {
     roomPhase = "review_wrap";
     reviewStage = inferReviewStage(signals, status);
     reason =
@@ -644,7 +676,9 @@ function inferOrchestration(taskIntelligence, { status, thread, activity }) {
       focus_zone: dominantZone,
       active_owner: ZONE_TO_AGENT[dominantZone] || "lead"
     },
-    review_trigger: signals.review.score >= 2.4 || roomPhase === "review_wrap",
+    review_trigger:
+      roomPhase === "review_wrap" ||
+      (signals.review.score >= 2.4 && signals.review_evidence.score >= 1.25),
     standby_trigger: standbyDueToInactivity,
     reason
   };
@@ -876,6 +910,7 @@ function buildWorkstreams(taskIntelligence, orchestration) {
   const focusOwner = ZONE_TO_AGENT[dominantZone] || "lead";
   const agentJobs = taskIntelligence.signals.agent_jobs?.items || [];
   const activeAgentJobs = agentJobs.filter((job) => job.status === "active");
+  const docsJobActive = agentJobs.some((job) => job.owner === "docs");
   const secondaries = taskIntelligence.sorted_zones
     .filter((entry) => entry.zoneId !== dominantZone && entry.score >= 2.8)
     .slice(0, 2);
@@ -958,7 +993,7 @@ function buildWorkstreams(taskIntelligence, orchestration) {
   if (
     orchestration.review_trigger ||
     orchestration.room_phase === "review_wrap" ||
-    taskIntelligence.mode === "multi"
+    docsJobActive
   ) {
     streams.push({
       id: "ws_review",
@@ -968,7 +1003,12 @@ function buildWorkstreams(taskIntelligence, orchestration) {
         orchestration.room_phase === "review_wrap"
           ? "review wrap"
           : "prepare wrap notes",
-      status: orchestration.room_phase === "review_wrap" ? "active" : "queued"
+      status:
+        orchestration.room_phase === "review_wrap"
+          ? orchestration.review_stage === "cooldown"
+            ? "completed"
+            : "active"
+          : "queued"
     });
   }
 
@@ -1037,12 +1077,6 @@ function buildRecentEvents(taskIntelligence, orchestration, workstreams, thread)
         to: orchestration.room_phase === "review_wrap" ? "review" : "lab",
         workstream_id: job.id
       });
-    });
-  } else if (taskIntelligence.signals.results.score > 0) {
-    events.push({
-      type: "result_returned",
-      from: taskIntelligence.dominant_zone,
-      to: orchestration.room_phase === "review_wrap" ? "review" : "lab"
     });
   }
 
@@ -1343,7 +1377,15 @@ function inferWorkerActivity(agentId, roomPhase, stream, taskIntelligence, revie
   }
 
   if (agentId === "docs") {
-    return taskIntelligence.signals.summarizing.score > 0 ? "summarizing" : "reviewing";
+    if (taskIntelligence.signals.summarizing.score > 0) {
+      return "summarizing";
+    }
+
+    if (taskIntelligence.signals.reading.score > 0) {
+      return "reading";
+    }
+
+    return "waiting";
   }
 
   if (taskIntelligence.signals.debug.score > 0) {

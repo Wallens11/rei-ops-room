@@ -150,6 +150,88 @@ test("review wrap activates docs review flow after results come back", () => {
   );
 });
 
+test("generic multi-lane execution does not create a docs review lane without review evidence", () => {
+  const state = buildRoomState({
+    status: "busy",
+    thread: makeThread({
+      id: "thread_multi_no_review",
+      title: "Coordinate frontend and backend fixes for the room"
+    }),
+    repoContext: null,
+    recentThreads: [],
+    activity: makeActivity({
+      summary: "Lead is coordinating active worker threads"
+    }),
+    logs: [{ ts: 1710000000, message: "Agent workers are running" }],
+    agentJobs: [
+      {
+        job_id: "job_multi_no_review",
+        item_id: "item_frontend_live",
+        status: "running",
+        assigned_thread_id: "thread_multi_no_review",
+        instruction: "Fix clipping and CSS layout in the room shell",
+        row_json: JSON.stringify({
+          task: "Fix clipping and CSS layout in the room shell"
+        }),
+        result_json: null
+      },
+      {
+        job_id: "job_multi_no_review",
+        item_id: "item_backend_live",
+        status: "running",
+        assigned_thread_id: "thread_multi_no_review",
+        instruction: "Refine runtime event mapping and state cleanup",
+        row_json: JSON.stringify({
+          task: "Refine runtime event mapping and state cleanup"
+        }),
+        result_json: null
+      }
+    ]
+  });
+
+  assert.equal(state.room.phase, "squad_split");
+  assert.equal(
+    state.workstreams.some((workstream) => workstream.id === "ws_review"),
+    false
+  );
+  assert.equal(state.agents.find((agent) => agent.id === "docs")?.activity, "waiting");
+});
+
+test("generic result wording does not synthesize a returned-result event without explicit completion", () => {
+  const state = buildRoomState({
+    status: "cooldown",
+    thread: makeThread({
+      title: "Review final room wording and keep the layout tidy",
+      updatedAgeSeconds: 160,
+      updatedAgo: "2 mnt lalu"
+    }),
+    repoContext: null,
+    recentThreads: [],
+    activity: makeActivity({
+      summary: "Review notes are done and the room is settling down",
+      lastLogAgeSeconds: 95,
+      lastLogAgo: "1 mnt lalu"
+    }),
+    logs: [{ ts: 1710000000, message: "Done checking room wording" }]
+  });
+
+  assert.notEqual(state.room.phase, "review_wrap");
+  assert.equal(state.room.mode, "solo");
+  assert.equal(
+    state.recent_events.some((event) => event.type === "result_returned"),
+    false
+  );
+  assert.equal(
+    state.recent_events.some((event) => event.type === "handoff_created"),
+    false
+  );
+  assert.equal(
+    state.workstreams.some((workstream) => workstream.id === "ws_review"),
+    false
+  );
+  assert.notEqual(state.agents.find((agent) => agent.id === "docs")?.activity, "reviewing");
+});
+
 test("assigned agent job items drive real multi-agent squad split", () => {
   const state = buildRoomState({
     status: "busy",
@@ -872,6 +954,11 @@ test("cooldown cleans active review/request visuals into passive aftermath", () 
   assert.equal(state.scene.scout.active, false);
   assert.equal(state.scene.visual_intensity, "low");
   assert.deepEqual(state.scene.desk_highlights, ["lab"]);
+  assert.equal(state.agents.find((agent) => agent.id === "docs")?.activity, "idle");
+  assert.equal(
+    state.workstreams.find((workstream) => workstream.id === "ws_review")?.status,
+    "completed"
+  );
 });
 
 test("skill badge awareness extracts active skills from runtime traces", () => {

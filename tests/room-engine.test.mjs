@@ -246,6 +246,46 @@ test("resting standby sends only allowed agents into the rest corner", () => {
   }
 });
 
+test("standby keeps the lead settled at the lab instead of pacing", () => {
+  const zones = createDefaultZones();
+  let actors = buildCrewActors(zones);
+  const lab = zones.find((zone) => zone.id === "lab");
+  const leadSpot = lab.workSpot[0];
+
+  for (let frame = 1; frame <= 120; frame += 1) {
+    actors = stepCrewActors(actors, {
+      frame,
+      status: "idle",
+      focusZone: "lab",
+      roomPhase: "standby",
+      agents: buildAgentState({
+        lead: { activity: "idle", assigned_zone: "lab", idle_behavior: "idle_observe" },
+        ui: { activity: "idle", assigned_zone: "frontend", idle_behavior: "idle_at_desk" },
+        api: { activity: "idle", assigned_zone: "backend", idle_behavior: "idle_observe" },
+        db: { activity: "idle", assigned_zone: "database", idle_behavior: "idle_observe" },
+        docs: { activity: "idle", assigned_zone: "review", idle_behavior: "idle_at_desk" },
+        scout: { activity: "idle", assigned_zone: "lab", idle_behavior: "idle_patrol" }
+      }),
+      scene: {
+        resting: false,
+        rest_corner: {
+          active: false,
+          allowed_agent_ids: []
+        },
+        scout: {
+          active: false
+        }
+      },
+      zones
+    });
+  }
+
+  const lead = actors.find((actor) => actor.id === "lead");
+  const distance = Math.hypot(lead.x - leadSpot.x, lead.y - leadSpot.y);
+  assert.ok(distance < 12, `lead did not settle near the lab work spot: ${distance}`);
+  assert.equal(lead.moving, false);
+});
+
 test("review regroup pulls finished workers back toward the lab instead of snapping idle", () => {
   const zones = createDefaultZones();
   let actors = buildCrewActors(zones);
