@@ -52,7 +52,13 @@ test("findSceneHotspotAt resolves agent, desk, and event hotspots in priority or
 test("describeSceneSelection explains agents, desks, and event badges without noise", () => {
   const state = {
     scene: {
-      focus_title: "Backend Rack"
+      active_zone: {
+        title: "Backend Rack"
+      },
+      assignment_hint: {
+        active: true,
+        title: "Docs / Ops Corner"
+      }
     },
     workstreams: [
       {
@@ -93,9 +99,9 @@ test("describeSceneSelection explains agents, desks, and event badges without no
 
   assert.match(
     describeSceneSelection(
-      { id: "event_backend", kind: "event", zone: "backend", label: "runtime sync" },
+      { id: "event_backend", kind: "event", label: "runtime sync" },
       state
     ).body,
-    /runtime detail/i
+    /Backend Rack/i
   );
 });

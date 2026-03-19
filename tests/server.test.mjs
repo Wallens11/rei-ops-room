@@ -3,10 +3,12 @@ import assert from "node:assert/strict";
 
 import {
   buildAgentJobItemsSql,
+  buildGlobalRuntimeLogsSql,
   contentType,
   createSseFrame,
   buildThreadLogsSql,
   filterMeaningfulLogs,
+  selectActivityLogs,
   stripWorkspacePrefix,
   SQLITE_JSON_MAX_BUFFER,
   sqliteJsonWithRunner
@@ -71,6 +73,14 @@ test("buildThreadLogsSql trims message payloads before exporting large log windo
   assert.match(sql, /WHERE thread_id = 'thread-123'/);
 });
 
+test("buildGlobalRuntimeLogsSql pulls recent unscoped runtime logs for fallback activity", () => {
+  const sql = buildGlobalRuntimeLogsSql();
+
+  assert.match(sql, /FROM logs/i);
+  assert.match(sql, /thread_id IS NULL OR thread_id = ''/i);
+  assert.match(sql, /ORDER BY ts DESC/i);
+});
+
 test("buildAgentJobItemsSql scopes multi-agent rows to the active thread", () => {
   const sql = buildAgentJobItemsSql("thread-456");
 
@@ -124,6 +134,30 @@ test("filterMeaningfulLogs ignores codex websocket connection chatter", () => {
 
   assert.equal(logs.length, 1);
   assert.equal(logs[0].message, 'ToolCall: functions.exec_command {"cmd":"npm test"}');
+});
+
+test("selectActivityLogs falls back to recent global runtime logs when thread logs only contain noise", () => {
+  const logs = selectActivityLogs(
+    [
+      {
+        ts: 1710000000,
+        message: 'websocket event: {"type":"response.output_item.done"}'
+      }
+    ],
+    [
+      {
+        ts: 1710000002,
+        message: 'Received message {"type":"response.function_call_arguments.done","arguments":"{\\"cmd\\":\\"npm test\\"}"}'
+      }
+    ],
+    {
+      nowSeconds: 1710000004,
+      recentWindowSeconds: 20
+    }
+  );
+
+  assert.equal(logs.length, 1);
+  assert.match(logs[0].message, /npm test/);
 });
 
 test("stripWorkspacePrefix handles Windows-style workspace paths", () => {

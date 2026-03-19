@@ -203,6 +203,21 @@ export function buildThreadLogsSql(threadId, limit = 500, messageLimit = 320) {
     `;
 }
 
+export function buildGlobalRuntimeLogsSql(limit = 120, messageLimit = 320) {
+  return `
+      SELECT
+        thread_id AS threadId,
+        ts,
+        level,
+        target,
+        substr(message, 1, ${messageLimit}) AS message
+      FROM logs
+      WHERE thread_id IS NULL OR thread_id = ''
+      ORDER BY ts DESC, ts_nanos DESC, id DESC
+      LIMIT ${limit};
+    `;
+}
+
 export function buildAgentJobItemsSql(threadId, limit = 12) {
   return `
       SELECT
@@ -430,6 +445,28 @@ export function filterMeaningfulLogs(logs) {
 
     return true;
   });
+}
+
+export function selectActivityLogs(threadLogs, globalLogs = [], { nowSeconds, recentWindowSeconds = 20 } = {}) {
+  const meaningfulThreadLogs = filterMeaningfulLogs(threadLogs);
+  if (meaningfulThreadLogs.length > 0) {
+    return meaningfulThreadLogs;
+  }
+
+  const meaningfulGlobalLogs = filterMeaningfulLogs(globalLogs).filter((log) => {
+    if (!Number.isFinite(nowSeconds)) {
+      return true;
+    }
+
+    const ts = Number(log.ts || 0);
+    if (!Number.isFinite(ts) || ts <= 0) {
+      return false;
+    }
+
+    return Math.max(0, nowSeconds - ts) <= recentWindowSeconds;
+  });
+
+  return meaningfulGlobalLogs;
 }
 
 function summarizeActivity(logs) {
@@ -697,7 +734,8 @@ async function getStatus() {
     const logSql = buildThreadLogsSql(latestThread.id);
 
     threadLogs = await sqliteJson(logsDb, logSql);
-    const meaningfulLogs = filterMeaningfulLogs(threadLogs);
+    const globalLogs = await sqliteJson(logsDb, buildGlobalRuntimeLogsSql());
+    const meaningfulLogs = selectActivityLogs(threadLogs, globalLogs, { nowSeconds });
     if (meaningfulLogs.length > 0) {
       lastLogAt = Number(meaningfulLogs[0].ts || lastLogAt);
       activity = summarizeActivity(meaningfulLogs);

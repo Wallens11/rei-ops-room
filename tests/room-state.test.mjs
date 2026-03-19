@@ -51,6 +51,8 @@ test("execution state separates room phase, workstreams, and agent activity", ()
   assert.equal(state.room.focus_zone, "backend");
   assert.equal(state.room.mode, "solo");
   assert.ok(state.room.phase_confidence >= 0.7);
+  assert.equal(state.scene.active_zone.id, "backend");
+  assert.equal(state.scene.assignment_hint.active, false);
   assert.equal(state.workstreams[0].zone, "backend");
   assert.equal(state.workstreams[0].status, "active");
   assert.equal(state.agents.find((agent) => agent.id === "api")?.activity, "coding");
@@ -86,6 +88,127 @@ test("planning huddle is used when a new request still has low focus confidence"
     state.recent_events.some((event) => event.type === "new_request"),
     "expected a new_request event"
   );
+});
+
+test("planning huddle keeps the room staged in lab while exposing the next assignment hint", () => {
+  const state = buildRoomState({
+    status: "busy",
+    thread: makeThread({
+      title: "Need a plan for docs review labels before implementation",
+      updatedAgeSeconds: 12,
+      updatedAgo: "12 dtk lalu"
+    }),
+    repoContext: null,
+    recentThreads: [],
+    activity: makeActivity({
+      summary: "Brief the squad and outline review labels before implementation",
+      lastLogAgeSeconds: 12,
+      lastLogAgo: "12 dtk lalu"
+    }),
+    logs: [{ ts: 1710000000, message: "Need plan for review labels before implementation" }]
+  });
+
+  assert.equal(state.room.phase, "planning_huddle");
+  assert.equal(state.room.focus_zone, "review");
+  assert.equal(state.scene.camera, "lab");
+  assert.deepEqual(state.scene.desk_highlights, ["lab"]);
+  assert.equal(state.scene.active_zone.id, "lab");
+  assert.equal(state.scene.active_zone.label, "Active Desk");
+  assert.equal(state.scene.active_zone.title, "Lead Table");
+  assert.match(state.scene.active_zone.reason, /kumpul|scope|assignment/i);
+  assert.equal(state.scene.assignment_hint.active, true);
+  assert.equal(state.scene.assignment_hint.label, "Next Assignment");
+  assert.equal(state.scene.assignment_hint.zone_id, "review");
+  assert.equal(state.scene.assignment_hint.title, "Docs / Ops Corner");
+  assert.equal(state.scene.assignment_hint.chip_title, "Next: Docs / Ops Corner");
+  assert.match(state.scene.assignment_hint.reason, /briefing di lab/i);
+});
+
+test("active execution evidence breaks out of planning huddle even on a fresh request", () => {
+  const state = buildRoomState({
+    status: "busy",
+    thread: makeThread({
+      title: "Need a plan for backend runtime state fix",
+      updatedAgeSeconds: 14,
+      updatedAgo: "14 dtk lalu"
+    }),
+    repoContext: null,
+    recentThreads: [],
+    activity: makeActivity({
+      summary: "Apply patch to room-state and run npm test for the backend runtime fix",
+      lastLogAgeSeconds: 4,
+      lastLogAgo: "4 dtk lalu"
+    }),
+    logs: [
+      { ts: 1710000000, message: "ToolCall: functions.apply_patch" },
+      { ts: 1709999999, message: 'ToolCall: functions.exec_command {"cmd":"npm test"}' },
+      { ts: 1709999998, message: "Fix backend runtime state mapping and verify the patch" }
+    ]
+  });
+
+  assert.equal(state.room.phase, "execution");
+  assert.equal(state.room.focus_zone, "backend");
+  assert.equal(state.scene.active_zone.id, "backend");
+  assert.equal(state.scene.assignment_hint.active, false);
+  assert.notEqual(state.agents.find((agent) => agent.id === "lead")?.activity, "gathering");
+  assert.equal(state.agents.find((agent) => agent.id === "api")?.activity, "debugging");
+});
+
+test("live runtime work outweighs a stale thread opener when choosing the active desk", () => {
+  const state = buildRoomState({
+    status: "busy",
+    thread: makeThread({
+      title: "Need docs review and issue cleanup for the room",
+      updatedAgeSeconds: 35,
+      updatedAgo: "35 dtk lalu"
+    }),
+    repoContext: null,
+    recentThreads: [],
+    activity: makeActivity({
+      summary: "Menjalankan: apply_patch public/room-state.js dan npm test untuk backend state fix",
+      source: "tool",
+      lastLogAgeSeconds: 6,
+      lastLogAgo: "6 dtk lalu"
+    }),
+    logs: [
+      { ts: 1710000000, message: 'ToolCall: functions.exec_command {"cmd":"npm test"}' },
+      { ts: 1709999999, message: "ToolCall: functions.apply_patch" },
+      { ts: 1709999998, message: "Fix backend runtime state mapping" }
+    ]
+  });
+
+  assert.equal(state.room.phase, "execution");
+  assert.equal(state.room.focus_zone, "backend");
+  assert.equal(state.scene.active_zone.id, "backend");
+  assert.equal(state.scene.assignment_hint.active, false);
+  assert.equal(state.objective.focus_title, "Backend Rack");
+});
+
+test("generic runtime commands like npm start still pull the room into execution instead of huddling", () => {
+  const state = buildRoomState({
+    status: "busy",
+    thread: makeThread({
+      title: "Need docs review and issue cleanup for the room",
+      updatedAgeSeconds: 18,
+      updatedAgo: "18 dtk lalu"
+    }),
+    repoContext: null,
+    recentThreads: [],
+    activity: makeActivity({
+      summary: "Menjalankan: npm start",
+      source: "tool",
+      lastLogAgeSeconds: 5,
+      lastLogAgo: "5 dtk lalu"
+    }),
+    logs: [
+      { ts: 1710000000, message: 'Received message {"type":"response.function_call_arguments.done","arguments":"{\\"cmd\\":\\"npm start\\"}"}' },
+      { ts: 1709999999, message: "ToolCall: functions.exec_command" }
+    ]
+  });
+
+  assert.equal(state.room.phase, "execution");
+  assert.equal(state.room.focus_zone, "backend");
+  assert.equal(state.scene.active_zone.id, "backend");
 });
 
 test("delegation creates squad split, multiple workstreams, and scout handoff", () => {
@@ -632,6 +755,64 @@ test("workspace state keeps one active room and groups other repos into sleeping
   assert.equal(state.workspace.sleeping_rooms[1].status, "idle");
 });
 
+test("workspace dock falls back to Workspace Hub when the room is dormant and the last repo is stale", () => {
+  const state = buildRoomState({
+    status: "idle",
+    thread: makeThread({
+      id: "thread_fun_base_stale",
+      repoName: "fun-base",
+      cwdDisplay: "fun-base",
+      title: "Issue follow-up in fun-base",
+      updatedAgo: "2 jam lalu",
+      updatedAgeSeconds: 2 * 60 * 60
+    }),
+    repoContext: null,
+    recentThreads: [
+      makeThread({
+        id: "thread_fun_base_stale",
+        repoName: "fun-base",
+        cwdDisplay: "fun-base",
+        title: "Issue follow-up in fun-base",
+        updatedAgo: "2 jam lalu",
+        updatedAgeSeconds: 2 * 60 * 60
+      }),
+      makeThread({
+        id: "thread_workspace_recent",
+        repoName: "workSpace",
+        cwd: "/Users/funtoco/workSpace",
+        cwdDisplay: "workspace root",
+        title: "General workspace chat",
+        updatedAgo: "40 dtk lalu",
+        updatedAgeSeconds: 40
+      }),
+      makeThread({
+        id: "thread_budget_recent",
+        repoName: "budget-app",
+        cwdDisplay: "budget-app",
+        title: "Budget OCR follow-up",
+        updatedAgo: "8 mnt lalu",
+        updatedAgeSeconds: 8 * 60
+      })
+    ],
+    activity: makeActivity({
+      summary: "Standby di room aktif",
+      source: "thread",
+      lastLogAgeSeconds: 26 * 60,
+      lastLogAgo: "26 mnt lalu"
+    }),
+    logs: []
+  });
+
+  assert.equal(state.room.phase, "standby");
+  assert.equal(state.workspace.active_room.repo, "Workspace Hub");
+  assert.equal(state.workspace.active_room.cwd_display, "workspace root");
+  assert.equal(state.workspace.active_room.latest_title, "General workspace chat");
+  assert.ok(
+    state.workspace.sleeping_rooms.some((entry) => entry.repo === "fun-base"),
+    "expected stale repo to move into sleeping rooms"
+  );
+});
+
 test("workspace dock counts the real number of active lanes when multiple worker jobs are running", () => {
   const state = buildRoomState({
     status: "busy",
@@ -709,9 +890,67 @@ test("current objective summarizes the active goal instead of echoing the raw th
   });
 
   assert.equal(state.objective.title, "bangun pixel ops room");
-  assert.match(state.objective.detail, /agent pixel/i);
+  assert.equal(state.objective.detail, "Sketch room behavior and define the first pixel agent flow");
   assert.equal(state.objective.repo, "codex-pixel-agent");
   assert.equal(state.room.current_task, "bangun pixel ops room");
+});
+
+test("workspace and objective cards use cleaned display titles when codex stores a raw prompt opener", () => {
+  const state = buildRoomState({
+    status: "idle",
+    thread: makeThread({
+      title: "rei kita bisa buat agent pixel ga si disini wkwk",
+      cwd: "/Users/funtoco/workSpace",
+      cwdDisplay: "workspace root",
+      repoName: "workSpace",
+      updatedAgeSeconds: 4,
+      updatedAgo: "4 dtk lalu"
+    }),
+    repoContext: makeThread({
+      id: "thread_fun_base_latest",
+      title:
+        "oke sembari nunggu review leader aku aku mau minta tolong kamu untuk buatin issue yang ada didalam issue ini dong rei https://github.com/funtoco/fun-docs/issues/527, di bawahnya kan itu ada task gitu kan nah itu aku mau komakaku kitte wakeru gitu buat aja di no status dulu soalnya nanti paling minggu depan pas aku teirei sama leader baru ngomong yang mana yang mau di kelarin dulu.. kalo udah kamu sambungin issue 527 itu ke issue issue yang udah di pecah ya.. bisa?",
+      cwd: "/Users/funtoco/workSpace/fun-base",
+      cwdDisplay: "fun-base",
+      repoName: "fun-base",
+      updatedAgeSeconds: 3600,
+      updatedAgo: "1 jam lalu"
+    }),
+    recentThreads: [
+      makeThread({
+        id: "thread_workspace_latest",
+        title: "rei kita bisa buat agent pixel ga si disini wkwk",
+        cwd: "/Users/funtoco/workSpace",
+        cwdDisplay: "workspace root",
+        repoName: "workSpace",
+        updatedAgeSeconds: 4,
+        updatedAgo: "4 dtk lalu"
+      }),
+      makeThread({
+        id: "thread_fun_base_latest",
+        title:
+          "oke sembari nunggu review leader aku aku mau minta tolong kamu untuk buatin issue yang ada didalam issue ini dong rei https://github.com/funtoco/fun-docs/issues/527, di bawahnya kan itu ada task gitu kan nah itu aku mau komakaku kitte wakeru gitu buat aja di no status dulu soalnya nanti paling minggu depan pas aku teirei sama leader baru ngomong yang mana yang mau di kelarin dulu.. kalo udah kamu sambungin issue 527 itu ke issue issue yang udah di pecah ya.. bisa?",
+        cwd: "/Users/funtoco/workSpace/fun-base",
+        cwdDisplay: "fun-base",
+        repoName: "fun-base",
+        updatedAgeSeconds: 3600,
+        updatedAgo: "1 jam lalu"
+      })
+    ],
+    activity: makeActivity({
+      summary: "Standby di room aktif",
+      source: "thread",
+      lastLogAgeSeconds: 45 * 60,
+      lastLogAgo: "45 mnt lalu"
+    }),
+    logs: []
+  });
+
+  assert.equal(state.objective.title, "bangun pixel ops room");
+  assert.equal(state.objective.detail, "Istirahat sejenak");
+  assert.equal(state.workspace.active_room.latest_title, "bangun pixel ops room");
+  assert.equal(state.workspace.sleeping_rooms[0].repo, "fun-base");
+  assert.equal(state.workspace.sleeping_rooms[0].latest_title, "pecah issue jadi task kecil");
 });
 
 test("runtime trail decays a finished command into last finished instead of keeping it live", () => {

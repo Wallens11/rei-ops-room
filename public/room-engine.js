@@ -13,6 +13,19 @@ export const REST_CORNER = {
   y: 112
 };
 
+const SETTLED_ACTIVITIES = new Set([
+  "reading",
+  "coding",
+  "debugging",
+  "summarizing",
+  "reviewing"
+]);
+
+const OBSERVATION_ACTIVITIES = new Set(["waiting", "idle"]);
+
+const OBSERVE_ROUTE_HOLD_FRAMES = 18;
+const OBSERVE_STANDBY_HOLD_FRAMES = 54;
+
 const BASE_ZONES = [
   {
     id: "frontend",
@@ -172,6 +185,171 @@ const REST_SPOT_OFFSETS = {
   scout: [{ x: 0, y: 52 }]
 };
 
+function samePoint(left, right) {
+  return left && right && left.x === right.x && left.y === right.y;
+}
+
+function dedupePoints(points) {
+  const deduped = [];
+
+  for (const point of points.filter(Boolean)) {
+    const previous = deduped[deduped.length - 1];
+    if (samePoint(previous, point)) {
+      continue;
+    }
+
+    deduped.push(point);
+  }
+
+  return deduped;
+}
+
+function hallwayCenter(zones) {
+  const lab = zoneById(zones, "lab");
+  return { x: lab.x, y: lab.y + 12 };
+}
+
+function familyHubForZone(zones, zoneId) {
+  const center = hallwayCenter(zones);
+
+  if (zoneId === "frontend" || zoneId === "backend") {
+    return { x: center.x, y: 186 };
+  }
+
+  if (zoneId === "database" || zoneId === "review") {
+    return { x: center.x, y: 248 };
+  }
+
+  return center;
+}
+
+function transitAnchorForZone(zones, zoneId) {
+  const zone = zoneById(zones, zoneId);
+
+  if (zoneId === "frontend") {
+    return { x: zone.x + 82, y: 186 };
+  }
+
+  if (zoneId === "backend") {
+    return { x: zone.x - 84, y: 186 };
+  }
+
+  if (zoneId === "database") {
+    return { x: zone.x + 72, y: 248 };
+  }
+
+  if (zoneId === "review") {
+    return { x: zone.x - 84, y: 248 };
+  }
+
+  return hallwayCenter(zones);
+}
+
+function alternateWorkSpot(actor, targetZone) {
+  const spots = targetZone.workSpot?.length ? targetZone.workSpot : targetZone.patrol;
+  const primary = stableWorkRoute(actor, targetZone).points[0];
+
+  return (
+    spots.find((point) => !samePoint(point, primary)) ||
+    targetZone.patrol.find((point) => !samePoint(point, primary)) ||
+    primary
+  );
+}
+
+function buildSeats(zone) {
+  return (WORK_SPOT_OFFSETS[zone.id] || []).map((offset, index) => ({
+    id: `${zone.id}_seat_${index}`,
+    x: zone.x + offset.x,
+    y: zone.y + offset.y,
+    facing: index === 0 ? 1 : -1
+  }));
+}
+
+function seatForActor(actor, targetZone) {
+  const seats = targetZone.seats?.length
+    ? targetZone.seats
+    : (targetZone.workSpot || []).map((point, index) => ({
+        id: `${targetZone.id}_seat_${index}`,
+        ...point,
+        facing: index === 0 ? 1 : -1
+      }));
+
+  const slotIndex = actor.id === "lead" || actor.id === "db" || actor.id === "docs" ? 0 : 1;
+  return seats[Math.min(slotIndex, seats.length - 1)] || null;
+}
+
+function createTransitRoute(zones, fromZoneId, toZoneId, finalPoints = []) {
+  const center = hallwayCenter(zones);
+  const fromAnchor = transitAnchorForZone(zones, fromZoneId);
+  const toAnchor = transitAnchorForZone(zones, toZoneId);
+  const fromHub = familyHubForZone(zones, fromZoneId);
+  const toHub = familyHubForZone(zones, toZoneId);
+
+  const points = [];
+
+  if (fromZoneId !== "lab") {
+    points.push(fromAnchor, fromHub);
+  } else {
+    points.push(center);
+  }
+
+  if (!samePoint(fromHub, center) || !samePoint(toHub, center)) {
+    points.push(center);
+  }
+
+  if (toZoneId !== "lab") {
+    points.push(toHub, toAnchor);
+  } else {
+    points.push(center);
+  }
+
+  points.push(...finalPoints);
+
+  return dedupePoints(points);
+}
+
+function createObservationLoop(actor, zones, zoneId, roomPhase = "execution") {
+  const targetZone = zoneById(zones, zoneId || actor.home);
+  const stableRoute = stableWorkRoute(actor, targetZone);
+  const primarySeat = stableRoute.seat;
+  const primary = stableRoute.points[0];
+  const secondary = alternateWorkSpot(actor, targetZone);
+  const anchor = transitAnchorForZone(zones, targetZone.id);
+  const hub = familyHubForZone(zones, targetZone.id);
+  const center = hallwayCenter(zones);
+
+  if (targetZone.id === "lab") {
+    return {
+      zoneId: "lab",
+      routeType: "observe",
+      seat: primarySeat,
+      holdIndices: [0, 4],
+      holdFrames: roomPhase === "standby" ? OBSERVE_STANDBY_HOLD_FRAMES : OBSERVE_ROUTE_HOLD_FRAMES,
+      points: dedupePoints([
+        primary,
+        { x: center.x - 54, y: center.y - 18 },
+        { x: center.x + 54, y: center.y + 18 },
+        secondary,
+        center
+      ])
+    };
+  }
+
+  const points =
+    roomPhase === "standby"
+      ? [primary, anchor, secondary, primary]
+      : [primary, anchor, hub, center, hub, anchor, secondary, primary];
+
+  return {
+    zoneId: targetZone.id,
+    routeType: "observe",
+    seat: primarySeat,
+    holdIndices: roomPhase === "standby" ? [0, 3] : [0, 7],
+    holdFrames: roomPhase === "standby" ? OBSERVE_STANDBY_HOLD_FRAMES : OBSERVE_ROUTE_HOLD_FRAMES,
+    points: dedupePoints(points)
+  };
+}
+
 function zoneById(zones, id) {
   return zones.find((zone) => zone.id === id) || zones[zones.length - 1];
 }
@@ -194,24 +372,25 @@ function withOffsets(zone, offsets) {
 }
 
 function createScoutRoute(zones, scoutScene) {
-  const fromZone = zoneById(zones, scoutScene?.from_zone || "lab");
-  const toZone = zoneById(zones, scoutScene?.to_zone || "lab");
-  const fromPoint = { x: fromZone.x, y: fromZone.y + 42 };
-  const toPoint = { x: toZone.x, y: toZone.y + 46 };
-  const midPoint = {
-    x: Math.round((fromPoint.x + toPoint.x) / 2),
-    y: Math.round((fromPoint.y + toPoint.y) / 2) - 18
-  };
+  const fromZoneId = scoutScene?.from_zone || "lab";
+  const toZoneId = scoutScene?.to_zone || "lab";
+  const destination = zoneById(zones, toZoneId);
+  const finalPoint = { x: destination.x, y: destination.y + 46 };
 
-  return [fromPoint, midPoint, toPoint, toPoint, midPoint];
+  return {
+    zoneId: toZoneId,
+    routeType: "scout",
+    points: createTransitRoute(zones, fromZoneId, toZoneId, [finalPoint, finalPoint])
+  };
 }
 
 export function createDefaultZones() {
   return BASE_ZONES.map((zone) => ({
     ...zone,
+    seats: buildSeats(zone),
     patrol: withOffsets(zone, PATROL_OFFSETS[zone.id]),
     activePatrol: withOffsets(zone, ACTIVE_PATROL_OFFSETS[zone.id]),
-    workSpot: withOffsets(zone, WORK_SPOT_OFFSETS[zone.id])
+    workSpot: buildSeats(zone).map((seat) => ({ x: seat.x, y: seat.y }))
   }));
 }
 
@@ -227,7 +406,13 @@ export function buildCrewActors(zones = createDefaultZones()) {
       y: start.y,
       patrolIndex: index % homeZone.patrol.length,
       facing: index % 2 === 0 ? 1 : -1,
-      moving: false
+      moving: false,
+      holdFrames: 0,
+      holdIndex: null,
+      motionState: "IDLE",
+      pose: "stand",
+      routeType: "patrol",
+      seatId: null
     };
   });
 }
@@ -236,6 +421,7 @@ function createMeetingRoute(zones, actorId) {
   const lab = zoneById(zones, "lab");
   return {
     zoneId: "lab",
+    routeType: "meeting",
     points: withOffsets(lab, MEETING_SPOT_OFFSETS[actorId] || MEETING_SPOT_OFFSETS.scout)
   };
 }
@@ -243,29 +429,33 @@ function createMeetingRoute(zones, actorId) {
 function createRestRoute(zones, actorId) {
   return {
     zoneId: "lab",
+    routeType: "rest",
     points: withOffsets(REST_CORNER, REST_SPOT_OFFSETS[actorId] || REST_SPOT_OFFSETS.scout)
   };
 }
 
 function createDispatchRoute(actor, zones, assignedZone) {
-  const home = zoneById(zones, actor.home);
   const targetZone = zoneById(zones, assignedZone || actor.home);
-  const meetingPoint = createMeetingRoute(zones, actor.id).points[0];
-  const targetPoint = targetZone.workSpot[0] || targetZone.patrol[0];
+  const targetSeat = seatForActor(actor, targetZone);
+  const targetPoint = targetSeat || targetZone.workSpot[0] || targetZone.patrol[0];
 
   return {
     zoneId: targetZone.id,
-    points: [meetingPoint, targetPoint]
+    routeType: "dispatch",
+    seat: targetSeat,
+    points: createTransitRoute(zones, "lab", targetZone.id, [targetPoint])
   };
 }
 
 function stableWorkRoute(actor, targetZone) {
+  const seat = seatForActor(actor, targetZone);
   const spots = targetZone.workSpot?.length ? targetZone.workSpot : targetZone.patrol;
-  const slotIndex = actor.id === "lead" || actor.id === "db" || actor.id === "docs" ? 0 : 1;
-  const point = spots[Math.min(slotIndex, spots.length - 1)];
+  const point = seat || spots[0];
 
   return {
     zoneId: targetZone.id,
+    routeType: "seat",
+    seat,
     points: [point]
   };
 }
@@ -284,16 +474,18 @@ function routeForActor(actor, agentState, { focusZone, roomPhase, zones, scene }
 
   if (actor.id === "scout") {
     if (scene?.scout?.active) {
-      return {
-        zoneId: scene.scout.to_zone || "lab",
-        points: createScoutRoute(zones, scene.scout)
-      };
+      return createScoutRoute(zones, scene.scout);
     }
 
     const lab = zoneById(zones, "lab");
     return {
       zoneId: "lab",
-      points: agentState.idle_behavior === "idle_patrol" ? lab.patrol : lab.workSpot
+      routeType: agentState.idle_behavior === "idle_patrol" ? "observe" : "seat",
+      seat: seatForActor(actor, lab),
+      points:
+        agentState.idle_behavior === "idle_patrol"
+          ? createObservationLoop(actor, zones, "lab", roomPhase).points
+          : lab.workSpot
     };
   }
 
@@ -302,6 +494,15 @@ function routeForActor(actor, agentState, { focusZone, roomPhase, zones, scene }
     agentState.activity === "idle" &&
     agentState.idle_behavior !== "idle_patrol"
   ) {
+    if (agentState.idle_behavior === "idle_observe" && actor.id !== "lead") {
+      return createObservationLoop(
+        actor,
+        zones,
+        agentState.assigned_zone || actor.home,
+        roomPhase
+      );
+    }
+
     const assignedZoneId = agentState.assigned_zone || actor.home;
     const targetZone = zoneById(zones, assignedZoneId);
     return stableWorkRoute(actor, targetZone);
@@ -334,19 +535,27 @@ function routeForActor(actor, agentState, { focusZone, roomPhase, zones, scene }
     }
   }
 
-  const settledActivities = new Set([
-    "reading",
-    "coding",
-    "debugging",
-    "summarizing",
-    "reviewing"
-  ]);
   const active = assignedZoneId === focusZone;
+
+  if (
+    OBSERVATION_ACTIVITIES.has(agentState.activity) &&
+    agentState.idle_behavior === "idle_observe" &&
+    actor.id !== "lead"
+  ) {
+    return createObservationLoop(actor, zones, assignedZoneId, roomPhase);
+  }
 
   return {
     zoneId: assignedZoneId,
+    routeType:
+      SETTLED_ACTIVITIES.has(agentState.activity) && roomPhase !== "standby"
+        ? "seat"
+        : active
+          ? "active_patrol"
+          : "patrol",
+    seat: seatForActor(actor, targetZone),
     points:
-      settledActivities.has(agentState.activity) && roomPhase !== "standby"
+      SETTLED_ACTIVITIES.has(agentState.activity) && roomPhase !== "standby"
         ? stableWorkRoute(actor, targetZone).points
         : active
           ? targetZone.activePatrol
@@ -375,6 +584,10 @@ function speedForActor(actor, agentState, { roomPhase, status, scene }) {
     return scene?.scout?.active ? 2.85 : 1.1;
   }
 
+  if (roomPhase === "standby" && agentState.idle_behavior === "idle_observe") {
+    return 1.55;
+  }
+
   if (agentState.activity === "moving") {
     return 2.45;
   }
@@ -384,6 +597,91 @@ function speedForActor(actor, agentState, { roomPhase, status, scene }) {
   }
 
   return 1.05;
+}
+
+function poseForActivity(activity) {
+  if (activity === "coding" || activity === "debugging") {
+    return "type";
+  }
+
+  if (activity === "reading" || activity === "reviewing" || activity === "summarizing") {
+    return "read";
+  }
+
+  return "sit";
+}
+
+function isSeatRouteSettled(routeType) {
+  return routeType === "seat" || routeType === "rest";
+}
+
+function deriveObservationState(route, patrolIndex, moving, holdFrames) {
+  const lastIndex = Math.max(0, route.points.length - 1);
+
+  if (holdFrames > 0 || (!moving && (patrolIndex === 0 || patrolIndex === lastIndex))) {
+    return {
+      motionState: "SEATED",
+      pose: "sit"
+    };
+  }
+
+  const halfway = Math.floor(lastIndex / 2);
+  if (patrolIndex >= halfway) {
+    return {
+      motionState: "RETURN",
+      pose: "walk"
+    };
+  }
+
+  return {
+    motionState: "WANDER",
+    pose: "walk"
+  };
+}
+
+function deriveActorMovement(actor, agentState, route, moving, holdFrames, patrolIndex) {
+  if (route.routeType === "meeting") {
+    return moving
+      ? { motionState: "WALK", pose: "walk" }
+      : { motionState: "HUDDLE", pose: "read" };
+  }
+
+  if (route.routeType === "dispatch" || route.routeType === "scout") {
+    return moving
+      ? { motionState: "WALK", pose: route.routeType === "scout" ? "carry" : "walk" }
+      : isSeatRouteSettled(route.routeType)
+        ? { motionState: "SEATED", pose: poseForActivity(agentState.activity) }
+        : { motionState: "WALK", pose: "walk" };
+  }
+
+  if (route.routeType === "observe") {
+    return deriveObservationState(route, patrolIndex, moving, holdFrames);
+  }
+
+  if (route.routeType === "rest") {
+    return moving
+      ? { motionState: "WALK", pose: "walk" }
+      : { motionState: "REST", pose: "sit" };
+  }
+
+  if (route.routeType === "seat") {
+    return moving
+      ? { motionState: "WALK", pose: "walk" }
+      : { motionState: "SEATED", pose: poseForActivity(agentState.activity) };
+  }
+
+  if (moving) {
+    return { motionState: "WALK", pose: "walk" };
+  }
+
+  if (SETTLED_ACTIVITIES.has(agentState.activity)) {
+    return { motionState: "SEATED", pose: poseForActivity(agentState.activity) };
+  }
+
+  return {
+    motionState: actor.currentZone === route.zoneId ? "IDLE" : "RETURN",
+    pose: "stand"
+  };
 }
 
 export function stepCrewActors(
@@ -408,7 +706,11 @@ export function stepCrewActors(
       scene
     });
     const points = route.points;
-    const target = points[actor.patrolIndex % points.length];
+    const pointCount = Math.max(1, points.length);
+    const routeChanged = actor.routeType !== route.routeType || actor.currentZone !== route.zoneId;
+    const basePatrolIndex = routeChanged ? 0 : actor.patrolIndex;
+    const currentIndex = basePatrolIndex % pointCount;
+    const target = points[currentIndex];
     const speed = speedForActor(actor, agentState, {
       focusZone,
       roomPhase,
@@ -419,21 +721,76 @@ export function stepCrewActors(
     const dy = target.y - actor.y;
     const distance = Math.hypot(dx, dy);
 
-    let patrolIndex = actor.patrolIndex;
+    let patrolIndex = basePatrolIndex;
     let x = actor.x;
     let y = actor.y;
+    let holdFrames = actor.holdFrames || 0;
+    let holdIndex = actor.holdIndex ?? null;
+
+    const seatHoldAllowed =
+      route.routeType === "observe" &&
+      actor.routeType === route.routeType &&
+      holdFrames > 0 &&
+      holdIndex !== null;
+
+    if (seatHoldAllowed && holdFrames > 0) {
+      const motion = deriveActorMovement(actor, agentState, route, false, holdFrames, holdIndex);
+
+      return {
+        ...actor,
+        currentZone: route.zoneId,
+        x,
+        y,
+        patrolIndex,
+        facing: route.seat?.facing || actor.facing,
+        moving: false,
+        roomPhase,
+        activity: agentState.activity,
+        stepFrame: frame,
+        holdFrames: holdFrames - 1,
+        holdIndex,
+        routeType: route.routeType,
+        seatId: route.seat?.id || null,
+        motionState: motion.motionState,
+        pose: motion.pose
+      };
+    }
 
     if (distance <= speed + 0.25) {
       x = target.x;
       y = target.y;
-      patrolIndex = (actor.patrolIndex + 1) % points.length;
+      patrolIndex = (actor.patrolIndex + 1) % pointCount;
+      if (
+        route.routeType === "observe" &&
+        Array.isArray(route.holdIndices) &&
+        route.holdIndices.includes(currentIndex)
+      ) {
+        holdFrames = route.holdFrames || OBSERVE_ROUTE_HOLD_FRAMES;
+        holdIndex = currentIndex;
+      } else {
+        holdFrames = 0;
+        holdIndex = null;
+      }
     } else if (distance > 0) {
       x = actor.x + (dx / distance) * speed;
       y = actor.y + (dy / distance) * speed;
+      holdFrames = 0;
+      holdIndex = null;
     }
 
-    const facing = Math.abs(dx) > 0.5 ? Math.sign(dx) || actor.facing : actor.facing;
+    const facing =
+      Math.abs(dx) > 0.5
+        ? Math.sign(dx) || actor.facing
+        : route.seat?.facing || actor.facing;
     const moving = distance > 0.3;
+    const motion = deriveActorMovement(
+      actor,
+      agentState,
+      route,
+      moving,
+      holdFrames,
+      patrolIndex % pointCount
+    );
 
     return {
       ...actor,
@@ -445,7 +802,13 @@ export function stepCrewActors(
       moving,
       roomPhase,
       activity: agentState.activity,
-      stepFrame: frame
+      stepFrame: frame,
+      holdFrames,
+      holdIndex,
+      routeType: route.routeType,
+      seatId: route.seat?.id || null,
+      motionState: motion.motionState,
+      pose: motion.pose
     };
   });
 }

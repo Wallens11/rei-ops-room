@@ -209,6 +209,25 @@ function fallbackLabelForZone(zoneId, kind = "task") {
   return "coordination pass";
 }
 
+function looksLikePromptTitle(summary) {
+  const text = String(summary || "").trim();
+  const normalized = text.toLowerCase();
+
+  if (!text) {
+    return false;
+  }
+
+  return (
+    text.length > 108 ||
+    normalized.startsWith("rei ") ||
+    normalized.startsWith("btw ") ||
+    normalized.startsWith("aku ") ||
+    normalized.includes(" wkwk") ||
+    normalized.includes("https://") ||
+    normalized.includes("http://")
+  );
+}
+
 function humanizeSummary(summary, { zoneId = "lab", kind = "task" } = {}) {
   const normalized = normalizeText(summary);
 
@@ -352,6 +371,70 @@ function sourceScore(text, keywords, weight) {
   return countMatches(text.toLowerCase(), keywords, weight);
 }
 
+function runtimeZoneHints(text) {
+  const normalized = normalizeText(text);
+  const scores = {
+    frontend: { score: 0, hits: [] },
+    backend: { score: 0, hits: [] },
+    database: { score: 0, hits: [] },
+    review: { score: 0, hits: [] }
+  };
+
+  const add = (zoneId, hit, score) => {
+    scores[zoneId].score += score;
+    if (!scores[zoneId].hits.includes(hit)) {
+      scores[zoneId].hits.push(hit);
+    }
+  };
+
+  if (
+    normalized.includes("npm start") ||
+    normalized.includes("node server.mjs") ||
+    normalized.includes("node server.js") ||
+    normalized.includes("server.mjs")
+  ) {
+    add("backend", "runtime command", 6);
+  }
+
+  if (
+    normalized.includes("npm test") ||
+    normalized.includes("node --test") ||
+    normalized.includes("verification")
+  ) {
+    add("backend", "verification command", 4.5);
+  }
+
+  if (
+    normalized.includes("public/") ||
+    normalized.includes("styles.css") ||
+    normalized.includes("index.html") ||
+    normalized.includes("canvas") ||
+    normalized.includes("widget")
+  ) {
+    add("frontend", "ui file", 4.2);
+  }
+
+  if (
+    normalized.includes("sqlite3") ||
+    normalized.includes(".sqlite") ||
+    normalized.includes("select ") ||
+    normalized.includes("query")
+  ) {
+    add("database", "db command", 5.2);
+  }
+
+  if (
+    normalized.includes("github") ||
+    normalized.includes("gh issue") ||
+    normalized.includes("review request") ||
+    normalized.includes("prepare concise labels")
+  ) {
+    add("review", "ops handoff", 4.4);
+  }
+
+  return scores;
+}
+
 function inferZoneFromText(text) {
   const haystack = normalizeText(text);
   let bestZone = "lab";
@@ -437,6 +520,25 @@ function zoneFromId(zoneId) {
   return ZONE_BY_ID[zoneId] || ZONE_BY_ID.lab;
 }
 
+function normalizeRepoName(repoName, cwdDisplay = "") {
+  const normalizedRepo = String(repoName || "").trim();
+  const normalizedDisplay = String(cwdDisplay || "").trim().toLowerCase();
+
+  if (!normalizedRepo && normalizedDisplay === "workspace root") {
+    return "workspace";
+  }
+
+  if (normalizedRepo && normalizedRepo.toLowerCase() === "workspace") {
+    return "workspace";
+  }
+
+  return normalizedRepo || "workspace";
+}
+
+function repoLabel(repoName) {
+  return normalizeRepoName(repoName) === "workspace" ? "Workspace Hub" : normalizeRepoName(repoName);
+}
+
 function inferCompletionAgeSeconds({ thread, activity, normalizedAgentJobs, rawAgentJobs }) {
   const nowSeconds = inferNowSeconds(thread, activity);
   const completionTimes = rawAgentJobs
@@ -455,22 +557,41 @@ function inferCompletionAgeSeconds({ thread, activity, normalizedAgentJobs, rawA
 }
 
 function baseSignals({ thread, repoContext, activity, logs, status, agentJobs = [] }) {
-  const primaryText = normalizeText(thread?.title, activity?.summary);
+  const threadText = normalizeText(thread?.title);
+  const activityText = normalizeText(activity?.summary);
   const secondaryText = normalizeText(thread?.cwd, thread?.gitBranch, repoContext?.title, repoContext?.cwd);
   const logText = normalizeText(logs.slice(0, 24).map((log) => log.message));
   const toolCalls = logs
     .slice(0, 18)
     .filter((log) => (log.message || "").includes("ToolCall:")).length;
+  const runtimeActive = activity?.source === "tool" || logs.length > 0;
+  const runtimeHints = runtimeZoneHints([activityText, logText]);
+  const threadWeight = runtimeActive ? 1.75 : 4;
+  const activityWeight = runtimeActive ? 5 : 4;
+  const logWeight = runtimeActive ? 3.4 : 2.5;
 
   const zoneScores = {};
   const zoneHits = {};
 
   for (const zone of ZONE_DEFINITIONS.filter((entry) => entry.id !== "lab")) {
-    const primary = sourceScore(primaryText, zone.keywords, 4);
+    const threadSource = sourceScore(threadText, zone.keywords, threadWeight);
+    const activitySource = sourceScore(activityText, zone.keywords, activityWeight);
     const secondary = sourceScore(secondaryText, zone.keywords, 2);
-    const log = sourceScore(logText, zone.keywords, 2.5);
-    zoneScores[zone.id] = primary.score + secondary.score + log.score;
-    zoneHits[zone.id] = unique([...primary.hits, ...secondary.hits, ...log.hits]);
+    const log = sourceScore(logText, zone.keywords, logWeight);
+    const runtimeHint = runtimeHints[zone.id] || { score: 0, hits: [] };
+    zoneScores[zone.id] =
+      threadSource.score +
+      activitySource.score +
+      secondary.score +
+      log.score +
+      runtimeHint.score;
+    zoneHits[zone.id] = unique([
+      ...threadSource.hits,
+      ...activitySource.hits,
+      ...secondary.hits,
+      ...log.hits,
+      ...runtimeHint.hits
+    ]);
   }
 
   const sortedZones = Object.entries(zoneScores)
@@ -479,14 +600,26 @@ function baseSignals({ thread, repoContext, activity, logs, status, agentJobs = 
   const top = sortedZones[0] || { zoneId: "lab", score: 0, hits: [] };
   const second = sortedZones[1] || { zoneId: "lab", score: 0, hits: [] };
 
-  const planning = countMatches(normalizeText(primaryText, logText), PLANNING_TERMS, 1.1);
-  const review = countMatches(normalizeText(primaryText, logText), REVIEW_TERMS, 1.1);
-  const reviewEvidence = countMatches(normalizeText(primaryText, logText), REVIEW_EVIDENCE_TERMS, 1.25);
-  const delegation = countMatches(normalizeText(primaryText, logText), DELEGATION_TERMS, 1.25);
+  const planning = countMatches(normalizeText(threadText, activityText, logText), PLANNING_TERMS, 1.1);
+  const review = countMatches(normalizeText(threadText, activityText, logText), REVIEW_TERMS, 1.1);
+  const reviewEvidence = countMatches(
+    normalizeText(threadText, activityText, logText),
+    REVIEW_EVIDENCE_TERMS,
+    1.25
+  );
+  const delegation = countMatches(
+    normalizeText(threadText, activityText, logText),
+    DELEGATION_TERMS,
+    1.25
+  );
   const results = countMatches(logText, RESULT_TERMS, 1.2);
-  const debug = countMatches(normalizeText(primaryText, logText), DEBUG_TERMS, 1.1);
-  const reading = countMatches(normalizeText(primaryText, logText), READING_TERMS, 1);
-  const summarizing = countMatches(normalizeText(primaryText, logText), SUMMARY_TERMS, 1);
+  const debug = countMatches(normalizeText(activityText, logText, threadText), DEBUG_TERMS, 1.1);
+  const reading = countMatches(normalizeText(activityText, logText, threadText), READING_TERMS, 1);
+  const summarizing = countMatches(
+    normalizeText(activityText, logText, threadText),
+    SUMMARY_TERMS,
+    1
+  );
   const newRequest = (thread?.updatedAgeSeconds ?? Number.POSITIVE_INFINITY) <= 45;
   const passiveMode = activity?.kind === "rest" || activity?.kind === "observer";
   const toolBurst = clamp(toolCalls / 3, 0, 4);
@@ -551,6 +684,7 @@ function baseSignals({ thread, repoContext, activity, logs, status, agentJobs = 
       reading,
       summarizing,
       passive_mode: passiveMode,
+      runtime_active: runtimeActive,
       tool_burst: toolBurst,
       tool_calls: toolCalls,
       status,
@@ -566,11 +700,14 @@ function baseSignals({ thread, repoContext, activity, logs, status, agentJobs = 
 }
 
 function resolveCurrentRepo(thread, repoContext) {
-  if (thread?.cwdDisplay === "workspace root" && repoContext?.repoName) {
-    return repoContext.repoName;
+  const threadRepo = normalizeRepoName(thread?.repoName, thread?.cwdDisplay);
+  const contextRepo = normalizeRepoName(repoContext?.repoName, repoContext?.cwdDisplay);
+
+  if (thread?.cwdDisplay === "workspace root" && contextRepo !== "workspace") {
+    return contextRepo;
   }
 
-  return thread?.repoName || repoContext?.repoName || "workspace";
+  return threadRepo || contextRepo || "workspace";
 }
 
 function inferReviewStage(signals, status) {
@@ -603,6 +740,17 @@ function inferOrchestration(taskIntelligence, { status, thread, activity }) {
     signals.passive_mode ||
     (status === "idle" && (activity?.lastLogAgeSeconds ?? Number.POSITIVE_INFINITY) > 20 * 60);
   const explicitAgentJobs = signals.agent_jobs?.total_count > 0;
+  const activeDeskEvidence =
+    (signals.runtime_active ? 0.8 : 0) +
+    (signals.tool_burst >= 0.66 ? 0.7 : 0) +
+    (signals.tool_calls > 0 ? 0.55 : 0) +
+    (signals.debug.score > 0 ? 0.8 : 0) +
+    (signals.reading.score > 0 ? 0.45 : 0) +
+    (signals.summarizing.score > 0 && dominantZone === "review" ? 0.45 : 0) +
+    (dominantZone !== "lab" ? 0.35 : 0);
+  const executionLocked =
+    dominantZone !== "lab" &&
+    activeDeskEvidence >= 1.65;
   let reviewStage = null;
 
   let roomPhase = "execution";
@@ -643,9 +791,12 @@ function inferOrchestration(taskIntelligence, { status, thread, activity }) {
     roomPhase = "squad_split";
     reason = "Delegation kebaca cukup jelas, jadi squad dipecah ke workstream yang relevan.";
   } else if (
-    (signals.planning.score >= 1.4 &&
-      (signals.new_request || confidence < 0.82 || dominantZone === "lab")) ||
-    (signals.new_request && (confidence < 0.72 || dominantZone === "lab"))
+    !executionLocked &&
+    (
+      (signals.planning.score >= 1.4 &&
+        (signals.new_request || confidence < 0.82 || dominantZone === "lab")) ||
+      (signals.new_request && (confidence < 0.72 || dominantZone === "lab"))
+    )
   ) {
     roomPhase = "planning_huddle";
     reason = "Fokus belum cukup stabil, jadi squad kumpul dulu buat ngunci arah.";
@@ -757,6 +908,43 @@ function summarizeObjectiveLabel(summary, { zoneId = "lab", phase = "standby" } 
     default:
       return humanized;
   }
+}
+
+function summarizeThreadDisplayTitle(summary, { zoneId = "lab", phase = "standby" } = {}) {
+  const cleaned = String(summary || "").replace(/\s+/g, " ").trim();
+
+  if (!cleaned) {
+    return "No recent thread";
+  }
+
+  if (looksLikePromptTitle(cleaned)) {
+    return summarizeObjectiveLabel(cleaned, { zoneId, phase });
+  }
+
+  return cleaned.length > 88 ? `${cleaned.slice(0, 85)}...` : cleaned;
+}
+
+function summarizeObjectiveDetail(threadTitle, taskSummary, { zoneId = "lab", phase = "standby" } = {}) {
+  const cleanedThreadTitle = String(threadTitle || "").replace(/\s+/g, " ").trim();
+  const taskLabel = summarizePrimaryTask(taskSummary);
+
+  if (cleanedThreadTitle && !looksLikePromptTitle(cleanedThreadTitle)) {
+    return cleanedThreadTitle;
+  }
+
+  if (phase === "standby" && looksLikePromptTitle(cleanedThreadTitle)) {
+    return "Istirahat sejenak";
+  }
+
+  if (taskLabel && taskLabel !== "Standby di room aktif") {
+    return taskLabel;
+  }
+
+  if (cleanedThreadTitle) {
+    return summarizeThreadDisplayTitle(cleanedThreadTitle, { zoneId, phase });
+  }
+
+  return "Belum ada detail objective.";
 }
 
 function titleizeSkillSlug(slug) {
@@ -1177,14 +1365,57 @@ function buildAmbientCues(room) {
   ];
 }
 
+function deriveSceneActiveZoneId(room, cooldownActive) {
+  if (cooldownActive || room.resting || room.phase === "standby" || room.phase === "planning_huddle") {
+    return "lab";
+  }
+
+  if (room.phase === "review_wrap") {
+    return room.review_stage === "regroup" ? "lab" : "review";
+  }
+
+  return room.focus_zone;
+}
+
+function sceneActiveZoneReason(room, activeZoneId) {
+  if (room.resting) {
+    return "Room sengaja stay di lab dulu biar squad bisa recharge sebelum activity berikutnya.";
+  }
+
+  if (room.substate === "cooldown") {
+    return "Room lagi settle di lab sambil nunggu sinyal kerja berikutnya cukup jelas.";
+  }
+
+  if (room.phase === "planning_huddle") {
+    return "Semua agent kumpul di lab buat cek scope dan kunci assignment sebelum squad split.";
+  }
+
+  if (room.phase === "standby") {
+    return "Belum ada desk aktif yang perlu dibuka, jadi room tetap tenang di area tengah.";
+  }
+
+  if (room.phase === "review_wrap") {
+    return room.review_stage === "regroup"
+      ? "Squad regroup sebentar di lab sebelum hasil ditutup rapi."
+      : "Review lane jadi pusat scene sambil hasil dirapikan dan diringkas.";
+  }
+
+  return room.focus_reason;
+}
+
 function buildSceneDirector(room, workstreams, recentEvents) {
   const cooldownActive = room.substate === "cooldown";
+  const planningActive = room.phase === "planning_huddle";
   const scoutEvent = findScoutEvent(recentEvents);
   const activeWorkstreams = workstreams.filter((workstream) => workstream.status === "active");
   const completedWorkstreams = workstreams.filter((workstream) => workstream.status === "completed");
   const highlightZones = unique(
     [...activeWorkstreams, ...completedWorkstreams].map((workstream) => workstream.zone)
   );
+  const activeZoneId = deriveSceneActiveZoneId(room, cooldownActive);
+  const activeZoneMeta = zoneFromId(activeZoneId);
+  const focusZoneMeta = zoneFromId(room.focus_zone);
+  const hasNextAssignment = planningActive && room.focus_zone !== activeZoneId;
   const allowScoutMovement =
     !cooldownActive &&
     (room.phase !== "review_wrap" || room.review_stage === "results_returning");
@@ -1242,6 +1473,32 @@ function buildSceneDirector(room, workstreams, recentEvents) {
   }
 
   const phaseMeta = ROOM_PHASES[room.phase] || ROOM_PHASES.standby;
+  const activeZone = {
+    id: activeZoneId,
+    label: "Active Desk",
+    chip_title: activeZoneMeta.title,
+    title: activeZoneMeta.title,
+    reason: sceneActiveZoneReason(room, activeZoneId)
+  };
+  const assignmentHint = hasNextAssignment
+    ? {
+        active: true,
+        label: "Next Assignment",
+        zone_id: room.focus_zone,
+        chip_title: `Next: ${focusZoneMeta.title}`,
+        title: focusZoneMeta.title,
+        reason: `Arah kerja mulai kebaca ke ${focusZoneMeta.title}, tapi squad masih briefing di lab sebelum split.`,
+        confidence: room.focus_confidence
+      }
+    : {
+        active: false,
+        label: "Next Assignment",
+        zone_id: null,
+        chip_title: null,
+        title: null,
+        reason: null,
+        confidence: null
+      };
   const primaryBubble =
     cooldownActive && !room.resting
       ? { actor_id: "lead", text: "settling down", tone: "calm" }
@@ -1306,9 +1563,13 @@ function buildSceneDirector(room, workstreams, recentEvents) {
     camera:
       cooldownActive || room.resting
         ? "rest-lab"
+        : planningActive
+          ? "lab"
         : room.mode === "multi"
           ? "wide"
-          : `focus-${room.focus_zone}`,
+          : activeZoneId === "lab"
+            ? "lab"
+            : `focus-${activeZoneId}`,
     visual_intensity:
       cooldownActive
         ? "low"
@@ -1326,6 +1587,8 @@ function buildSceneDirector(room, workstreams, recentEvents) {
     desk_highlights:
       cooldownActive || room.resting
         ? ["lab"]
+        : planningActive
+          ? ["lab"]
         : room.phase === "review_wrap" && room.review_stage !== "results_returning"
           ? unique(["lab", "review"]).filter(Boolean)
           : unique([room.focus_zone, ...highlightZones]).filter(Boolean),
@@ -1340,10 +1603,14 @@ function buildSceneDirector(room, workstreams, recentEvents) {
     scout,
     review_stage: room.review_stage,
     skill_badges: room.skills || [],
+    active_zone: activeZone,
+    assignment_hint: assignmentHint,
     phase_title: phaseMeta.title,
     phase_reason: room.phase_reason,
-    focus_title: zoneFromId(room.focus_zone).title,
-    focus_reason: room.focus_reason
+    focus_label: activeZone.label,
+    focus_chip_title: activeZone.chip_title,
+    focus_title: activeZone.title,
+    focus_reason: activeZone.reason
   };
 }
 
@@ -1630,7 +1897,10 @@ function countActiveLanes(room, workstreams = [], agentJobs = []) {
 }
 
 function buildObjectiveState(taskIntelligence, room, thread) {
-  const detail = thread?.title || taskIntelligence.request || "Belum ada objective aktif.";
+  const detail = summarizeObjectiveDetail(thread?.title, taskIntelligence.current_task_summary, {
+    zoneId: room.focus_zone,
+    phase: room.phase
+  });
 
   return {
     title: summarizeObjectiveLabel(taskIntelligence.request || taskIntelligence.current_task_summary, {
@@ -1760,8 +2030,10 @@ function buildRuntimeState(taskIntelligence, room, activity, logs = [], nowSecon
 }
 
 function buildWorkspaceState(room, thread, recentThreads = [], workstreams = [], agentJobs = []) {
-  const activeRepo = room.current_repo || thread?.repoName || "workspace";
-  const activeRepoLabel = activeRepo === "workspace" ? "Workspace Hub" : activeRepo;
+  const anchoredRepo = normalizeRepoName(room.current_repo || thread?.repoName, thread?.cwdDisplay);
+  const roomDormant = room.phase === "standby" && room.status !== "busy";
+  const activeRepo = roomDormant ? "workspace" : anchoredRepo;
+  const activeRepoLabel = repoLabel(activeRepo);
   const threads = [thread, ...recentThreads]
     .filter(Boolean)
     .filter(
@@ -1771,11 +2043,14 @@ function buildWorkspaceState(room, thread, recentThreads = [], workstreams = [],
   const grouped = new Map();
 
   threads.forEach((entry) => {
-    const repo = entry.repoName || activeRepo;
+    const repo = normalizeRepoName(entry.repoName, entry.cwdDisplay);
     const current = grouped.get(repo) || {
       repo,
       cwdDisplay: entry.cwdDisplay || repo,
-      latestTitle: entry.title || "No recent thread",
+      latestTitle: summarizeThreadDisplayTitle(entry.title, {
+        zoneId: "lab",
+        phase: room.phase
+      }),
       latestAgeSeconds: entry.updatedAgeSeconds ?? Number.POSITIVE_INFINITY,
       latestAgo: entry.updatedAgo || "-",
       issueCount: 0
@@ -1784,7 +2059,10 @@ function buildWorkspaceState(room, thread, recentThreads = [], workstreams = [],
     current.issueCount += 1;
     if ((entry.updatedAgeSeconds ?? Number.POSITIVE_INFINITY) < current.latestAgeSeconds) {
       current.cwdDisplay = entry.cwdDisplay || current.cwdDisplay;
-      current.latestTitle = entry.title || current.latestTitle;
+      current.latestTitle = summarizeThreadDisplayTitle(entry.title, {
+        zoneId: "lab",
+        phase: room.phase
+      });
       current.latestAgeSeconds = entry.updatedAgeSeconds ?? current.latestAgeSeconds;
       current.latestAgo = entry.updatedAgo || current.latestAgo;
     }
@@ -1794,10 +2072,22 @@ function buildWorkspaceState(room, thread, recentThreads = [], workstreams = [],
 
   const activeSummary = grouped.get(activeRepo) || {
     repo: activeRepo,
-    cwdDisplay: thread?.cwdDisplay || activeRepo,
-    latestTitle: thread?.title || room.current_task,
-    latestAgeSeconds: thread?.updatedAgeSeconds ?? Number.POSITIVE_INFINITY,
-    latestAgo: thread?.updatedAgo || "-",
+    cwdDisplay: activeRepo === "workspace" ? "workspace root" : thread?.cwdDisplay || activeRepo,
+    latestTitle:
+      activeRepo === "workspace" && roomDormant
+        ? "No active room yet."
+        : summarizeThreadDisplayTitle(thread?.title || room.current_task, {
+            zoneId: room.focus_zone,
+            phase: room.phase
+          }),
+    latestAgeSeconds:
+      activeRepo === "workspace" && roomDormant
+        ? Number.POSITIVE_INFINITY
+        : thread?.updatedAgeSeconds ?? Number.POSITIVE_INFINITY,
+    latestAgo:
+      activeRepo === "workspace" && roomDormant
+        ? "-"
+        : thread?.updatedAgo || "-",
     issueCount: 1
   };
 
@@ -1817,7 +2107,7 @@ function buildWorkspaceState(room, thread, recentThreads = [], workstreams = [],
       .sort((left, right) => left.latestAgeSeconds - right.latestAgeSeconds)
       .slice(0, 4)
       .map((entry) => ({
-        repo: entry.repo === "workspace" ? "Workspace Hub" : entry.repo,
+        repo: repoLabel(entry.repo),
         cwd_display: entry.cwdDisplay,
         recent_thread_count: entry.issueCount,
         status: presenceFromAgeSeconds(entry.latestAgeSeconds),

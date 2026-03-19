@@ -202,6 +202,69 @@ test("assigned workers settle at their desks instead of pacing during squad spli
   assert.equal(apiActor.moving, false);
 });
 
+test("idle observers use a wider hallway loop during execution instead of desk-only pacing", () => {
+  const zones = createDefaultZones();
+  let actors = buildCrewActors(zones);
+  const apiPositions = [];
+
+  for (let frame = 1; frame <= 180; frame += 1) {
+    actors = stepCrewActors(actors, {
+      frame,
+      status: "busy",
+      focusZone: "frontend",
+      roomPhase: "execution",
+      agents: buildAgentState({
+        api: { activity: "waiting", assigned_zone: "backend", idle_behavior: "idle_observe" },
+        ui: { activity: "coding", assigned_zone: "frontend" }
+      }),
+      scene: {
+        scout: {
+          active: false
+        }
+      },
+      zones
+    });
+
+    const apiActor = actors.find((actor) => actor.id === "api");
+    apiPositions.push({ x: apiActor.x, y: apiActor.y });
+  }
+
+  const minX = Math.min(...apiPositions.map((point) => point.x));
+  assert.ok(minX < 430, `api observer never left the backend desk loop: minX=${minX}`);
+});
+
+test("squad split to the database desk travels through the hallway spine before settling", () => {
+  const zones = createDefaultZones();
+  let actors = buildCrewActors(zones);
+  const corridorHits = [];
+
+  for (let frame = 1; frame <= 120; frame += 1) {
+    actors = stepCrewActors(actors, {
+      frame,
+      status: "busy",
+      focusZone: "database",
+      roomPhase: "squad_split",
+      agents: buildAgentState({
+        db: { activity: "moving", assigned_zone: "database" },
+        lead: { activity: "reading", assigned_zone: "lab" }
+      }),
+      scene: {
+        scout: {
+          active: false
+        }
+      },
+      zones
+    });
+
+    const dbActor = actors.find((actor) => actor.id === "db");
+    corridorHits.push(
+      dbActor.x >= 300 && dbActor.x <= 340 && dbActor.y >= 236 && dbActor.y <= 260
+    );
+  }
+
+  assert.ok(corridorHits.some(Boolean), "database dispatch never crossed the hallway spine");
+});
+
 test("resting standby sends only allowed agents into the rest corner", () => {
   const zones = createDefaultZones();
   let actors = buildCrewActors(zones);
@@ -322,4 +385,80 @@ test("review regroup pulls finished workers back toward the lab instead of snapp
 
   const docs = actors.find((actor) => actor.id === "docs");
   assert.equal(docs.currentZone, "review");
+});
+
+test("settled desk work exposes a seated typing pose instead of generic idle movement", () => {
+  const zones = createDefaultZones();
+  let actors = buildCrewActors(zones);
+
+  for (let frame = 1; frame <= 120; frame += 1) {
+    actors = stepCrewActors(actors, {
+      frame,
+      status: "busy",
+      focusZone: "frontend",
+      roomPhase: "execution",
+      agents: buildAgentState({
+        ui: { activity: "coding", assigned_zone: "frontend" },
+        api: { activity: "debugging", assigned_zone: "backend" }
+      }),
+      scene: {
+        scout: {
+          active: false
+        }
+      },
+      zones
+    });
+  }
+
+  const ui = actors.find((actor) => actor.id === "ui");
+  const api = actors.find((actor) => actor.id === "api");
+
+  assert.equal(ui.motionState, "SEATED");
+  assert.equal(ui.pose, "type");
+  assert.equal(api.motionState, "SEATED");
+  assert.equal(api.pose, "type");
+});
+
+test("idle observers transition through wander and return before settling back into their seat", () => {
+  const zones = createDefaultZones();
+  let actors = buildCrewActors(zones);
+  const seenStates = new Set();
+  const backend = zones.find((zone) => zone.id === "backend");
+  const backendSeat = backend.workSpot[1];
+
+  for (let frame = 1; frame <= 260; frame += 1) {
+    actors = stepCrewActors(actors, {
+      frame,
+      status: "idle",
+      focusZone: "frontend",
+      roomPhase: "standby",
+      agents: buildAgentState({
+        api: { activity: "idle", assigned_zone: "backend", idle_behavior: "idle_observe" },
+        ui: { activity: "idle", assigned_zone: "frontend", idle_behavior: "idle_at_desk" }
+      }),
+      scene: {
+        resting: false,
+        rest_corner: {
+          active: false,
+          allowed_agent_ids: []
+        },
+        scout: {
+          active: false
+        }
+      },
+      zones
+    });
+
+    const api = actors.find((actor) => actor.id === "api");
+    seenStates.add(api.motionState);
+  }
+
+  const api = actors.find((actor) => actor.id === "api");
+  const seatDistance = Math.hypot(api.x - backendSeat.x, api.y - backendSeat.y);
+
+  assert.ok(seenStates.has("WANDER"), "observer never entered a wander loop");
+  assert.ok(seenStates.has("RETURN"), "observer never transitioned back toward the seat");
+  assert.equal(api.motionState, "SEATED");
+  assert.equal(api.pose, "sit");
+  assert.ok(seatDistance < 10, `observer did not settle back into the backend seat: ${seatDistance}`);
 });

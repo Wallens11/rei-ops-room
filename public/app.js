@@ -72,13 +72,16 @@ const elements = {
   statusPill: document.getElementById("status-pill"),
   phaseChip: document.getElementById("phase-chip"),
   focusChip: document.getElementById("focus-chip"),
+  assignmentChip: document.getElementById("assignment-chip"),
   modeChip: document.getElementById("mode-chip"),
   confidenceChip: document.getElementById("confidence-chip"),
   activityAge: document.getElementById("activity-age"),
   phaseTitle: document.getElementById("phase-title"),
   phaseReason: document.getElementById("phase-reason"),
+  focusLabel: document.getElementById("focus-label"),
   focusTitle: document.getElementById("focus-title"),
   focusReason: document.getElementById("focus-reason"),
+  assignmentHint: document.getElementById("assignment-hint"),
   taskTitle: document.getElementById("task-title"),
   taskRepo: document.getElementById("task-repo"),
   objectiveTitle: document.getElementById("objective-title"),
@@ -201,6 +204,24 @@ function createEmptyState() {
       desk_highlights: ["lab"],
       phase_title: ROOM_PHASES.standby.title,
       phase_reason: ROOM_PHASES.standby.summary,
+      active_zone: {
+        id: "lab",
+        label: "Active Desk",
+        chip_title: "Lead Table",
+        title: "Lead Table",
+        reason: "Belum ada desk aktif yang dominan."
+      },
+      assignment_hint: {
+        active: false,
+        label: "Next Assignment",
+        zone_id: null,
+        chip_title: null,
+        title: null,
+        reason: null,
+        confidence: null
+      },
+      focus_label: "Active Desk",
+      focus_chip_title: "Lead Table",
       focus_title: "Lead Table",
       focus_reason: "Belum ada desk aktif yang dominan."
     },
@@ -675,17 +696,39 @@ function applyStatus(data) {
   document.body.dataset.phase = data.room.phase;
   document.body.dataset.tone = data.scene.tone;
 
+  const activeZone = data.scene.active_zone || {
+    label: data.scene.focus_label || "Active Desk",
+    chip_title: data.scene.focus_chip_title || data.scene.focus_title || data.focus?.title || "Lead Table",
+    title: data.scene.focus_title || data.focus?.title || "Lead Table",
+    reason: data.scene.focus_reason || data.focus?.reason || ""
+  };
+  const assignmentHint = data.scene.assignment_hint || {
+    active: false,
+    label: "Next Assignment",
+    zone_id: null,
+    chip_title: null,
+    title: null,
+    reason: null
+  };
+
   setStatusPill(data.status, Boolean(data.room.resting));
   elements.phaseChip.textContent = data.scene.phase_title || data.phase?.title || "Standby";
-  elements.focusChip.textContent = data.scene.focus_title || data.focus?.title || "Lead Table";
+  elements.focusChip.textContent = activeZone.chip_title || activeZone.title || "Lead Table";
+  elements.assignmentChip.hidden = !assignmentHint.active;
+  elements.assignmentChip.textContent = assignmentHint.chip_title || "Next assignment";
   elements.modeChip.textContent = modeLabel(data.room.mode);
   elements.confidenceChip.textContent = `focus ${formatConfidence(data.room.focus_confidence)}`;
   updateActivityAgeLabel();
 
   elements.phaseTitle.textContent = data.scene.phase_title || data.phase?.title || "Standby";
   elements.phaseReason.textContent = data.scene.phase_reason || data.phase?.reason || "";
-  elements.focusTitle.textContent = data.scene.focus_title || data.focus?.title || "Lead Table";
-  elements.focusReason.textContent = data.scene.focus_reason || data.focus?.reason || "";
+  elements.focusLabel.textContent = activeZone.label || "Active Desk";
+  elements.focusTitle.textContent = activeZone.title || "Lead Table";
+  elements.focusReason.textContent = activeZone.reason || "";
+  elements.assignmentHint.hidden = !assignmentHint.active;
+  elements.assignmentHint.textContent = assignmentHint.active
+    ? `${assignmentHint.label}: ${assignmentHint.title}`
+    : "";
   elements.taskTitle.textContent = truncate(data.room.current_task, 64);
   elements.taskRepo.textContent = `${data.room.current_repo} | ${data.room.mode}`;
 
@@ -967,20 +1010,23 @@ function actorPalette(actorId, accent) {
   return { body: COLORS.cyan, accent };
 }
 
-function drawActivityCue(actor, activity, accent) {
+function drawActivityCue(actor, activity, accent, pose = "stand") {
+  const seated = pose === "sit" || pose === "type" || pose === "read";
+  const deskYOffset = seated ? 4 : 0;
+
   if (activity === "coding" || activity === "debugging") {
-    drawPixelRect(actor.x + 14, actor.y + 8, 8, 6, COLORS.ink);
-    drawPixelRect(actor.x + 16, actor.y + 10, 4, 2, accent);
+    drawPixelRect(actor.x + 14, actor.y + 8 + deskYOffset, 8, 6, COLORS.ink);
+    drawPixelRect(actor.x + 16, actor.y + 10 + deskYOffset, 4, 2, accent);
     if (activity === "debugging") {
-      drawPixelRect(actor.x + 24, actor.y + 4, 4, 4, COLORS.rose);
+      drawPixelRect(actor.x + 24, actor.y + 4 + deskYOffset, 4, 4, COLORS.rose);
     }
   }
 
   if (activity === "reading" || activity === "reviewing" || activity === "summarizing") {
-    drawPixelRect(actor.x - 18, actor.y + 8, 8, 10, COLORS.white);
-    drawPixelRect(actor.x - 16, actor.y + 10, 4, 2, accent);
+    drawPixelRect(actor.x - 18, actor.y + 8 + deskYOffset, 8, 10, COLORS.white);
+    drawPixelRect(actor.x - 16, actor.y + 10 + deskYOffset, 4, 2, accent);
     if (activity === "reviewing") {
-      drawPixelRect(actor.x - 8, actor.y + 8, 4, 4, COLORS.rose);
+      drawPixelRect(actor.x - 8, actor.y + 8 + deskYOffset, 4, 4, COLORS.rose);
     }
   }
 }
@@ -989,32 +1035,72 @@ function drawAgent(actor, agentState, isPrimary) {
   const zone = zoneById(agentState.assigned_zone === "between_zones" ? "lab" : actor.currentZone);
   const frame = renderState.frame;
   const { body, accent } = actorPalette(actor.id, zone.color);
-  const settled = ["coding", "debugging", "reading", "reviewing", "summarizing"].includes(
-    agentState.activity
-  );
-  const y = actor.y + (settled ? (frame % 16 < 8 ? 0 : -1) : 0);
+  const pose =
+    actor.pose ||
+    (["coding", "debugging"].includes(agentState.activity)
+      ? "type"
+      : ["reading", "reviewing", "summarizing"].includes(agentState.activity)
+        ? "read"
+        : actor.moving
+          ? "walk"
+          : "stand");
+  const seated = actor.motionState === "SEATED" || actor.motionState === "REST" || ["sit", "type", "read"].includes(pose);
+  const y = actor.y + (seated ? -8 + (frame % 20 < 10 ? 0 : -1) : 0);
   const direction = actor.facing || 1;
-  const armSwing = actor.moving ? ((frame + actor.patrolIndex) % 10 < 5 ? 2 : -2) : settled ? 1 : 0;
+  const armSwing = actor.moving ? ((frame + actor.patrolIndex) % 10 < 5 ? 2 : -2) : seated ? 1 : 0;
   const legSwing = actor.moving ? ((frame + actor.patrolIndex) % 12 < 6 ? 2 : -2) : 0;
 
-  drawPixelRect(actor.x - 18, y + 34, 36, 8, "rgba(0, 0, 0, 0.24)");
+  drawPixelRect(actor.x - (seated ? 16 : 18), y + (seated ? 28 : 34), seated ? 32 : 36, 8, "rgba(0, 0, 0, 0.24)");
 
   if (isPrimary) {
     drawPixelRect(actor.x - 16, y - 2, 32, 4, accent);
   }
 
-  drawPixelRect(actor.x - 10, y, 20, 20, body);
-  drawPixelRect(actor.x - 6, y + 4, 12, 8, COLORS.white);
-  drawPixelRect(actor.x - 4, y + 6, 8, 4, COLORS.bg1);
-  drawPixelRect(actor.x - 6, y + 20, 12, 14, body);
-  drawPixelRect(actor.x - 14 + armSwing, y + 22, 6, 12, body);
-  drawPixelRect(actor.x + 8 - armSwing, y + 22, 6, 12, body);
-  drawPixelRect(actor.x - 8 - legSwing, y + 34, 6, 10, body);
-  drawPixelRect(actor.x + 2 + legSwing, y + 34, 6, 10, body);
-  drawPixelRect(actor.x - 4, y + 18, 8, 4, accent);
+  if (seated) {
+    drawPixelRect(actor.x - 9, y + 20, 18, 8, COLORS.bg2);
+    drawPixelRect(actor.x - 12, y + 24, 24, 5, "rgba(7, 17, 26, 0.55)");
+    drawPixelRect(actor.x - 10, y, 20, 20, body);
+    drawPixelRect(actor.x - 6, y + 4, 12, 8, COLORS.white);
+    drawPixelRect(actor.x - 4, y + 6, 8, 4, COLORS.bg1);
+    drawPixelRect(actor.x - 7, y + 20, 14, 8, body);
+    drawPixelRect(actor.x - 8, y + 17, 16, 4, accent);
+
+    if (pose === "type") {
+      drawPixelRect(actor.x - 14, y + 20, 6, 7, body);
+      drawPixelRect(actor.x + 8, y + 20, 6, 7, body);
+      drawPixelRect(actor.x - 8, y + 28, 6, 4, body);
+      drawPixelRect(actor.x + 2, y + 28, 6, 4, body);
+    } else if (pose === "read") {
+      drawPixelRect(actor.x - 14, y + 19, 6, 8, body);
+      drawPixelRect(actor.x + 8, y + 21, 6, 6, body);
+      drawPixelRect(actor.x - 8, y + 28, 6, 4, body);
+      drawPixelRect(actor.x + 2, y + 28, 6, 4, body);
+    } else {
+      drawPixelRect(actor.x - 14, y + 21, 6, 7, body);
+      drawPixelRect(actor.x + 8, y + 21, 6, 7, body);
+      drawPixelRect(actor.x - 8, y + 28, 6, 4, body);
+      drawPixelRect(actor.x + 2, y + 28, 6, 4, body);
+    }
+  } else {
+    drawPixelRect(actor.x - 10, y, 20, 20, body);
+    drawPixelRect(actor.x - 6, y + 4, 12, 8, COLORS.white);
+    drawPixelRect(actor.x - 4, y + 6, 8, 4, COLORS.bg1);
+    drawPixelRect(actor.x - 6, y + 20, 12, 14, body);
+    drawPixelRect(actor.x - 14 + armSwing, y + 22, 6, 12, body);
+    drawPixelRect(actor.x + 8 - armSwing, y + 22, 6, 12, body);
+    drawPixelRect(actor.x - 8 - legSwing, y + 34, 6, 10, body);
+    drawPixelRect(actor.x + 2 + legSwing, y + 34, 6, 10, body);
+    drawPixelRect(actor.x - 4, y + 18, 8, 4, accent);
+  }
+
+  if (pose === "carry") {
+    drawPixelRect(actor.x - 8, y + 18, 16, 10, COLORS.amber);
+    drawPixelRect(actor.x - 4, y + 16, 8, 2, COLORS.white);
+  }
+
   drawPixelRect(actor.x + 11 * direction, y + 9, 4, 4, "rgba(255,255,255,0.22)");
 
-  drawActivityCue({ x: actor.x, y }, agentState.activity, accent);
+  drawActivityCue({ x: actor.x, y }, agentState.activity, accent, pose);
 }
 
 function bubbleColor(tone) {

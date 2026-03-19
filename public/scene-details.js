@@ -53,9 +53,12 @@ function describeDeskSelection(selection, state) {
 }
 
 function describeEventSelection(selection, state) {
+  const activeZoneTitle =
+    state.scene?.active_zone?.title || state.scene?.focus_title || "lab";
+
   return {
     title: selection.label,
-    body: `Runtime detail stays in the side panel. Focus zone: ${selection.zone || state.scene?.focus_title || "lab"}.`
+    body: `Runtime detail stays in the side panel. Focus zone: ${selection.zone || activeZoneTitle}.`
   };
 }
 
