@@ -4,6 +4,7 @@ import assert from "node:assert/strict";
 import {
   buildAgentJobItemsSql,
   buildGlobalRuntimeLogsSql,
+  chooseLogsMessageColumn,
   contentType,
   createSseFrame,
   buildThreadLogsSql,
@@ -73,12 +74,43 @@ test("buildThreadLogsSql trims message payloads before exporting large log windo
   assert.match(sql, /WHERE thread_id = 'thread-123'/);
 });
 
+test("buildThreadLogsSql can target feedback_log_body when newer Codex logs omit the message column", () => {
+  const sql = buildThreadLogsSql("thread-123", 500, 320, "feedback_log_body");
+
+  assert.match(sql, /substr\(feedback_log_body,\s*1,\s*320\)\s+AS\s+message/i);
+});
+
 test("buildGlobalRuntimeLogsSql pulls recent unscoped runtime logs for fallback activity", () => {
   const sql = buildGlobalRuntimeLogsSql();
 
   assert.match(sql, /FROM logs/i);
   assert.match(sql, /thread_id IS NULL OR thread_id = ''/i);
   assert.match(sql, /ORDER BY ts DESC/i);
+});
+
+test("buildGlobalRuntimeLogsSql can target feedback_log_body when newer Codex logs omit the message column", () => {
+  const sql = buildGlobalRuntimeLogsSql(120, 320, "feedback_log_body");
+
+  assert.match(sql, /substr\(feedback_log_body,\s*1,\s*320\)\s+AS\s+message/i);
+});
+
+test("chooseLogsMessageColumn prefers message when it exists", () => {
+  const column = chooseLogsMessageColumn([
+    { name: "id" },
+    { name: "message" },
+    { name: "feedback_log_body" }
+  ]);
+
+  assert.equal(column, "message");
+});
+
+test("chooseLogsMessageColumn falls back to feedback_log_body for newer Codex log schemas", () => {
+  const column = chooseLogsMessageColumn([
+    { name: "id" },
+    { name: "feedback_log_body" }
+  ]);
+
+  assert.equal(column, "feedback_log_body");
 });
 
 test("buildAgentJobItemsSql scopes multi-agent rows to the active thread", () => {
@@ -128,6 +160,46 @@ test("filterMeaningfulLogs ignores codex websocket connection chatter", () => {
         "successfully connected to websocket: wss://chatgpt.com/backend-api/codex/responses"
     },
     {
+      message: 'ToolCall: functions.exec_command {"cmd":"npm test"}'
+    }
+  ]);
+
+  assert.equal(logs.length, 1);
+  assert.equal(logs[0].message, 'ToolCall: functions.exec_command {"cmd":"npm test"}');
+});
+
+test("filterMeaningfulLogs ignores app-server envelope chatter", () => {
+  const logs = filterMeaningfulLogs([
+    {
+      target: "codex_app_server::codex_message_processor",
+      message: "app-server event: codex/event/agent_message_delta"
+    },
+    {
+      target: "codex_app_server::outgoing_message",
+      message: "app-server event: item/agentMessage/delta"
+    },
+    {
+      target: "codex_core::stream_events_utils",
+      message: 'ToolCall: functions.exec_command {"cmd":"npm test"}'
+    }
+  ]);
+
+  assert.equal(logs.length, 1);
+  assert.equal(logs[0].message, 'ToolCall: functions.exec_command {"cmd":"npm test"}');
+});
+
+test("filterMeaningfulLogs ignores background model cache chatter", () => {
+  const logs = filterMeaningfulLogs([
+    {
+      target: "codex_core::models_manager::manager",
+      message: "models cache: using cached models for OnlineIfUncached"
+    },
+    {
+      target: "codex_core::models_manager::cache",
+      message: "models cache: cache hit"
+    },
+    {
+      target: "codex_core::stream_events_utils",
       message: 'ToolCall: functions.exec_command {"cmd":"npm test"}'
     }
   ]);

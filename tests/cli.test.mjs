@@ -3,9 +3,11 @@ import assert from "node:assert/strict";
 
 import {
   buildViewerUrl,
+  inferActivationAction,
   inferServerRuntime,
   normalizeMode,
-  parseCliArgs
+  parseCliArgs,
+  selectAgentProcessPid
 } from "../tools/agent-pixel-cli.mjs";
 
 test("normalizeMode falls back to room", () => {
@@ -60,4 +62,67 @@ test("inferServerRuntime does not treat an unrelated port listener as the pixel 
   assert.equal(runtime.running, false);
   assert.equal(runtime.pid, null);
   assert.equal(runtime.source, "none");
+});
+
+test("selectAgentProcessPid prefers the listening pixel-agent process", () => {
+  const pid = selectAgentProcessPid({
+    listenerPid: 5001,
+    listenerCommand: "node /Users/funtoco/workSpace/codex-pixel-agent/server.mjs",
+    pidFilePid: 4999,
+    pidFileAlive: true,
+    pidFileCommand: "node /Users/funtoco/workSpace/codex-pixel-agent/server.mjs"
+  });
+
+  assert.equal(pid, 5001);
+});
+
+test("selectAgentProcessPid falls back to the pid file when only the recorded agent is alive", () => {
+  const pid = selectAgentProcessPid({
+    listenerPid: null,
+    listenerCommand: "",
+    pidFilePid: 4999,
+    pidFileAlive: true,
+    pidFileCommand: "node /Users/funtoco/workSpace/codex-pixel-agent/server.mjs"
+  });
+
+  assert.equal(pid, 4999);
+});
+
+test("inferActivationAction restarts an unreachable pixel-agent runtime after the wait window fails", () => {
+  const action = inferActivationAction({
+    runtime: {
+      running: true,
+      reachable: false,
+      listenerPid: 5001,
+      listenerCommand: "node /Users/funtoco/workSpace/codex-pixel-agent/server.mjs",
+      pidFilePid: 5001,
+      pidFileAlive: true,
+      pidFileCommand: "node /Users/funtoco/workSpace/codex-pixel-agent/server.mjs"
+    },
+    readyAfterWait: false
+  });
+
+  assert.deepEqual(action, {
+    type: "restart",
+    pid: 5001
+  });
+});
+
+test("inferActivationAction keeps the current runtime when the server becomes reachable during the wait window", () => {
+  const action = inferActivationAction({
+    runtime: {
+      running: true,
+      reachable: false,
+      listenerPid: 5001,
+      listenerCommand: "node /Users/funtoco/workSpace/codex-pixel-agent/server.mjs",
+      pidFilePid: 5001,
+      pidFileAlive: true,
+      pidFileCommand: "node /Users/funtoco/workSpace/codex-pixel-agent/server.mjs"
+    },
+    readyAfterWait: true
+  });
+
+  assert.deepEqual(action, {
+    type: "reuse"
+  });
 });

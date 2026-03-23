@@ -62,6 +62,50 @@ export function inferServerRuntime({
   };
 }
 
+export function selectAgentProcessPid({
+  listenerPid = null,
+  listenerCommand = "",
+  pidFilePid = null,
+  pidFileAlive = false,
+  pidFileCommand = ""
+}) {
+  if (listenerPid && listenerCommand.includes("server.mjs")) {
+    return listenerPid;
+  }
+
+  if (pidFileAlive && pidFilePid && pidFileCommand.includes("server.mjs")) {
+    return pidFilePid;
+  }
+
+  return null;
+}
+
+export function inferActivationAction({ runtime, readyAfterWait = false }) {
+  if (!runtime.running) {
+    return {
+      type: "start"
+    };
+  }
+
+  if (runtime.reachable || readyAfterWait) {
+    return {
+      type: "reuse"
+    };
+  }
+
+  const pid = selectAgentProcessPid(runtime);
+  if (pid) {
+    return {
+      type: "restart",
+      pid
+    };
+  }
+
+  return {
+    type: "error"
+  };
+}
+
 export function parseCliArgs(argv) {
   const args = [...argv];
   let command = "activate";
@@ -223,6 +267,19 @@ async function waitForServer(port, attempts = 30) {
   return false;
 }
 
+async function waitForPortRelease(port, attempts = 20) {
+  for (let index = 0; index < attempts; index += 1) {
+    const listenerPid = await readListenerPid(port);
+    if (!listenerPid) {
+      return true;
+    }
+
+    await new Promise((resolve) => setTimeout(resolve, 150));
+  }
+
+  return false;
+}
+
 async function startDetachedServer(port) {
   await fs.mkdir(projectRoot, { recursive: true });
   const logHandle = await fs.open(logFile, "a");
@@ -260,16 +317,50 @@ async function openViewer(url) {
   await execFileAsync("xdg-open", [url]);
 }
 
+async function stopRuntimePid(pid, port) {
+  if (!pid) {
+    return;
+  }
+
+  try {
+    process.kill(pid);
+  } catch (error) {
+    if (!(error instanceof Error) || !("code" in error) || error.code !== "ESRCH") {
+      throw error;
+    }
+  }
+
+  await fs.rm(pidFile, { force: true });
+  await waitForPortRelease(port);
+}
+
 async function activate({ port, mode, open }) {
   const runtime = await inspectServerRuntime(port);
+  const initialAction = inferActivationAction({
+    runtime
+  });
 
-  if (!runtime.running) {
+  if (initialAction.type === "start") {
     await startDetachedServer(port);
   } else {
     await syncPid(runtime);
+    if (initialAction.type === "error") {
+      throw new Error(
+        `Port ${port} is held by the pixel agent process, but /api/status is not responding`
+      );
+    }
+
     if (!runtime.reachable) {
       const ready = await waitForServer(port, 12);
-      if (!ready) {
+      const recoveryAction = inferActivationAction({
+        runtime,
+        readyAfterWait: ready
+      });
+
+      if (recoveryAction.type === "restart") {
+        await stopRuntimePid(recoveryAction.pid, port);
+        await startDetachedServer(port);
+      } else if (recoveryAction.type !== "reuse") {
         throw new Error(
           `Port ${port} is held by the pixel agent process, but /api/status is not responding`
         );
@@ -288,16 +379,10 @@ async function activate({ port, mode, open }) {
 
 async function stopServer(port) {
   const runtime = await inspectServerRuntime(port);
-  const targetPid =
-    runtime.listenerPid && runtime.listenerCommand.includes("server.mjs")
-      ? runtime.listenerPid
-      : runtime.pidFileAlive && runtime.pidFileCommand.includes("server.mjs")
-        ? runtime.pidFilePid
-        : null;
+  const targetPid = selectAgentProcessPid(runtime);
 
   if (targetPid) {
-    process.kill(targetPid);
-    await fs.rm(pidFile, { force: true });
+    await stopRuntimePid(targetPid, port);
     console.log("agent pixel stopped");
     return;
   }

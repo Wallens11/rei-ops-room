@@ -148,19 +148,27 @@ const OBSERVER_COMMAND_SNIPPETS = [
 const NOISE_MESSAGE_PREFIXES = [
   "websocket request:",
   "websocket event:",
-  "unhandled responses event:"
+  "unhandled responses event:",
+  "app-server event:"
 ];
 const NOISE_MESSAGE_SNIPPETS = [
   "registering event source with poller",
   "token usage",
   "tool gate released",
   "waiting for tool gate",
-  "successfully connected to websocket:"
+  "successfully connected to websocket:",
+  "models cache:"
+];
+const NOISE_TARGET_PREFIXES = [
+  "codex_app_server::",
+  "codex_api::",
+  "codex_core::models_manager::"
 ];
 const statusStreamClients = new Set();
 let statusStreamTimer = null;
 let statusStreamSequence = 0;
 let statusStreamInflight = null;
+let logsMessageColumnPromise = null;
 
 function quoteSql(value) {
   return `'${String(value).replaceAll("'", "''")}'`;
@@ -189,13 +197,44 @@ export function createSseFrame({ event = "message", retry = null, id = null, dat
   return `${lines.join("\n")}\n\n`;
 }
 
-export function buildThreadLogsSql(threadId, limit = 500, messageLimit = 320) {
+export function chooseLogsMessageColumn(columns) {
+  const names = new Set(
+    (columns || []).map((column) => String(column?.name || "").trim().toLowerCase()).filter(Boolean)
+  );
+
+  if (names.has("message")) {
+    return "message";
+  }
+
+  if (names.has("feedback_log_body")) {
+    return "feedback_log_body";
+  }
+
+  return "message";
+}
+
+async function detectLogsMessageColumn(databasePath = logsDb) {
+  if (!logsMessageColumnPromise) {
+    logsMessageColumnPromise = sqliteJson(databasePath, "PRAGMA table_info(logs);")
+      .then((columns) => chooseLogsMessageColumn(columns))
+      .catch(() => "message");
+  }
+
+  return logsMessageColumnPromise;
+}
+
+export function buildThreadLogsSql(
+  threadId,
+  limit = 500,
+  messageLimit = 320,
+  messageColumn = "message"
+) {
   return `
       SELECT
         ts,
         level,
         target,
-        substr(message, 1, ${messageLimit}) AS message
+        substr(${messageColumn}, 1, ${messageLimit}) AS message
       FROM logs
       WHERE thread_id = ${quoteSql(threadId)}
       ORDER BY ts DESC, ts_nanos DESC, id DESC
@@ -203,14 +242,14 @@ export function buildThreadLogsSql(threadId, limit = 500, messageLimit = 320) {
     `;
 }
 
-export function buildGlobalRuntimeLogsSql(limit = 120, messageLimit = 320) {
+export function buildGlobalRuntimeLogsSql(limit = 120, messageLimit = 320, messageColumn = "message") {
   return `
       SELECT
         thread_id AS threadId,
         ts,
         level,
         target,
-        substr(message, 1, ${messageLimit}) AS message
+        substr(${messageColumn}, 1, ${messageLimit}) AS message
       FROM logs
       WHERE thread_id IS NULL OR thread_id = ''
       ORDER BY ts DESC, ts_nanos DESC, id DESC
@@ -413,6 +452,7 @@ function isObserverTool(toolName) {
 export function filterMeaningfulLogs(logs) {
   return logs.filter((log) => {
     const message = log.message?.trim();
+    const target = log.target?.trim() || "";
     if (!message) {
       return false;
     }
@@ -426,6 +466,10 @@ export function filterMeaningfulLogs(logs) {
     }
 
     if (NOISE_MESSAGE_SNIPPETS.some((snippet) => message.includes(snippet))) {
+      return false;
+    }
+
+    if (NOISE_TARGET_PREFIXES.some((prefix) => target.startsWith(prefix))) {
       return false;
     }
 
@@ -729,12 +773,13 @@ async function getStatus() {
   };
   let lastLogAt = latestThread?.updatedAt || 0;
   let threadLogs = [];
+  const logsMessageColumn = await detectLogsMessageColumn(logsDb);
 
   if (latestThread?.id) {
-    const logSql = buildThreadLogsSql(latestThread.id);
+    const logSql = buildThreadLogsSql(latestThread.id, 500, 320, logsMessageColumn);
 
     threadLogs = await sqliteJson(logsDb, logSql);
-    const globalLogs = await sqliteJson(logsDb, buildGlobalRuntimeLogsSql());
+    const globalLogs = await sqliteJson(logsDb, buildGlobalRuntimeLogsSql(120, 320, logsMessageColumn));
     const meaningfulLogs = selectActivityLogs(threadLogs, globalLogs, { nowSeconds });
     if (meaningfulLogs.length > 0) {
       lastLogAt = Number(meaningfulLogs[0].ts || lastLogAt);
