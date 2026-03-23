@@ -84,6 +84,9 @@ test("planning huddle is used when a new request still has low focus confidence"
   assert.equal(state.room.mode, "solo");
   assert.equal(state.agents.find((agent) => agent.id === "lead")?.activity, "gathering");
   assert.equal(state.scene.center_mode, "coordination");
+  assert.equal(state.scene.tone, "steady");
+  assert.equal(state.scene.visual_intensity, "medium");
+  assert.equal(state.scene.primary_bubble.tone, "steady");
   assert.ok(
     state.recent_events.some((event) => event.type === "new_request"),
     "expected a new_request event"
@@ -1201,6 +1204,75 @@ test("scene includes purposeful props and ambient cues for inhabited atmosphere"
   assert.ok(state.scene.props.some((prop) => prop.id === "tool_rack"));
   assert.ok(state.scene.props.some((prop) => prop.id === "document_tray"));
   assert.ok(state.scene.ambient_cues.some((cue) => cue.id === "board_glow"));
+});
+
+test("solo execution stays visually steady instead of reading like full squad intensity", () => {
+  const state = buildRoomState({
+    status: "busy",
+    thread: makeThread({
+      title: "Refine backend runtime state mapping"
+    }),
+    repoContext: null,
+    recentThreads: [],
+    activity: makeActivity({
+      summary: "Menjalankan: apply_patch public/room-state.js"
+    }),
+    logs: [
+      { ts: 1710000000, message: "ToolCall: functions.apply_patch" },
+      { ts: 1709999999, message: "Refine backend runtime state mapping" }
+    ]
+  });
+
+  assert.equal(state.room.mode, "solo");
+  assert.equal(state.room.phase, "execution");
+  assert.equal(state.scene.tone, "steady");
+  assert.equal(state.scene.visual_intensity, "medium");
+  assert.equal(state.scene.primary_bubble.tone, "steady");
+});
+
+test("multi-lane execution keeps the room visually busy when several lanes are active", () => {
+  const state = buildRoomState({
+    status: "busy",
+    thread: makeThread({
+      id: "thread_multi_intense",
+      title: "Coordinate frontend and backend workstreams for the room"
+    }),
+    repoContext: null,
+    recentThreads: [],
+    activity: makeActivity({
+      summary: "Lead is coordinating active worker threads"
+    }),
+    logs: [{ ts: 1710000000, message: "Agent workers are running" }],
+    agentJobs: [
+      {
+        job_id: "job_multi_intense",
+        item_id: "item_frontend_live",
+        status: "running",
+        assigned_thread_id: "thread_multi_intense",
+        instruction: "Fix clipping and CSS layout in the room shell",
+        row_json: JSON.stringify({
+          task: "Fix clipping and CSS layout in the room shell"
+        }),
+        result_json: null
+      },
+      {
+        job_id: "job_multi_intense",
+        item_id: "item_backend_live",
+        status: "running",
+        assigned_thread_id: "thread_multi_intense",
+        instruction: "Refine runtime event mapping and state cleanup",
+        row_json: JSON.stringify({
+          task: "Refine runtime event mapping and state cleanup"
+        }),
+        result_json: null
+      }
+    ]
+  });
+
+  assert.equal(state.room.mode, "multi");
+  assert.equal(state.scene.tone, "busy");
+  assert.equal(state.scene.visual_intensity, "high");
+  assert.equal(state.scene.primary_bubble.tone, "busy");
 });
 
 test("summarizePrimaryTask compresses long technical runtime strings for primary UI", () => {

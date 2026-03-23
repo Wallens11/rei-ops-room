@@ -1424,6 +1424,8 @@ function buildSceneDirector(room, workstreams, recentEvents) {
   const scoutEvent = findScoutEvent(recentEvents);
   const activeWorkstreams = workstreams.filter((workstream) => workstream.status === "active");
   const completedWorkstreams = workstreams.filter((workstream) => workstream.status === "completed");
+  const workerActiveStreams = activeWorkstreams.filter((workstream) => workstream.owner !== "lead");
+  const workerActiveLaneCount = unique(workerActiveStreams.map((workstream) => workstream.zone)).length;
   const highlightZones = unique(
     [...activeWorkstreams, ...completedWorkstreams].map((workstream) => workstream.zone)
   );
@@ -1487,6 +1489,15 @@ function buildSceneDirector(room, workstreams, recentEvents) {
     }
   }
 
+  const intenseExecution =
+    room.phase === "execution" &&
+    (workerActiveLaneCount >= 2 || scout.active || (room.mode === "multi" && workerActiveStreams.length >= 2));
+  const steadyExecution =
+    room.phase === "execution" &&
+    !intenseExecution &&
+    workerActiveLaneCount <= 1;
+  const executionBubbleTone = intenseExecution ? "busy" : "steady";
+
   const phaseMeta = ROOM_PHASES[room.phase] || ROOM_PHASES.standby;
   const activeZone = {
     id: activeZoneId,
@@ -1543,7 +1554,7 @@ function buildSceneDirector(room, workstreams, recentEvents) {
             ? {
                 actor_id: ZONE_TO_AGENT[room.focus_zone] || "lead",
                 text: executionBubbleLabel(room),
-                tone: room.status === "busy" ? "busy" : "steady"
+                tone: executionBubbleTone
               }
             : { actor_id: "lead", text: "standby", tone: "calm" };
 
@@ -1566,12 +1577,18 @@ function buildSceneDirector(room, workstreams, recentEvents) {
         ? "rest"
         : room.resting
         ? "rest"
+        : planningActive
+        ? "steady"
         : room.phase === "standby"
         ? "calm"
         : room.phase === "review_wrap"
           ? room.review_stage === "regroup"
             ? "steady"
             : "calm"
+          : intenseExecution
+            ? "busy"
+          : steadyExecution
+            ? "steady"
           : room.status === "busy"
             ? "busy"
             : "steady",
@@ -1590,12 +1607,18 @@ function buildSceneDirector(room, workstreams, recentEvents) {
         ? "low"
         : room.resting
           ? "low"
+          : planningActive
+            ? "medium"
           : room.phase === "review_wrap"
             ? room.review_stage === "results_returning"
               ? "medium"
               : room.review_stage === "regroup"
                 ? "medium"
                 : "low"
+            : intenseExecution
+              ? "high"
+            : steadyExecution
+              ? "medium"
             : room.status === "busy"
               ? "high"
               : "medium",

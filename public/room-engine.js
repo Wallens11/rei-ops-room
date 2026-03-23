@@ -25,6 +25,7 @@ const OBSERVATION_ACTIVITIES = new Set(["waiting", "idle"]);
 
 const OBSERVE_ROUTE_HOLD_FRAMES = 18;
 const OBSERVE_STANDBY_HOLD_FRAMES = 54;
+const SCOUT_HANDOFF_LINGER_FRAMES = 18;
 
 const BASE_ZONES = [
   {
@@ -376,11 +377,14 @@ function createScoutRoute(zones, scoutScene) {
   const toZoneId = scoutScene?.to_zone || "lab";
   const destination = zoneById(zones, toZoneId);
   const finalPoint = { x: destination.x, y: destination.y + 46 };
+  const points = createTransitRoute(zones, fromZoneId, toZoneId, [finalPoint, finalPoint]);
 
   return {
     zoneId: toZoneId,
     routeType: "scout",
-    points: createTransitRoute(zones, fromZoneId, toZoneId, [finalPoint, finalPoint])
+    holdIndices: [Math.max(0, points.length - 2)],
+    holdFrames: SCOUT_HANDOFF_LINGER_FRAMES,
+    points
   };
 }
 
@@ -611,6 +615,50 @@ function poseForActivity(activity) {
   return "sit";
 }
 
+function actorPhaseOffset(actor) {
+  return actor.id
+    .split("")
+    .reduce((sum, char) => sum + char.charCodeAt(0), 0) % 17;
+}
+
+function deriveDeskLoop(actor, agentState, frame) {
+  const phase = (frame + actorPhaseOffset(actor) * 5) % 72;
+
+  if (agentState.activity === "coding" || agentState.activity === "debugging") {
+    if (phase < 28) {
+      return { motionState: "SEATED", pose: "type" };
+    }
+
+    if (phase < 38) {
+      return { motionState: "PAUSE", pose: "sit" };
+    }
+
+    if (phase < 48) {
+      return { motionState: "SCAN", pose: "read" };
+    }
+
+    return { motionState: "SEATED", pose: "type" };
+  }
+
+  if (
+    agentState.activity === "reading" ||
+    agentState.activity === "reviewing" ||
+    agentState.activity === "summarizing"
+  ) {
+    if (phase < 26) {
+      return { motionState: "SEATED", pose: "read" };
+    }
+
+    if (phase < 38) {
+      return { motionState: "PAUSE", pose: "sit" };
+    }
+
+    return { motionState: "SCAN", pose: "read" };
+  }
+
+  return { motionState: "SEATED", pose: poseForActivity(agentState.activity) };
+}
+
 function isSeatRouteSettled(routeType) {
   return routeType === "seat" || routeType === "rest";
 }
@@ -639,19 +687,31 @@ function deriveObservationState(route, patrolIndex, moving, holdFrames) {
   };
 }
 
-function deriveActorMovement(actor, agentState, route, moving, holdFrames, patrolIndex) {
+function deriveActorMovement(actor, agentState, route, moving, holdFrames, patrolIndex, frame) {
   if (route.routeType === "meeting") {
     return moving
       ? { motionState: "WALK", pose: "walk" }
       : { motionState: "HUDDLE", pose: "read" };
   }
 
-  if (route.routeType === "dispatch" || route.routeType === "scout") {
+  if (route.routeType === "dispatch") {
     return moving
       ? { motionState: "WALK", pose: route.routeType === "scout" ? "carry" : "walk" }
       : isSeatRouteSettled(route.routeType)
         ? { motionState: "SEATED", pose: poseForActivity(agentState.activity) }
         : { motionState: "WALK", pose: "walk" };
+  }
+
+  if (route.routeType === "scout") {
+    if (moving) {
+      return { motionState: "WALK", pose: "carry" };
+    }
+
+    if (holdFrames > 0) {
+      return { motionState: "HANDOFF", pose: "carry" };
+    }
+
+    return { motionState: "WALK", pose: "walk" };
   }
 
   if (route.routeType === "observe") {
@@ -667,7 +727,7 @@ function deriveActorMovement(actor, agentState, route, moving, holdFrames, patro
   if (route.routeType === "seat") {
     return moving
       ? { motionState: "WALK", pose: "walk" }
-      : { motionState: "SEATED", pose: poseForActivity(agentState.activity) };
+      : deriveDeskLoop(actor, agentState, frame);
   }
 
   if (moving) {
@@ -728,13 +788,13 @@ export function stepCrewActors(
     let holdIndex = actor.holdIndex ?? null;
 
     const seatHoldAllowed =
-      route.routeType === "observe" &&
+      Array.isArray(route.holdIndices) &&
       actor.routeType === route.routeType &&
       holdFrames > 0 &&
       holdIndex !== null;
 
     if (seatHoldAllowed && holdFrames > 0) {
-      const motion = deriveActorMovement(actor, agentState, route, false, holdFrames, holdIndex);
+      const motion = deriveActorMovement(actor, agentState, route, false, holdFrames, holdIndex, frame);
 
       return {
         ...actor,
@@ -760,11 +820,7 @@ export function stepCrewActors(
       x = target.x;
       y = target.y;
       patrolIndex = (actor.patrolIndex + 1) % pointCount;
-      if (
-        route.routeType === "observe" &&
-        Array.isArray(route.holdIndices) &&
-        route.holdIndices.includes(currentIndex)
-      ) {
+      if (Array.isArray(route.holdIndices) && route.holdIndices.includes(currentIndex)) {
         holdFrames = route.holdFrames || OBSERVE_ROUTE_HOLD_FRAMES;
         holdIndex = currentIndex;
       } else {
@@ -789,7 +845,8 @@ export function stepCrewActors(
       route,
       moving,
       holdFrames,
-      patrolIndex % pointCount
+      patrolIndex % pointCount,
+      frame
     );
 
     return {

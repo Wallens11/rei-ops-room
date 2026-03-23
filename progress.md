@@ -48,3 +48,36 @@ Status: Day 1 core movement pass complete.
   - `handoff linger`
 - Move layout primitives into JSON schema so we can grow toward an office editor without hardcoding every coordinate.
 - Evaluate sprite-sheet support after the current movement grammar feels stable in daily use.
+
+## 2026-03-23
+
+Status: Day 2 complete.
+
+### Completed
+- Reduced stale review bias in [/Users/funtoco/workSpace/codex-pixel-agent/public/room-state.js](/Users/funtoco/workSpace/codex-pixel-agent/public/room-state.js) so workspace-root runtime activity no longer inherits a review-heavy repo context title while current commands point elsewhere.
+- Expanded runtime noise filtering in [/Users/funtoco/workSpace/codex-pixel-agent/server.mjs](/Users/funtoco/workSpace/codex-pixel-agent/server.mjs) to ignore `codex_otel` trace chatter and low-level websocket frame dumps that previously kept the room looking busier than reality.
+- Added desk micro-behaviors in [/Users/funtoco/workSpace/codex-pixel-agent/public/room-engine.js](/Users/funtoco/workSpace/codex-pixel-agent/public/room-engine.js), so settled workers now cycle through `type`, `sit`, and `read` instead of freezing on one seated pose.
+- Added scout handoff linger in [/Users/funtoco/workSpace/codex-pixel-agent/public/room-engine.js](/Users/funtoco/workSpace/codex-pixel-agent/public/room-engine.js), so review/result deliveries pause briefly at the destination instead of snapping through.
+- Tuned scene intensity in [/Users/funtoco/workSpace/codex-pixel-agent/public/room-state.js](/Users/funtoco/workSpace/codex-pixel-agent/public/room-state.js):
+  - solo execution now renders as `steady` / `medium`
+  - multi-lane execution still renders as `busy` / `high`
+  - planning huddles now stay `steady` / `medium` instead of reading like full-intensity work
+- Added a dedicated `steady` background treatment in [/Users/funtoco/workSpace/codex-pixel-agent/public/styles.css](/Users/funtoco/workSpace/codex-pixel-agent/public/styles.css) so solo work looks active but calmer than real multi-lane execution.
+
+### Verification
+- `npm test` -> 86/86 passing
+- `node --check public/room-state.js`
+- `node --check public/room-engine.js`
+- `node --check public/app.js`
+- `node --check server.mjs`
+- live smoke check on `http://localhost:4317/?mode=room`
+
+### What Still Feels Off
+- Objective/runtime cards can still be contaminated by my verification commands during the same Codex session, even though low-level transport noise is filtered more aggressively now.
+- The room is more alive than Day 1, but it is still route-driven, not yet a full office-sim behavior system.
+- Layout coordinates are still hardcoded, so scene iteration is slower than it should be.
+
+### Next Best Moves
+- De-prioritize self-QA commands in objective/runtime cards so user intent stays visible during local verification.
+- Make current objective more stable across short noisy bursts and generic commands.
+- Start moving room primitives into layout JSON so future editor work is practical.

@@ -462,3 +462,69 @@ test("idle observers transition through wander and return before settling back i
   assert.equal(api.pose, "sit");
   assert.ok(seatDistance < 10, `observer did not settle back into the backend seat: ${seatDistance}`);
 });
+
+test("settled desk workers cycle through micro-behaviors instead of freezing on one seated pose", () => {
+  const zones = createDefaultZones();
+  let actors = buildCrewActors(zones);
+  const uiPoses = new Set();
+
+  for (let frame = 1; frame <= 180; frame += 1) {
+    actors = stepCrewActors(actors, {
+      frame,
+      status: "busy",
+      focusZone: "frontend",
+      roomPhase: "execution",
+      agents: buildAgentState({
+        ui: { activity: "coding", assigned_zone: "frontend" }
+      }),
+      scene: {
+        scout: {
+          active: false
+        }
+      },
+      zones
+    });
+
+    uiPoses.add(actors.find((actor) => actor.id === "ui")?.pose);
+  }
+
+  assert.ok(uiPoses.has("type"), "desk loop never typed");
+  assert.ok(uiPoses.has("sit"), "desk loop never paused at screen");
+  assert.ok(uiPoses.size >= 2, `desk loop stayed too static: ${[...uiPoses].join(",")}`);
+});
+
+test("scout lingers briefly at the handoff destination instead of snapping straight through", () => {
+  const zones = createDefaultZones();
+  let actors = buildCrewActors(zones);
+  const lingerFrames = [];
+
+  for (let frame = 1; frame <= 140; frame += 1) {
+    actors = stepCrewActors(actors, {
+      frame,
+      status: "busy",
+      focusZone: "review",
+      roomPhase: "review_wrap",
+      agents: buildAgentState({
+        docs: { activity: "reviewing", assigned_zone: "review" },
+        scout: { activity: "moving", assigned_zone: "between_zones" }
+      }),
+      scene: {
+        scout: {
+          active: true,
+          from_zone: "lab",
+          to_zone: "review",
+          payload: "review request",
+          reason: "review_requested"
+        }
+      },
+      zones
+    });
+
+    const scout = actors.find((actor) => actor.id === "scout");
+    if (scout.motionState === "HANDOFF") {
+      lingerFrames.push(frame);
+    }
+  }
+
+  assert.ok(lingerFrames.length > 0, "scout never lingered at the handoff destination");
+});
