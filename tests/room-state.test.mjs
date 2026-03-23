@@ -184,6 +184,51 @@ test("live runtime work outweighs a stale thread opener when choosing the active
   assert.equal(state.objective.focus_title, "Backend Rack");
 });
 
+test("workspace-root runtime activity does not inherit a stale review-heavy repo context title", () => {
+  const state = buildRoomState({
+    status: "busy",
+    thread: makeThread({
+      title: "rei kita bisa buat agent pixel ga si disini wkwk",
+      cwd: "/Users/funtoco/workSpace",
+      cwdDisplay: "workspace root",
+      repoName: "workspace",
+      updatedAgeSeconds: 20,
+      updatedAgo: "20 dtk lalu"
+    }),
+    repoContext: makeThread({
+      id: "thread_old_review_repo",
+      title:
+        "oke sembari nunggu review leader aku aku mau minta tolong kamu untuk buatin issue yang ada didalam issue ini dong rei",
+      cwd: "/Users/funtoco/workSpace/fun-base",
+      cwdDisplay: "fun-base",
+      repoName: "fun-base",
+      updatedAgeSeconds: 4 * 60,
+      updatedAgo: "4 mnt lalu"
+    }),
+    recentThreads: [],
+    activity: makeActivity({
+      summary:
+        "session_loop{thread_id=019cfae1-df1f-73b2-a96a-7439e0c1576d}:submission_dispatch{otel...}",
+      source: "codex_core::stream_events_utils",
+      lastLogAgeSeconds: 4,
+      lastLogAgo: "4 dtk lalu"
+    }),
+    logs: [
+      {
+        ts: 1710000000,
+        message:
+          "session_loop{thread_id=019cfae1-df1f-73b2-a96a-7439e0c1576d}:submission_dispatch{otel...}"
+      }
+    ]
+  });
+
+  assert.equal(state.room.phase, "planning_huddle");
+  assert.equal(state.room.focus_zone, "backend");
+  assert.equal(state.objective.focus_title, "Backend Rack");
+  assert.equal(state.scene.assignment_hint.active, true);
+  assert.equal(state.scene.assignment_hint.zone_id, "backend");
+});
+
 test("generic runtime commands like npm start still pull the room into execution instead of huddling", () => {
   const state = buildRoomState({
     status: "busy",

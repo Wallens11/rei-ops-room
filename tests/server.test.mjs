@@ -208,6 +208,49 @@ test("filterMeaningfulLogs ignores background model cache chatter", () => {
   assert.equal(logs[0].message, 'ToolCall: functions.exec_command {"cmd":"npm test"}');
 });
 
+test("filterMeaningfulLogs ignores codex otel trace chatter", () => {
+  const logs = filterMeaningfulLogs([
+    {
+      target: "codex_otel.trace_safe",
+      message:
+        "session_loop{thread_id=019cfae1-df1f-73b2-a96a-7439e0c1576d}:submission_dispatch{otel.name=\"op.dispatch.user_input\"}"
+    },
+    {
+      target: "codex_otel.log_only",
+      message:
+        "session_loop{thread_id=019cfae1-df1f-73b2-a96a-7439e0c1576d}:submission_dispatch{otel.name=\"op.dispatch.user_input\"}"
+    },
+    {
+      target: "codex_core::stream_events_utils",
+      message: 'ToolCall: functions.exec_command {"cmd":"npm test"}'
+    }
+  ]);
+
+  assert.equal(logs.length, 1);
+  assert.equal(logs[0].message, 'ToolCall: functions.exec_command {"cmd":"npm test"}');
+});
+
+test("filterMeaningfulLogs ignores low-level websocket frame dumps", () => {
+  const logs = filterMeaningfulLogs([
+    {
+      target: "log",
+      message:
+        "/Users/runner/.cargo/git/checkouts/tokio-tungstenite-ea4445d9acecae62/132f5b3/src/lib.rs:294 Stream.poll_next"
+    },
+    {
+      target: "log",
+      message: "received frame <FRAME> final: true opcode: TEXT payload length: 61"
+    },
+    {
+      target: "codex_core::stream_events_utils",
+      message: 'ToolCall: functions.exec_command {"cmd":"npm test"}'
+    }
+  ]);
+
+  assert.equal(logs.length, 1);
+  assert.equal(logs[0].message, 'ToolCall: functions.exec_command {"cmd":"npm test"}');
+});
+
 test("selectActivityLogs falls back to recent global runtime logs when thread logs only contain noise", () => {
   const logs = selectActivityLogs(
     [

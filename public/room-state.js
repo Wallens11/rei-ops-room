@@ -397,6 +397,14 @@ function runtimeZoneHints(text) {
   }
 
   if (
+    normalized.includes("session_loop") ||
+    normalized.includes("submission_dispatch") ||
+    normalized.includes("stream_events_utils")
+  ) {
+    add("backend", "runtime loop", 4.8);
+  }
+
+  if (
     normalized.includes("npm test") ||
     normalized.includes("node --test") ||
     normalized.includes("verification")
@@ -559,12 +567,19 @@ function inferCompletionAgeSeconds({ thread, activity, normalizedAgentJobs, rawA
 function baseSignals({ thread, repoContext, activity, logs, status, agentJobs = [] }) {
   const threadText = normalizeText(thread?.title);
   const activityText = normalizeText(activity?.summary);
-  const secondaryText = normalizeText(thread?.cwd, thread?.gitBranch, repoContext?.title, repoContext?.cwd);
   const logText = normalizeText(logs.slice(0, 24).map((log) => log.message));
   const toolCalls = logs
     .slice(0, 18)
     .filter((log) => (log.message || "").includes("ToolCall:")).length;
   const runtimeActive = activity?.source === "tool" || logs.length > 0;
+  const repoContextSemanticTitle =
+    runtimeActive && thread?.cwdDisplay === "workspace root" ? "" : repoContext?.title;
+  const secondaryText = normalizeText(
+    thread?.cwd,
+    thread?.gitBranch,
+    repoContextSemanticTitle,
+    repoContext?.cwd
+  );
   const runtimeHints = runtimeZoneHints([activityText, logText]);
   const threadWeight = runtimeActive ? 1.75 : 4;
   const activityWeight = runtimeActive ? 5 : 4;

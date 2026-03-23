@@ -157,12 +157,19 @@ const NOISE_MESSAGE_SNIPPETS = [
   "tool gate released",
   "waiting for tool gate",
   "successfully connected to websocket:",
-  "models cache:"
+  "models cache:",
+  "tokio-tungstenite",
+  "received frame",
+  "parsed headers [",
+  "stream.poll_next",
+  "websocketstream.with_context",
+  "decompressing "
 ];
 const NOISE_TARGET_PREFIXES = [
   "codex_app_server::",
   "codex_api::",
-  "codex_core::models_manager::"
+  "codex_core::models_manager::",
+  "codex_otel."
 ];
 const statusStreamClients = new Set();
 let statusStreamTimer = null;
