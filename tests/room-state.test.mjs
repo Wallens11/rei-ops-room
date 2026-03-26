@@ -1034,6 +1034,147 @@ test("runtime trail decays a finished command into last finished instead of keep
   assert.equal(state.room.current_task, state.objective.title);
 });
 
+test("verification bursts keep the live task anchored to the underlying implementation context", () => {
+  const state = buildRoomState({
+    status: "busy",
+    thread: makeThread({
+      title: "Tighten room shell clipping and widget layout"
+    }),
+    repoContext: null,
+    recentThreads: [],
+    activity: makeActivity({
+      summary: "Menjalankan: npm test",
+      source: "tool",
+      lastLogAgeSeconds: 4,
+      lastLogAgo: "4 dtk lalu"
+    }),
+    logs: [
+      {
+        ts: 1710000002,
+        message: 'ToolCall: functions.exec_command {"cmd":"npm test"}'
+      },
+      {
+        ts: 1710000001,
+        message: 'ToolCall: functions.exec_command {"cmd":"sed -n \'1,220p\' public/styles.css"}'
+      },
+      {
+        ts: 1710000000,
+        message: "Tighten room shell clipping and widget layout"
+      }
+    ]
+  });
+
+  assert.equal(state.room.focus_zone, "frontend");
+  assert.equal(state.objective.title, "rapihin layout dan tampilan room");
+  assert.equal(state.runtime.live_now?.title, "layout check");
+  assert.match(state.runtime.live_now?.detail || "", /npm test/i);
+  assert.equal(state.room.current_task, "layout check");
+});
+
+test("observer status checks do not replace the current objective during short noisy bursts", () => {
+  const state = buildRoomState({
+    status: "busy",
+    thread: makeThread({
+      title: "Refine runtime state cleanup for the room"
+    }),
+    repoContext: null,
+    recentThreads: [],
+    activity: makeActivity({
+      summary: "Menjalankan: curl -s http://localhost:4317/api/status | jq .room.phase",
+      source: "tool",
+      lastLogAgeSeconds: 6,
+      lastLogAgo: "6 dtk lalu"
+    }),
+    logs: [
+      {
+        ts: 1710000002,
+        message:
+          'ToolCall: functions.exec_command {"cmd":"curl -s http://localhost:4317/api/status | jq .room.phase"}'
+      },
+      {
+        ts: 1710000001,
+        message:
+          'ToolCall: functions.exec_command {"cmd":"git status --short --branch"}'
+      },
+      {
+        ts: 1710000000,
+        message: "Refine runtime state cleanup for the room"
+      }
+    ]
+  });
+
+  assert.equal(state.objective.title, "rapihin runtime dan state room");
+  assert.equal(state.runtime.live_now?.title, "runtime mapping");
+  assert.match(state.runtime.live_now?.detail || "", /api\/status/i);
+  assert.equal(state.room.current_task, "runtime mapping");
+});
+
+test("generic verification commands do not yank focus away from the clearer desk signal in recent logs", () => {
+  const state = buildRoomState({
+    status: "busy",
+    thread: makeThread({
+      title: "Polish room work before wrap"
+    }),
+    repoContext: null,
+    recentThreads: [],
+    activity: makeActivity({
+      summary: "Menjalankan: npm test",
+      source: "tool",
+      lastLogAgeSeconds: 5,
+      lastLogAgo: "5 dtk lalu"
+    }),
+    logs: [
+      {
+        ts: 1710000002,
+        message: 'ToolCall: functions.exec_command {"cmd":"npm test"}'
+      },
+      {
+        ts: 1710000001,
+        message: 'ToolCall: functions.exec_command {"cmd":"sed -n \'1,220p\' public/styles.css"}'
+      }
+    ]
+  });
+
+  assert.equal(state.room.focus_zone, "frontend");
+  assert.equal(state.scene.active_zone.id, "frontend");
+});
+
+test("pure self-QA bursts fall back to the objective headline when no clearer task context exists", () => {
+  const state = buildRoomState({
+    status: "busy",
+    thread: makeThread({
+      title: "rei kita bisa buat agent pixel ga si disini wkwk",
+      cwd: "/Users/funtoco/workSpace",
+      cwdDisplay: "workspace root",
+      repoName: "workSpace"
+    }),
+    repoContext: makeThread({
+      id: "thread_repo_context",
+      title: "Refine room runtime polish",
+      cwd: "/Users/funtoco/workSpace/codex-pixel-agent",
+      cwdDisplay: "codex-pixel-agent",
+      repoName: "codex-pixel-agent"
+    }),
+    recentThreads: [],
+    activity: makeActivity({
+      summary: "Menjalankan: npm test",
+      source: "tool",
+      lastLogAgeSeconds: 4,
+      lastLogAgo: "4 dtk lalu"
+    }),
+    logs: [
+      {
+        ts: 1710000002,
+        message: 'ToolCall: functions.exec_command {"cmd":"npm test"}'
+      }
+    ]
+  });
+
+  assert.equal(state.objective.title, "bangun pixel ops room");
+  assert.equal(state.runtime.live_now?.title, "verification pass");
+  assert.equal(state.room.current_task, "bangun pixel ops room");
+});
+
 test("runtime trail ignores low-level transport noise when there is no meaningful finished action", () => {
   const state = buildRoomState({
     status: "busy",

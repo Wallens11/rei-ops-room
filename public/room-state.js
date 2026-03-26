@@ -102,6 +102,18 @@ const RUNTIME_NOISE_SNIPPETS = [
   "unhandled responses event:",
   "successfully connected to websocket:"
 ];
+const OBSERVER_COMMAND_SNIPPETS = [
+  "npm test",
+  "node --test",
+  "git status",
+  "git diff",
+  "curl -s http://localhost:4317/api/status",
+  "curl http://localhost:4317/api/status",
+  "/api/status | jq",
+  "browser_snapshot",
+  "browser_take_screenshot",
+  "console_messages"
+];
 
 function clamp(value, min, max) {
   return Math.max(min, Math.min(max, value));
@@ -1077,6 +1089,45 @@ function cleanRuntimeSummary(summary) {
     .trim();
 }
 
+function isObserverCommand(command) {
+  const normalized = normalizeText(command);
+  return OBSERVER_COMMAND_SNIPPETS.some((snippet) => normalized.includes(snippet));
+}
+
+function isObserverRuntimeSummary(summary) {
+  return isObserverCommand(cleanRuntimeSummary(summary));
+}
+
+function deriveSupportingRuntimeSummary(logs = []) {
+  for (const log of logs) {
+    const message = String(log?.message || "").trim();
+    if (!message) {
+      continue;
+    }
+
+    if (RUNTIME_NOISE_SNIPPETS.some((snippet) => normalizeText(message).includes(snippet))) {
+      continue;
+    }
+
+    const command = extractCommandLike(message);
+    if (command) {
+      if (isObserverCommand(command)) {
+        continue;
+      }
+
+      return command;
+    }
+
+    if (extractToolNameFromMessage(message)) {
+      continue;
+    }
+
+    return message;
+  }
+
+  return null;
+}
+
 function summarizeRuntimeLabel(summary, zoneId) {
   return humanizeSummary(cleanRuntimeSummary(summary), {
     zoneId,
@@ -1096,6 +1147,10 @@ function summarizeRuntimeLog(log, zoneId) {
 
   const command = extractCommandLike(log?.message || "");
   if (command) {
+    if (isObserverCommand(command)) {
+      return null;
+    }
+
     return humanizeSummary(command, { zoneId, kind: "task" });
   }
 
@@ -1986,7 +2041,12 @@ function buildRuntimeState(taskIntelligence, room, activity, logs = [], nowSecon
   const activeAgentJobs = taskIntelligence.signals.agent_jobs?.active_count || 0;
   const activityKind =
     activity?.kind || (activity?.source === "tool" ? "work" : activity?.source === "presence" ? "rest" : "thread");
-  const currentTitle = summarizeRuntimeLabel(activity?.summary, zoneId);
+  const observerRuntime = isObserverRuntimeSummary(activity?.summary);
+  const supportingRuntimeSummary = observerRuntime ? deriveSupportingRuntimeSummary(logs) : null;
+  const runtimeHeadline = observerRuntime
+    ? supportingRuntimeSummary || activity?.summary
+    : activity?.summary;
+  const currentTitle = summarizeRuntimeLabel(runtimeHeadline, zoneId);
   const history = [];
   const seen = new Set();
 
@@ -2062,6 +2122,7 @@ function buildRuntimeState(taskIntelligence, room, activity, logs = [], nowSecon
   }
 
   return {
+    prefer_objective: observerRuntime && !supportingRuntimeSummary,
     live_now: liveNow,
     last_finished: lastFinished
   };
@@ -2203,7 +2264,12 @@ export function buildRoomState({
     logs,
     inferNowSeconds(thread, activity)
   );
-  room.current_task = room.resting ? "Istirahat sejenak" : runtime.live_now?.title || objective.title;
+  room.current_task =
+    room.resting
+      ? "Istirahat sejenak"
+      : runtime.prefer_objective
+        ? objective.title
+        : runtime.live_now?.title || objective.title;
   const restCorner = buildRestCorner(room, activity);
   room.rest_corner = restCorner;
   const scene = buildSceneDirector({ ...room, rest_corner: restCorner }, workstreams, recentEvents);

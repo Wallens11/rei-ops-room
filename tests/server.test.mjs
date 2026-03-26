@@ -131,6 +131,9 @@ test("filterMeaningfulLogs ignores tool gate wait noise", () => {
       message: "tool gate released"
     },
     {
+      message: "deregistering event source from poller"
+    },
+    {
       message: 'ToolCall: functions.exec_command {"cmd":"npm test"}'
     }
   ]);
@@ -230,6 +233,23 @@ test("filterMeaningfulLogs ignores codex otel trace chatter", () => {
   assert.equal(logs[0].message, 'ToolCall: functions.exec_command {"cmd":"npm test"}');
 });
 
+test("filterMeaningfulLogs ignores session loop dispatch chatter even when it arrives through stream_events_utils", () => {
+  const logs = filterMeaningfulLogs([
+    {
+      target: "codex_core::stream_events_utils",
+      message:
+        "session_loop{thread_id=019cfae1-df1f-73b2-a96a-7439e0c1576d}:submission_dispatch{otel.name=\"op.dispatch.user_input\"}"
+    },
+    {
+      target: "codex_core::stream_events_utils",
+      message: 'ToolCall: functions.exec_command {"cmd":"npm test"}'
+    }
+  ]);
+
+  assert.equal(logs.length, 1);
+  assert.equal(logs[0].message, 'ToolCall: functions.exec_command {"cmd":"npm test"}');
+});
+
 test("filterMeaningfulLogs ignores low-level websocket frame dumps", () => {
   const logs = filterMeaningfulLogs([
     {
@@ -240,6 +260,67 @@ test("filterMeaningfulLogs ignores low-level websocket frame dumps", () => {
     {
       target: "log",
       message: "received frame <FRAME> final: true opcode: TEXT payload length: 61"
+    },
+    {
+      target: "codex_core::stream_events_utils",
+      message: 'ToolCall: functions.exec_command {"cmd":"npm test"}'
+    }
+  ]);
+
+  assert.equal(logs.length, 1);
+  assert.equal(logs[0].message, 'ToolCall: functions.exec_command {"cmd":"npm test"}');
+});
+
+test("filterMeaningfulLogs ignores split websocket frame metadata lines", () => {
+  const logs = filterMeaningfulLogs([
+    {
+      target: "log",
+      message: "Masked: false"
+    },
+    {
+      target: "log",
+      message: "Opcode: Data(Text)"
+    },
+    {
+      target: "log",
+      message: "First: 11000001"
+    },
+    {
+      target: "log",
+      message: "Second: 111101"
+    },
+    {
+      target: "codex_core::stream_events_utils",
+      message: 'ToolCall: functions.exec_command {"cmd":"npm test"}'
+    }
+  ]);
+
+  assert.equal(logs.length, 1);
+  assert.equal(logs[0].message, 'ToolCall: functions.exec_command {"cmd":"npm test"}');
+});
+
+test("filterMeaningfulLogs ignores WouldBlock transport noise", () => {
+  const logs = filterMeaningfulLogs([
+    {
+      target: "log",
+      message: "WouldBlock"
+    },
+    {
+      target: "codex_core::stream_events_utils",
+      message: 'ToolCall: functions.exec_command {"cmd":"npm test"}'
+    }
+  ]);
+
+  assert.equal(logs.length, 1);
+  assert.equal(logs[0].message, 'ToolCall: functions.exec_command {"cmd":"npm test"}');
+});
+
+test("filterMeaningfulLogs ignores received-message transport envelopes when no command can be extracted", () => {
+  const logs = filterMeaningfulLogs([
+    {
+      target: "log",
+      message:
+        'Received message {"type":"response.output_item.done","item":{"id":"fc_x","type":"function_call","status":"completed","arguments":"TRUNCATED"}}'
     },
     {
       target: "codex_core::stream_events_utils",

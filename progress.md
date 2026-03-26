@@ -81,3 +81,38 @@ Status: Day 2 complete.
 - De-prioritize self-QA commands in objective/runtime cards so user intent stays visible during local verification.
 - Make current objective more stable across short noisy bursts and generic commands.
 - Start moving room primitives into layout JSON so future editor work is practical.
+
+## 2026-03-26
+
+Status: Day 3 complete.
+
+### Completed
+- Stabilized objective/runtime cards in [/Users/funtoco/workSpace/codex-pixel-agent/public/room-state.js](/Users/funtoco/workSpace/codex-pixel-agent/public/room-state.js):
+  - verification bursts now keep the live title anchored to the underlying implementation context when recent logs still carry a clearer task
+  - pure self-QA bursts fall back to the objective headline instead of taking over `room.current_task`
+  - observer-like runtime commands no longer dominate runtime history when they are just local verification noise
+- Tightened runtime noise filtering in [/Users/funtoco/workSpace/codex-pixel-agent/server.mjs](/Users/funtoco/workSpace/codex-pixel-agent/server.mjs):
+  - ignored session-loop transport chatter even when it arrives via `stream_events_utils`
+  - ignored split websocket frame metadata lines like `Masked`, `Opcode`, `First`, `Second`
+  - ignored bare `WouldBlock` noise and truncated `Received message ...` transport envelopes without real command payloads
+- Added Day 3 regression coverage in:
+  - [/Users/funtoco/workSpace/codex-pixel-agent/tests/room-state.test.mjs](/Users/funtoco/workSpace/codex-pixel-agent/tests/room-state.test.mjs)
+  - [/Users/funtoco/workSpace/codex-pixel-agent/tests/server.test.mjs](/Users/funtoco/workSpace/codex-pixel-agent/tests/server.test.mjs)
+- Improved focus stability so generic verification commands no longer yank the room away from clearer desk evidence in nearby logs.
+
+### Verification
+- `npm test` -> 89/89 passing
+- `node --check public/room-state.js`
+- `node --check public/app.js`
+- `node --check server.mjs`
+- live smoke check on `http://localhost:4317/?mode=room`
+
+### What Still Feels Off
+- Runtime truth is much cleaner now, but it is still snapshot-driven; there is no short-term memory layer yet beyond recent logs.
+- Layout primitives are still hardcoded, so the room is more stable but not yet easier to reshape.
+- The room is more legible during QA noise, but it still is not a full office-sim behavior model.
+
+### Next Best Moves
+- Extract layout data into JSON so scene editing stops depending on hardcoded coordinates.
+- Prepare the room for future office-editor work without breaking movement routing.
+- Keep refining objective continuity only if a new class of runtime noise shows up in live use.

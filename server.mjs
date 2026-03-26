@@ -153,11 +153,19 @@ const NOISE_MESSAGE_PREFIXES = [
 ];
 const NOISE_MESSAGE_SNIPPETS = [
   "registering event source with poller",
+  "deregistering event source from poller",
   "token usage",
   "tool gate released",
   "waiting for tool gate",
   "successfully connected to websocket:",
   "models cache:",
+  "session_loop{",
+  "submission_dispatch{",
+  "wouldblock",
+  "masked: false",
+  "opcode: data(",
+  "first:",
+  "second:",
   "tokio-tungstenite",
   "received frame",
   "parsed headers [",
@@ -460,6 +468,8 @@ export function filterMeaningfulLogs(logs) {
   return logs.filter((log) => {
     const message = log.message?.trim();
     const target = log.target?.trim() || "";
+    const messageLower = message?.toLowerCase() || "";
+    const targetLower = target.toLowerCase();
     if (!message) {
       return false;
     }
@@ -468,20 +478,24 @@ export function filterMeaningfulLogs(logs) {
       return false;
     }
 
-    if (NOISE_MESSAGE_PREFIXES.some((prefix) => message.startsWith(prefix))) {
+    if (NOISE_MESSAGE_PREFIXES.some((prefix) => messageLower.startsWith(prefix))) {
       return false;
     }
 
-    if (NOISE_MESSAGE_SNIPPETS.some((snippet) => message.includes(snippet))) {
+    if (NOISE_MESSAGE_SNIPPETS.some((snippet) => messageLower.includes(snippet))) {
       return false;
     }
 
-    if (NOISE_TARGET_PREFIXES.some((prefix) => target.startsWith(prefix))) {
+    if (NOISE_TARGET_PREFIXES.some((prefix) => targetLower.startsWith(prefix))) {
       return false;
     }
 
     const command = extractCommand(log.message);
     if (command && isObserverCommand(command)) {
+      return false;
+    }
+
+    if (!command && messageLower.startsWith('received message {"type":"response.')) {
       return false;
     }
 
