@@ -133,8 +133,27 @@ const renderState = {
     lastEventId: null,
     bubble: null,
     badge: null
-  }
+  },
+  reducedMotion: false
 };
+
+const reducedMotionQuery =
+  typeof window !== "undefined" && typeof window.matchMedia === "function"
+    ? window.matchMedia("(prefers-reduced-motion: reduce)")
+    : null;
+
+if (reducedMotionQuery) {
+  renderState.reducedMotion = reducedMotionQuery.matches;
+  const onReducedMotionChange = (event) => {
+    renderState.reducedMotion = event.matches;
+  };
+
+  if (typeof reducedMotionQuery.addEventListener === "function") {
+    reducedMotionQuery.addEventListener("change", onReducedMotionChange);
+  } else if (typeof reducedMotionQuery.addListener === "function") {
+    reducedMotionQuery.addListener(onReducedMotionChange);
+  }
+}
 
 function cleanupOnPhaseEnter(nextPhase, nextSubstate = null) {
   if (nextSubstate === "cooldown") {
@@ -227,6 +246,23 @@ function createEmptyState() {
         reason: null,
         confidence: null
       },
+      transition_emphasis: {
+        type: "settled",
+        anchor_zone: "lab",
+        target_zone_ids: [],
+        label: "Hold the room steady",
+        intensity: "low"
+      },
+      desk_occupancy: [],
+      handoff_trail: {
+        active: false,
+        from_zone: null,
+        to_zone: null,
+        label: null,
+        reason: null,
+        live: false,
+        intensity: "off"
+      },
       focus_label: "Active Desk",
       focus_chip_title: "Lead Table",
       focus_title: "Lead Table",
@@ -295,6 +331,25 @@ function truncate(text, limit = 140) {
 
 function zoneById(id) {
   return ZONES.find((zone) => zone.id === id) || ZONES[ZONES.length - 1];
+}
+
+function deskAnchor(zone) {
+  return {
+    x: Math.round(zone.x + 38),
+    y: Math.round(zone.y + 54)
+  };
+}
+
+function transitPoint(zone) {
+  return zone.transitAnchor || zone.familyHub || deskAnchor(zone);
+}
+
+function hallwayPoint() {
+  return ROOM_LAYOUT.hallway?.center || { x: CANVAS_WIDTH / 2, y: 232 };
+}
+
+function occupancyForZone(zoneId) {
+  return renderState.data.scene?.desk_occupancy?.find((entry) => entry.zone_id === zoneId) || null;
 }
 
 function actorById(id) {
@@ -767,6 +822,29 @@ function drawPixelRect(x, y, w, h, color) {
   context.fillRect(Math.round(x), Math.round(y), w, h);
 }
 
+function withAlpha(color, alpha) {
+  if (!color) {
+    return `rgba(255, 255, 255, ${alpha})`;
+  }
+
+  if (color.startsWith("#") && color.length === 7) {
+    const red = Number.parseInt(color.slice(1, 3), 16);
+    const green = Number.parseInt(color.slice(3, 5), 16);
+    const blue = Number.parseInt(color.slice(5, 7), 16);
+    return `rgba(${red}, ${green}, ${blue}, ${alpha})`;
+  }
+
+  if (color.startsWith("rgb(")) {
+    return color.replace("rgb(", "rgba(").replace(")", `, ${alpha})`);
+  }
+
+  if (color.startsWith("rgba(")) {
+    return color.replace(/rgba\(([^)]+),\s*[\d.]+\)/, `rgba($1, ${alpha})`);
+  }
+
+  return color;
+}
+
 function resolveLayoutColor(fill, palette = {}) {
   if (!fill) {
     return null;
@@ -846,6 +924,163 @@ function drawRoomBase(tone = "calm") {
     drawPixelRect(286, 160, 72, 8, "rgba(184, 162, 255, 0.22)");
     drawPixelRect(298, 168, 48, 6, "rgba(184, 162, 255, 0.12)");
   }
+}
+
+function drawRouteMarkers(points, color, { intensity = "medium", live = false } = {}) {
+  if (!points || points.length < 2) {
+    return;
+  }
+
+  const step = renderState.reducedMotion ? 18 : live ? 12 : 16;
+  const offset = renderState.reducedMotion ? 0 : (renderState.frame * (live ? 1.65 : 0.8)) % step;
+  const alpha =
+    intensity === "high" ? 0.42 : intensity === "medium" ? 0.28 : 0.18;
+  const square = live ? 4 : 3;
+
+  context.save();
+  context.fillStyle = withAlpha(color, alpha);
+
+  for (let index = 0; index < points.length - 1; index += 1) {
+    const start = points[index];
+    const end = points[index + 1];
+    const dx = end.x - start.x;
+    const dy = end.y - start.y;
+    const distance = Math.hypot(dx, dy);
+
+    if (distance === 0) {
+      continue;
+    }
+
+    for (let progress = offset; progress < distance; progress += step) {
+      const ratio = progress / distance;
+      const x = start.x + dx * ratio;
+      const y = start.y + dy * ratio;
+      drawPixelRect(x - square / 2, y - square / 2, square, square, context.fillStyle);
+    }
+  }
+
+  context.restore();
+}
+
+function drawZoneFloorHalo(zoneId, color, intensity = "medium") {
+  const zone = zoneById(zoneId);
+  const anchor = deskAnchor(zone);
+  const alpha =
+    intensity === "high" ? 0.18 : intensity === "medium" ? 0.12 : 0.08;
+  const width = intensity === "high" ? 72 : intensity === "medium" ? 60 : 48;
+  const height = intensity === "high" ? 12 : 8;
+
+  drawPixelRect(anchor.x - width / 2, anchor.y + 18, width, height, withAlpha(color, alpha));
+  drawPixelRect(anchor.x - (width - 14) / 2, anchor.y + 22, width - 14, 4, withAlpha(color, alpha * 0.8));
+}
+
+function drawFocusBeam(zoneId, color, intensity = "medium") {
+  const zone = zoneById(zoneId);
+  const anchor = deskAnchor(zone);
+  const topY = 42;
+  const layers = intensity === "high" ? 5 : 4;
+  const startWidth = intensity === "high" ? 26 : 20;
+  const endWidth = intensity === "high" ? 84 : 68;
+
+  for (let layer = 0; layer < layers; layer += 1) {
+    const ratio = layer / Math.max(1, layers - 1);
+    const y = topY + ratio * (anchor.y - 18 - topY);
+    const width = startWidth + (endWidth - startWidth) * ratio;
+    const alpha = (intensity === "high" ? 0.16 : 0.1) * (1 - ratio * 0.28);
+    drawPixelRect(anchor.x - width / 2, y, width, 10, withAlpha(color, alpha));
+  }
+}
+
+function buildRoutePolyline(fromZoneId, toZoneId) {
+  const from = zoneById(fromZoneId || "lab");
+  const to = zoneById(toZoneId || "lab");
+  const center = hallwayPoint();
+  const points = [];
+  const fromAnchor = transitPoint(from);
+  const toAnchor = transitPoint(to);
+
+  points.push(fromAnchor);
+
+  if (from.id !== "lab") {
+    points.push(from.familyHub || center);
+  }
+
+  if (from.id !== to.id) {
+    points.push(center);
+  }
+
+  if (to.id !== "lab") {
+    points.push(to.familyHub || center);
+  }
+
+  points.push(toAnchor);
+  return points.filter((point, index, array) => {
+    const previous = array[index - 1];
+    return !previous || previous.x !== point.x || previous.y !== point.y;
+  });
+}
+
+function transitionAccent(scene, emphasis) {
+  if (emphasis?.type === "review") {
+    return COLORS.rose;
+  }
+
+  if (emphasis?.type === "briefing" || emphasis?.type === "rest" || emphasis?.type === "settling") {
+    return COLORS.violet;
+  }
+
+  const zone = zoneById(emphasis?.anchor_zone || scene?.active_zone?.id || "lab");
+  return zone.color || COLORS.cyan;
+}
+
+function drawTransitionEmphasis(scene) {
+  const emphasis = scene?.transition_emphasis;
+
+  if (!emphasis) {
+    return;
+  }
+
+  const accent = transitionAccent(scene, emphasis);
+
+  if (emphasis.type === "briefing" || emphasis.type === "rest" || emphasis.type === "settling") {
+    drawZoneFloorHalo(emphasis.anchor_zone || "lab", accent, emphasis.intensity);
+  }
+
+  if (emphasis.type === "execution") {
+    drawFocusBeam(emphasis.anchor_zone || scene?.active_zone?.id || "lab", accent, emphasis.intensity);
+    drawZoneFloorHalo(emphasis.anchor_zone || scene?.active_zone?.id || "lab", accent, emphasis.intensity);
+  }
+
+  if (emphasis.type === "dispatch" || emphasis.type === "review") {
+    drawZoneFloorHalo(emphasis.anchor_zone || "lab", accent, emphasis.intensity);
+  }
+
+  (emphasis.target_zone_ids || [])
+    .filter((zoneId) => zoneId && zoneId !== emphasis.anchor_zone)
+    .forEach((zoneId) => {
+      const route = buildRoutePolyline(emphasis.anchor_zone || "lab", zoneId);
+      const zoneColor = zoneById(zoneId).color || accent;
+      drawRouteMarkers(route, zoneColor, {
+        intensity: emphasis.intensity,
+        live: emphasis.type === "dispatch"
+      });
+      drawZoneFloorHalo(zoneId, zoneColor, emphasis.intensity === "high" ? "medium" : "low");
+    });
+}
+
+function drawHandoffTrail(scene) {
+  const trail = scene?.handoff_trail;
+
+  if (!trail?.active || !trail.from_zone || !trail.to_zone) {
+    return;
+  }
+
+  const route = buildRoutePolyline(trail.from_zone, trail.to_zone);
+  const accent = trail.to_zone === "review" ? COLORS.rose : zoneById(trail.to_zone).color || COLORS.cyan;
+  drawRouteMarkers(route, accent, {
+    intensity: trail.intensity,
+    live: trail.live
+  });
 }
 
 function drawZoneLabel(zone, active) {
@@ -972,6 +1207,54 @@ function drawFurniture(zone, active) {
     },
     { active }
   );
+}
+
+function occupancyColor(zone, occupancy) {
+  if (!occupancy) {
+    return withAlpha(zone.color, 0.2);
+  }
+
+  if (occupancy.state === "active") {
+    return zone.color;
+  }
+
+  if (occupancy.state === "queued") {
+    return COLORS.amber;
+  }
+
+  if (occupancy.state === "rest") {
+    return COLORS.violet;
+  }
+
+  return withAlpha(COLORS.white, 0.68);
+}
+
+function drawDeskOccupancy(zone, occupancy) {
+  if (!occupancy?.occupied) {
+    return;
+  }
+
+  const accent = occupancyColor(zone, occupancy);
+  const baseX = zone.x + 16;
+  const baseY = zone.y + 14;
+  const pips = Math.min(3, occupancy.count || 1);
+
+  drawPixelRect(baseX - 6, baseY - 3, 16 + pips * 8, 7, withAlpha(accent, 0.28));
+
+  for (let index = 0; index < pips; index += 1) {
+    drawPixelRect(baseX + index * 8, baseY, 5, 5, accent);
+  }
+
+  if ((occupancy.count || 0) > 3) {
+    drawPixelRect(baseX + pips * 8, baseY - 1, 8, 7, COLORS.ink);
+    context.fillStyle = COLORS.white;
+    context.font = "8px monospace";
+    context.fillText(String(Math.min(9, occupancy.count)), baseX + pips * 8 + 2, baseY + 5);
+  }
+
+  if (occupancy.primary_agent_id) {
+    drawPixelRect(zone.x + 8, zone.y + 10, 6, 11, accent);
+  }
 }
 
 function actorPalette(actorId, accent) {
@@ -1188,6 +1471,8 @@ function drawScene() {
   drawRoomBase(data.scene?.tone || "calm");
   drawAmbientProps(data.scene || {}, renderState.frame);
   drawRestCorner(data.scene?.rest_corner);
+  drawTransitionEmphasis(data.scene || {});
+  drawHandoffTrail(data.scene || {});
   drawSkillBadges(data.scene?.skill_badges || [], Boolean(data.scene?.resting));
 
   const highlightZones = new Set(data.scene?.desk_highlights || ["lab"]);
@@ -1196,6 +1481,7 @@ function drawScene() {
     const activeZone = highlightZones.has(zone.id);
     drawZoneLabel(zone, activeZone);
     drawFurniture(zone, activeZone);
+    drawDeskOccupancy(zone, occupancyForZone(zone.id));
   });
 
   renderState.actors.forEach((actor) => {

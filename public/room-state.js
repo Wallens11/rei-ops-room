@@ -1473,12 +1473,329 @@ function sceneActiveZoneReason(room, activeZoneId) {
   return room.focus_reason;
 }
 
+function deskOccupancyState({
+  zoneId,
+  room,
+  activeZoneId,
+  activeCount,
+  queuedCount,
+  completedCount
+}) {
+  if (room.phase === "planning_huddle") {
+    if (zoneId === "lab") {
+      return {
+        count: VISUAL_CAST.length,
+        state: "active",
+        primary_agent_id: "lead"
+      };
+    }
+
+    return {
+      count: 0,
+      state: "idle",
+      primary_agent_id: null
+    };
+  }
+
+  if (room.resting || room.substate === "cooldown") {
+    if (zoneId === "lab") {
+      return {
+        count: Math.max(1, room.rest_corner?.allowed_agent_ids?.length || 1),
+        state: room.resting ? "rest" : "watch",
+        primary_agent_id: "lead"
+      };
+    }
+
+    return {
+      count: 0,
+      state: "idle",
+      primary_agent_id: null
+    };
+  }
+
+  if (room.phase === "standby") {
+    if (zoneId === "lab") {
+      return {
+        count: 1,
+        state: "watch",
+        primary_agent_id: "lead"
+      };
+    }
+
+    return {
+      count: 0,
+      state: "idle",
+      primary_agent_id: null
+    };
+  }
+
+  if (room.phase === "squad_split") {
+    if (zoneId === "lab") {
+      return {
+        count: 1,
+        state: "watch",
+        primary_agent_id: "lead"
+      };
+    }
+
+    if (activeCount > 0 || queuedCount > 0 || completedCount > 0) {
+      return {
+        count: Math.max(1, activeCount + queuedCount + completedCount),
+        state: activeCount > 0 ? "active" : queuedCount > 0 ? "queued" : "watch",
+        primary_agent_id: ZONE_TO_AGENT[zoneId] || "lead"
+      };
+    }
+
+    return {
+      count: 0,
+      state: "idle",
+      primary_agent_id: null
+    };
+  }
+
+  if (room.phase === "review_wrap") {
+    if (zoneId === "review") {
+      return {
+        count: Math.max(1, activeCount + queuedCount + completedCount),
+        state: room.review_stage === "cooldown" ? "watch" : "active",
+        primary_agent_id: "docs"
+      };
+    }
+
+    if (zoneId === "lab" && room.review_stage === "regroup") {
+      return {
+        count: Math.max(2, VISUAL_CAST.length - 2),
+        state: "queued",
+        primary_agent_id: "lead"
+      };
+    }
+
+    if (activeCount > 0) {
+      return {
+        count: activeCount,
+        state: "watch",
+        primary_agent_id: ZONE_TO_AGENT[zoneId] || "lead"
+      };
+    }
+
+    return {
+      count: 0,
+      state: "idle",
+      primary_agent_id: null
+    };
+  }
+
+  if (zoneId === activeZoneId || activeCount > 0 || queuedCount > 0 || completedCount > 0) {
+    return {
+      count: Math.max(1, activeCount + queuedCount + completedCount),
+      state:
+        zoneId === activeZoneId
+          ? "active"
+          : activeCount > 0
+            ? "active"
+            : queuedCount > 0
+              ? "queued"
+              : "watch",
+      primary_agent_id: ZONE_TO_AGENT[zoneId] || "lead"
+    };
+  }
+
+  return {
+    count: 0,
+    state: "idle",
+    primary_agent_id: null
+  };
+}
+
+function buildDeskOccupancy(room, workstreams, activeZoneId) {
+  const streamsByZone = workstreams.reduce((accumulator, workstream) => {
+    accumulator[workstream.zone] ||= [];
+    accumulator[workstream.zone].push(workstream);
+    return accumulator;
+  }, {});
+
+  return ZONE_DEFINITIONS.map((zone) => {
+    const zoneStreams = streamsByZone[zone.id] || [];
+    const activeCount = zoneStreams.filter((stream) => stream.status === "active").length;
+    const queuedCount = zoneStreams.filter((stream) => stream.status === "queued").length;
+    const completedCount = zoneStreams.filter((stream) => stream.status === "completed").length;
+    const occupancy = deskOccupancyState({
+      zoneId: zone.id,
+      room,
+      activeZoneId,
+      activeCount,
+      queuedCount,
+      completedCount
+    });
+
+    return {
+      zone_id: zone.id,
+      label: zone.title,
+      short_label: zone.shortTitle,
+      occupied: occupancy.count > 0,
+      count: occupancy.count,
+      state: occupancy.state,
+      primary_agent_id: occupancy.primary_agent_id
+    };
+  });
+}
+
+function buildTransitionEmphasis(room, {
+  activeZoneId,
+  activeWorkstreams,
+  completedWorkstreams,
+  queuedWorkstreams
+}) {
+  const splitTargets = unique(
+    [...activeWorkstreams, ...queuedWorkstreams, ...completedWorkstreams]
+      .map((workstream) => workstream.zone)
+      .filter((zoneId) => zoneId && zoneId !== "lab")
+  );
+
+  if (room.resting) {
+    return {
+      type: "rest",
+      anchor_zone: "lab",
+      target_zone_ids: [],
+      label: "Let the room recharge",
+      intensity: "low"
+    };
+  }
+
+  if (room.substate === "cooldown") {
+    return {
+      type: "settling",
+      anchor_zone: "lab",
+      target_zone_ids: [],
+      label: "Cool the room back down",
+      intensity: "low"
+    };
+  }
+
+  if (room.phase === "planning_huddle") {
+    return {
+      type: "briefing",
+      anchor_zone: "lab",
+      target_zone_ids: room.focus_zone !== "lab" ? [room.focus_zone] : [],
+      label: "Lock the assignment before split",
+      intensity: "medium"
+    };
+  }
+
+  if (room.phase === "squad_split") {
+    return {
+      type: "dispatch",
+      anchor_zone: "lab",
+      target_zone_ids: splitTargets.length > 0 ? splitTargets : [room.focus_zone].filter(Boolean),
+      label: "Send each lane to its desk",
+      intensity: splitTargets.length >= 2 ? "high" : "medium"
+    };
+  }
+
+  if (room.phase === "review_wrap") {
+    return {
+      type: "review",
+      anchor_zone: room.review_stage === "regroup" ? "lab" : "review",
+      target_zone_ids:
+        room.review_stage === "regroup"
+          ? ["review", "lab"]
+          : ["review"],
+      label:
+        room.review_stage === "regroup"
+          ? "Regroup the squad before the final wrap"
+          : "Pull returned work into docs lane",
+      intensity: room.review_stage === "results_returning" ? "high" : "medium"
+    };
+  }
+
+  if (room.phase === "execution") {
+    return {
+      type: "execution",
+      anchor_zone: activeZoneId,
+      target_zone_ids: unique(
+        [activeZoneId, ...activeWorkstreams.map((workstream) => workstream.zone)].filter(Boolean)
+      ),
+      label: "Keep the owner lane staffed",
+      intensity: activeWorkstreams.length >= 2 ? "high" : "medium"
+    };
+  }
+
+  return {
+    type: "settled",
+    anchor_zone: "lab",
+    target_zone_ids: [],
+    label: "Hold the room steady",
+    intensity: "low"
+  };
+}
+
+function handoffLabelForEvent(event) {
+  if (!event) {
+    return null;
+  }
+
+  if (event.type === "workstream_spawned") {
+    return "new workstream";
+  }
+
+  if (event.type === "review_requested") {
+    return "review request";
+  }
+
+  if (event.type === "result_returned") {
+    return "results in";
+  }
+
+  if (event.type === "reassignment_triggered") {
+    return "reassign focus";
+  }
+
+  return event.payload || "handoff";
+}
+
+function buildHandoffTrail(room, scout, scoutEvent) {
+  if (!scout.active && !scoutEvent) {
+    return {
+      active: false,
+      from_zone: null,
+      to_zone: null,
+      label: null,
+      reason: null,
+      live: false,
+      intensity: "off"
+    };
+  }
+
+  const fallbackFrom =
+    scoutEvent?.from ||
+    (scoutEvent?.type === "workstream_spawned" || scoutEvent?.type === "reassignment_triggered"
+      ? "lab"
+      : room.focus_zone);
+  const fallbackTo =
+    scoutEvent?.to ||
+    scoutEvent?.zone ||
+    (scoutEvent?.type === "review_requested" || room.phase === "review_wrap"
+      ? "review"
+      : room.focus_zone);
+
+  return {
+    active: true,
+    from_zone: scout.active ? scout.from_zone : fallbackFrom,
+    to_zone: scout.active ? scout.to_zone : fallbackTo,
+    label: scout.active ? scout.payload : handoffLabelForEvent(scoutEvent),
+    reason: scout.active ? scout.reason : scoutEvent?.type || null,
+    live: scout.active,
+    intensity: scout.active ? "high" : room.phase === "review_wrap" ? "medium" : "low"
+  };
+}
+
 function buildSceneDirector(room, workstreams, recentEvents) {
   const cooldownActive = room.substate === "cooldown";
   const planningActive = room.phase === "planning_huddle";
   const scoutEvent = findScoutEvent(recentEvents);
   const activeWorkstreams = workstreams.filter((workstream) => workstream.status === "active");
   const completedWorkstreams = workstreams.filter((workstream) => workstream.status === "completed");
+  const queuedWorkstreams = workstreams.filter((workstream) => workstream.status === "queued");
   const workerActiveStreams = activeWorkstreams.filter((workstream) => workstream.owner !== "lead");
   const workerActiveLaneCount = unique(workerActiveStreams.map((workstream) => workstream.zone)).length;
   const highlightZones = unique(
@@ -1543,6 +1860,15 @@ function buildSceneDirector(room, workstreams, recentEvents) {
       };
     }
   }
+
+  const deskOccupancy = buildDeskOccupancy(room, workstreams, activeZoneId);
+  const transitionEmphasis = buildTransitionEmphasis(room, {
+    activeZoneId,
+    activeWorkstreams,
+    completedWorkstreams,
+    queuedWorkstreams
+  });
+  const handoffTrail = buildHandoffTrail(room, scout, scoutEvent);
 
   const intenseExecution =
     room.phase === "execution" &&
@@ -1700,6 +2026,9 @@ function buildSceneDirector(room, workstreams, recentEvents) {
     assignment_hint: assignmentHint,
     phase_title: phaseMeta.title,
     phase_reason: room.phase_reason,
+    transition_emphasis: transitionEmphasis,
+    desk_occupancy: deskOccupancy,
+    handoff_trail: handoffTrail,
     focus_label: activeZone.label,
     focus_chip_title: activeZone.chip_title,
     focus_title: activeZone.title,

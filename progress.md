@@ -149,3 +149,44 @@ Status: Day 4 complete.
 - Move from JS schema to a safer external layout document once migration rules are stable.
 - Extract the remaining room-base/background primitives so a future editor can reshape more than desk/prop placement.
 - Start Day 5 scene-polish work only after the layout schema feels stable in normal use.
+
+## 2026-03-26 (Day 5)
+
+Status: Day 5 complete.
+
+### Completed
+- Added richer scene-director output in [/Users/funtoco/workSpace/codex-pixel-agent/public/room-state.js](/Users/funtoco/workSpace/codex-pixel-agent/public/room-state.js):
+  - `scene.transition_emphasis`
+  - `scene.desk_occupancy`
+  - `scene.handoff_trail`
+- Strengthened phase storytelling in the scene layer:
+  - `planning_huddle` now exposes a dedicated `briefing` transition rooted in `lab`
+  - `squad_split` now exposes explicit dispatch targets instead of relying only on generic desk highlights
+  - `execution` now exposes the staffed owner lane directly
+  - `review_wrap` now exposes a review return path even when Scout Rei is no longer physically moving
+- Added canvas-side office-sim polish in [/Users/funtoco/workSpace/codex-pixel-agent/public/app.js](/Users/funtoco/workSpace/codex-pixel-agent/public/app.js):
+  - transition beams / route markers per phase
+  - handoff trails between desks
+  - desk occupancy pips so staffed lanes read directly on the room
+  - softer reduced-motion handling for the new non-essential route pulses
+- Improved scene detail copy in [/Users/funtoco/workSpace/codex-pixel-agent/public/scene-details.js](/Users/funtoco/workSpace/codex-pixel-agent/public/scene-details.js) so desk inspection now mentions occupancy and runtime event inspection now mentions the live handoff when one exists.
+- Added Day 5 regression coverage in:
+  - [/Users/funtoco/workSpace/codex-pixel-agent/tests/room-state.test.mjs](/Users/funtoco/workSpace/codex-pixel-agent/tests/room-state.test.mjs)
+  - [/Users/funtoco/workSpace/codex-pixel-agent/tests/scene-details.test.mjs](/Users/funtoco/workSpace/codex-pixel-agent/tests/scene-details.test.mjs)
+
+### Verification
+- `npm test` -> 97/97 passing
+- `node --check public/app.js`
+- `node --check public/room-state.js`
+- live API smoke on `http://localhost:4317/?mode=room`
+- Playwright visual smoke on the local viewer, including a screenshot check of the updated scene cues
+
+### What Still Feels Off
+- The room is now much more legible, but it still uses hand-authored pixel rectangles instead of real sprite sheets.
+- Reduced motion is only applied to the new scene-route pulses; the existing actor animation system is still active.
+- This is the first “office-sim polish” pass, not a full editor or asset-system jump yet.
+
+### Next Best Moves
+- Evaluate sprite-sheet support only if the current pose grammar stays readable in live use.
+- Consider extracting the remaining room-base renderer primitives if Day 6 needs bigger visual swaps.
+- Only start office-editor work once this Day 5 grammar feels stable in normal daily use.

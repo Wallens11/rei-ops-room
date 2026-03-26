@@ -43,22 +43,38 @@ function describeAgentSelection(selection, state) {
 
 function describeDeskSelection(selection, state) {
   const workstream = state.workstreams.find((entry) => entry.zone === selection.zone);
+  const occupancy = state.scene?.desk_occupancy?.find((entry) => entry.zone_id === selection.zone);
+  const isOccupied = Boolean(occupancy?.occupied ?? ((occupancy?.count || 0) > 0));
 
   return {
     title: selection.label,
     body: workstream
-      ? `${workstream.task} | Status: ${workstream.status}`
-      : `${selection.label} is on watch for the next handoff.`
+      ? [
+          workstream.task,
+          `Status: ${workstream.status}`,
+          isOccupied ? `Occupancy: ${occupancy.count}` : null
+        ]
+          .filter(Boolean)
+          .join(" | ")
+      : isOccupied
+        ? `${selection.label} is staffed. Occupancy: ${occupancy.count}.`
+        : `${selection.label} is on watch for the next handoff.`
   };
 }
 
 function describeEventSelection(selection, state) {
   const activeZoneTitle =
     state.scene?.active_zone?.title || state.scene?.focus_title || "lab";
+  const handoffLabel = state.scene?.handoff_trail?.label;
 
   return {
     title: selection.label,
-    body: `Runtime detail stays in the side panel. Focus zone: ${selection.zone || activeZoneTitle}.`
+    body: [
+      `Runtime detail stays in the side panel. Focus zone: ${selection.zone || activeZoneTitle}.`,
+      handoffLabel ? `Current handoff: ${handoffLabel}.` : null
+    ]
+      .filter(Boolean)
+      .join(" ")
   };
 }
 

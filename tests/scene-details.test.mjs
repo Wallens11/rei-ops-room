@@ -55,6 +55,20 @@ test("describeSceneSelection explains agents, desks, and event badges without no
       active_zone: {
         title: "Backend Rack"
       },
+      desk_occupancy: [
+        {
+          zone_id: "backend",
+          state: "active",
+          count: 2,
+          primary_agent_id: "api"
+        }
+      ],
+      handoff_trail: {
+        active: true,
+        from_zone: "lab",
+        to_zone: "backend",
+        label: "new workstream"
+      },
       assignment_hint: {
         active: true,
         title: "Docs / Ops Corner"
@@ -94,7 +108,7 @@ test("describeSceneSelection explains agents, desks, and event badges without no
       { id: "backend", kind: "desk", zone: "backend", label: "Backend Rack" },
       state
     ).body,
-    /Translate runtime signals/i
+    /Occupancy: 2/i
   );
 
   assert.match(
@@ -102,6 +116,6 @@ test("describeSceneSelection explains agents, desks, and event badges without no
       { id: "event_backend", kind: "event", label: "runtime sync" },
       state
     ).body,
-    /Backend Rack/i
+    /new workstream/i
   );
 });

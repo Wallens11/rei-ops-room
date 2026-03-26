@@ -57,6 +57,20 @@ test("execution state separates room phase, workstreams, and agent activity", ()
   assert.equal(state.workstreams[0].status, "active");
   assert.equal(state.agents.find((agent) => agent.id === "api")?.activity, "coding");
   assert.equal(state.scene.scout.active, false);
+  assert.equal(state.scene.transition_emphasis.type, "execution");
+  assert.equal(state.scene.transition_emphasis.anchor_zone, "backend");
+  assert.ok(
+    state.scene.transition_emphasis.target_zone_ids.includes("backend"),
+    "expected the execution transition to highlight the backend lane"
+  );
+  assert.equal(
+    state.scene.desk_occupancy.find((entry) => entry.zone_id === "backend")?.primary_agent_id,
+    "api"
+  );
+  assert.equal(
+    state.scene.desk_occupancy.find((entry) => entry.zone_id === "backend")?.state,
+    "active"
+  );
   assert.match(state.scene.primary_bubble.text, /runtime|backend|sync|debug|trace/i);
   assert.doesNotMatch(state.scene.primary_bubble.text, /spawn_child_async/i);
   assert.equal(state.scene.rest_corner.active, false);
@@ -125,6 +139,17 @@ test("planning huddle keeps the room staged in lab while exposing the next assig
   assert.equal(state.scene.assignment_hint.title, "Docs / Ops Corner");
   assert.equal(state.scene.assignment_hint.chip_title, "Next: Docs / Ops Corner");
   assert.match(state.scene.assignment_hint.reason, /briefing di lab/i);
+  assert.equal(state.scene.transition_emphasis.type, "briefing");
+  assert.equal(state.scene.transition_emphasis.anchor_zone, "lab");
+  assert.deepEqual(state.scene.transition_emphasis.target_zone_ids, ["review"]);
+  assert.equal(
+    state.scene.desk_occupancy.find((entry) => entry.zone_id === "lab")?.state,
+    "active"
+  );
+  assert.ok(
+    (state.scene.desk_occupancy.find((entry) => entry.zone_id === "lab")?.count || 0) >= 4,
+    "expected the briefing occupancy to keep the squad gathered in the lab"
+  );
 });
 
 test("active execution evidence breaks out of planning huddle even on a fresh request", () => {
@@ -286,6 +311,21 @@ test("delegation creates squad split, multiple workstreams, and scout handoff", 
   );
   assert.equal(state.scene.scout.active, true);
   assert.equal(state.scene.scout.reason, "workstream_spawned");
+  assert.equal(state.scene.transition_emphasis.type, "dispatch");
+  assert.equal(state.scene.transition_emphasis.anchor_zone, "lab");
+  assert.ok(
+    state.scene.transition_emphasis.target_zone_ids.length >= 2,
+    "expected multiple split lanes during delegation"
+  );
+  assert.equal(state.scene.handoff_trail.active, true);
+  assert.equal(state.scene.handoff_trail.from_zone, "lab");
+  assert.equal(state.scene.handoff_trail.to_zone, state.scene.scout.to_zone);
+  assert.ok(
+    state.scene.desk_occupancy.some(
+      (entry) => entry.state === "queued" || entry.state === "active"
+    ),
+    "expected desk occupancy to expose staffed split lanes"
+  );
   assert.equal(state.agents.find((agent) => agent.id === "scout")?.activity, "moving");
 });
 
@@ -318,6 +358,13 @@ test("review wrap activates docs review flow after results come back", () => {
     state.recent_events.some(
       (event) => event.type === "result_returned" || event.type === "review_requested"
     )
+  );
+  assert.equal(state.scene.transition_emphasis.type, "review");
+  assert.equal(state.scene.handoff_trail.active, true);
+  assert.equal(state.scene.handoff_trail.to_zone, "review");
+  assert.equal(
+    state.scene.desk_occupancy.find((entry) => entry.zone_id === "review")?.state,
+    "active"
   );
 });
 
