@@ -15,9 +15,14 @@
           <p class="eyebrow">Rei Ops Room</p>
         </div>
 
-        <div class="view-switch" aria-label="View mode">
-          <button class="view-button is-active" data-mode="room" type="button">Room</button>
-          <button class="view-button" data-mode="widget" type="button">Widget</button>
+        <div class="topbar-actions">
+          <div class="view-switch" aria-label="View mode">
+            <button class="view-button is-active" data-mode="room" type="button">Room</button>
+            <button class="view-button" data-mode="widget" type="button">Widget</button>
+          </div>
+          <button id="editor-toggle" class="editor-toggle" type="button" aria-expanded="false">
+            Layout Edit
+          </button>
         </div>
       </header>
 
@@ -62,6 +67,51 @@
               Hover a desk or click an agent to inspect the current room state.
             </p>
           </div>
+
+          <section id="layout-editor" class="layout-editor" hidden>
+            <div class="layout-editor-head">
+              <div>
+                <p class="panel-label">Office Editor</p>
+                <h3 id="editor-entity-title">Lead Table</h3>
+                <p id="editor-entity-meta" class="dim mono">zone:lab | x 322 | y 216</p>
+              </div>
+              <p id="editor-status" class="dim">
+                Room layout masih pakai schema default.
+              </p>
+            </div>
+
+            <div class="layout-editor-body">
+              <div id="editor-entity-list" class="editor-entity-list"></div>
+
+              <div class="layout-editor-controls">
+                <div class="editor-step-row">
+                  <button class="editor-step-button is-active" data-editor-step="4" type="button">4px</button>
+                  <button class="editor-step-button" data-editor-step="8" type="button">8px</button>
+                  <button class="editor-step-button" data-editor-step="16" type="button">16px</button>
+                </div>
+
+                <div class="editor-pad" aria-label="Move selected layout entity">
+                  <button class="editor-nudge-button" data-editor-nudge="up" type="button">↑</button>
+                  <div class="editor-pad-row">
+                    <button class="editor-nudge-button" data-editor-nudge="left" type="button">←</button>
+                    <button class="editor-nudge-button editor-nudge-button-center" type="button" disabled>move</button>
+                    <button class="editor-nudge-button" data-editor-nudge="right" type="button">→</button>
+                  </div>
+                  <button class="editor-nudge-button" data-editor-nudge="down" type="button">↓</button>
+                </div>
+
+                <div class="editor-action-row">
+                  <button id="editor-save" class="editor-action-button" type="button">Save Local</button>
+                  <button id="editor-reset" class="editor-action-button is-secondary" type="button">Reset</button>
+                  <button id="editor-export" class="editor-action-button is-secondary" type="button">Export JSON</button>
+                  <label class="editor-action-button is-secondary editor-import-label">
+                    Import JSON
+                    <input id="editor-import" type="file" accept=".json,application/json" hidden />
+                  </label>
+                </div>
+              </div>
+            </div>
+          </section>
 
           <div class="room-caption">
             <div class="caption-block">

@@ -13,9 +13,16 @@ import { getCanvasRenderMetrics } from "./canvas-layout.js";
 import {
   furnitureLayoutById,
   propLayoutById,
-  REST_CORNER,
   ROOM_LAYOUT
 } from "./room-layout.js";
+import {
+  LAYOUT_STORAGE_KEY,
+  collectEditableLayoutEntities,
+  createEditableLayout,
+  nudgeLayoutEntity,
+  parseLayoutDocument,
+  serializeLayoutDocument
+} from "./layout-editor.js";
 import {
   buildRuntimeEventSnapshot,
   reduceRuntimeEventState
@@ -71,7 +78,8 @@ const EVENT_LABELS = {
   result_returned: "Result Returned"
 };
 
-const ZONES = createDefaultZones(ROOM_LAYOUT);
+const INITIAL_LAYOUT = createEditableLayout(ROOM_LAYOUT);
+const INITIAL_ZONES = createDefaultZones(INITIAL_LAYOUT);
 const CANVAS_WIDTH = ROOM_LAYOUT.canvas.width;
 const CANVAS_HEIGHT = ROOM_LAYOUT.canvas.height;
 
@@ -115,16 +123,30 @@ const elements = {
   workstreamList: document.getElementById("workstream-list"),
   eventList: document.getElementById("event-list"),
   runtimePanel: document.getElementById("runtime-panel"),
-  viewButtons: [...document.querySelectorAll("[data-mode]")]
+  viewButtons: [...document.querySelectorAll("[data-mode]")],
+  editorToggle: document.getElementById("editor-toggle"),
+  editorPanel: document.getElementById("layout-editor"),
+  editorEntityList: document.getElementById("editor-entity-list"),
+  editorEntityTitle: document.getElementById("editor-entity-title"),
+  editorEntityMeta: document.getElementById("editor-entity-meta"),
+  editorStatus: document.getElementById("editor-status"),
+  editorStepButtons: [...document.querySelectorAll("[data-editor-step]")],
+  editorNudgeButtons: [...document.querySelectorAll("[data-editor-nudge]")],
+  editorSave: document.getElementById("editor-save"),
+  editorReset: document.getElementById("editor-reset"),
+  editorExport: document.getElementById("editor-export"),
+  editorImport: document.getElementById("editor-import")
 };
 
 const renderState = {
   status: "idle",
   frame: 0,
   data: createEmptyState(),
+  layout: INITIAL_LAYOUT,
+  zones: INITIAL_ZONES,
   mode: "room",
   transportMode: "connecting",
-  actors: buildCrewActors(ZONES),
+  actors: buildCrewActors(INITIAL_ZONES),
   hotspots: [],
   hoveredHotspot: null,
   selectedHotspot: null,
@@ -134,7 +156,11 @@ const renderState = {
     bubble: null,
     badge: null
   },
-  reducedMotion: false
+  reducedMotion: false,
+  editorActive: false,
+  editorSelectionId: "zone:lab",
+  editorStep: 8,
+  editorMessage: "Room layout masih pakai schema default."
 };
 
 const reducedMotionQuery =
@@ -330,7 +356,8 @@ function truncate(text, limit = 140) {
 }
 
 function zoneById(id) {
-  return ZONES.find((zone) => zone.id === id) || ZONES[ZONES.length - 1];
+  const zones = renderState.zones || [];
+  return zones.find((zone) => zone.id === id) || zones[zones.length - 1];
 }
 
 function deskAnchor(zone) {
@@ -345,11 +372,27 @@ function transitPoint(zone) {
 }
 
 function hallwayPoint() {
-  return ROOM_LAYOUT.hallway?.center || { x: CANVAS_WIDTH / 2, y: 232 };
+  return currentLayout().hallway?.center || { x: CANVAS_WIDTH / 2, y: 232 };
 }
 
 function occupancyForZone(zoneId) {
   return renderState.data.scene?.desk_occupancy?.find((entry) => entry.zone_id === zoneId) || null;
+}
+
+function currentLayout() {
+  return renderState.layout || ROOM_LAYOUT;
+}
+
+function currentRestCornerOrigin() {
+  return currentLayout().rest_corner?.origin || ROOM_LAYOUT.rest_corner.origin;
+}
+
+function syncDerivedLayout({ resetActors = false } = {}) {
+  renderState.zones = createDefaultZones(currentLayout());
+
+  if (resetActors || !renderState.actors?.length) {
+    renderState.actors = buildCrewActors(renderState.zones);
+  }
 }
 
 function actorById(id) {
@@ -385,6 +428,7 @@ function eventBadgeHotspot(badge) {
 }
 
 function buildInteractiveHotspots() {
+  const zones = renderState.zones || [];
   const agents = renderState.actors.map((actor) => {
     const agent = agentById(actor.id);
     return {
@@ -399,7 +443,7 @@ function buildInteractiveHotspots() {
     };
   });
 
-  const desks = ZONES.map((zone) => ({
+  const desks = zones.map((zone) => ({
     id: zone.id,
     kind: "desk",
     zone: zone.id,
@@ -412,9 +456,9 @@ function buildInteractiveHotspots() {
 
   const props = (renderState.data.scene?.props || [])
     .map((prop) => {
-      const layout = propLayoutById(prop.id);
+      const layout = propLayoutById(prop.id, currentLayout());
       const hotspot = layout?.hotspot;
-      const origin = layout?.origin || { x: REST_CORNER.x, y: REST_CORNER.y };
+      const origin = layout?.origin || currentRestCornerOrigin();
 
       if (!hotspot) {
         return null;
@@ -525,6 +569,223 @@ elements.viewButtons.forEach((button) => {
   button.addEventListener("click", () => {
     applyMode(button.dataset.mode);
   });
+});
+
+function editorEntityIdFromHotspot(hotspot) {
+  if (!hotspot) {
+    return null;
+  }
+
+  if (hotspot.kind === "desk") {
+    return `zone:${hotspot.zone}`;
+  }
+
+  if (hotspot.kind === "prop") {
+    return hotspot.id === "rest_corner" ? "rest:rest_corner" : `prop:${hotspot.id}`;
+  }
+
+  return null;
+}
+
+function loadSavedLayout() {
+  try {
+    const raw = localStorage.getItem(LAYOUT_STORAGE_KEY);
+    if (!raw) {
+      return;
+    }
+
+    renderState.layout = parseLayoutDocument(raw);
+    renderState.editorMessage = "Custom layout dimuat dari device ini.";
+    syncDerivedLayout({ resetActors: true });
+  } catch (error) {
+    console.warn("failed to load saved room layout", error);
+    localStorage.removeItem(LAYOUT_STORAGE_KEY);
+    renderState.layout = createEditableLayout(ROOM_LAYOUT);
+    renderState.editorMessage = "Custom layout rusak, balik ke schema default.";
+    syncDerivedLayout({ resetActors: true });
+  }
+}
+
+function setEditorSelection(entityId) {
+  if (!entityId) {
+    return;
+  }
+
+  renderState.editorSelectionId = entityId;
+  renderEditorControls();
+}
+
+function setEditorActive(active) {
+  renderState.editorActive = active;
+
+  if (active && renderState.mode === "widget") {
+    applyMode("room");
+  }
+
+  elements.editorPanel.hidden = !active;
+  elements.editorToggle.setAttribute("aria-expanded", String(active));
+  elements.editorToggle.textContent = active ? "Close Editor" : "Layout Edit";
+  document.body.classList.toggle("layout-editor-open", active);
+  renderEditorControls();
+}
+
+function selectedEditorEntity() {
+  return collectEditableLayoutEntities(currentLayout()).find(
+    (entity) => entity.id === renderState.editorSelectionId
+  ) || collectEditableLayoutEntities(currentLayout())[0];
+}
+
+function renderEditorEntityList() {
+  if (!elements.editorEntityList) {
+    return;
+  }
+
+  const entities = collectEditableLayoutEntities(currentLayout());
+  elements.editorEntityList.innerHTML = "";
+
+  entities.forEach((entity) => {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "editor-entity-button";
+    button.textContent = entity.title;
+    button.dataset.entityId = entity.id;
+    button.classList.toggle("is-active", entity.id === renderState.editorSelectionId);
+    button.addEventListener("click", () => {
+      setEditorSelection(entity.id);
+    });
+    elements.editorEntityList.appendChild(button);
+  });
+}
+
+function renderEditorControls() {
+  if (!elements.editorPanel) {
+    return;
+  }
+
+  const entity = selectedEditorEntity();
+  if (entity && renderState.editorSelectionId !== entity.id) {
+    renderState.editorSelectionId = entity.id;
+  }
+
+  renderEditorEntityList();
+
+  if (!entity) {
+    elements.editorEntityTitle.textContent = "Select an anchor";
+    elements.editorEntityMeta.textContent = "No editable entity selected.";
+  } else {
+    elements.editorEntityTitle.textContent = entity.title;
+    elements.editorEntityMeta.textContent = `${entity.id} | x ${entity.x} | y ${entity.y}`;
+  }
+
+  elements.editorStatus.textContent = renderState.editorMessage;
+  elements.editorStepButtons.forEach((button) => {
+    button.classList.toggle("is-active", Number(button.dataset.editorStep) === renderState.editorStep);
+  });
+}
+
+function persistLayout(message = "Custom layout disimpan di device ini.") {
+  localStorage.setItem(LAYOUT_STORAGE_KEY, serializeLayoutDocument(currentLayout()));
+  renderState.editorMessage = message;
+  renderEditorControls();
+}
+
+function applyEditorNudge(direction) {
+  const entity = selectedEditorEntity();
+  if (!entity) {
+    return;
+  }
+
+  const delta =
+    direction === "up"
+      ? { x: 0, y: -renderState.editorStep }
+      : direction === "down"
+        ? { x: 0, y: renderState.editorStep }
+        : direction === "left"
+          ? { x: -renderState.editorStep, y: 0 }
+          : { x: renderState.editorStep, y: 0 };
+
+  renderState.layout = nudgeLayoutEntity(currentLayout(), entity.id, delta);
+  renderState.editorMessage = `${entity.title} digeser ${renderState.editorStep}px.`;
+  syncDerivedLayout();
+  renderState.hotspots = buildInteractiveHotspots();
+  renderEditorControls();
+}
+
+function resetEditorLayout() {
+  renderState.layout = createEditableLayout(ROOM_LAYOUT);
+  localStorage.removeItem(LAYOUT_STORAGE_KEY);
+  renderState.editorMessage = "Layout dibalikin ke schema default.";
+  syncDerivedLayout({ resetActors: true });
+  renderState.hotspots = buildInteractiveHotspots();
+  renderEditorControls();
+}
+
+function exportEditorLayout() {
+  const blob = new Blob([serializeLayoutDocument(currentLayout())], {
+    type: "application/json"
+  });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = "rei-ops-room-layout.json";
+  link.click();
+  URL.revokeObjectURL(url);
+  renderState.editorMessage = "Layout JSON diexport.";
+  renderEditorControls();
+}
+
+async function importEditorLayout(file) {
+  if (!file) {
+    return;
+  }
+
+  try {
+    const text = await file.text();
+    renderState.layout = parseLayoutDocument(text);
+    renderState.editorMessage = "Layout JSON berhasil diimport.";
+    syncDerivedLayout({ resetActors: true });
+    renderState.hotspots = buildInteractiveHotspots();
+    persistLayout("Layout JSON diimport dan disimpan lokal.");
+  } catch (error) {
+    renderState.editorMessage =
+      error instanceof Error ? error.message : "Gagal import layout JSON.";
+    renderEditorControls();
+  }
+}
+
+elements.editorToggle?.addEventListener("click", () => {
+  setEditorActive(!renderState.editorActive);
+});
+
+elements.editorStepButtons.forEach((button) => {
+  button.addEventListener("click", () => {
+    renderState.editorStep = Number(button.dataset.editorStep) || 8;
+    renderEditorControls();
+  });
+});
+
+elements.editorNudgeButtons.forEach((button) => {
+  button.addEventListener("click", () => {
+    applyEditorNudge(button.dataset.editorNudge);
+  });
+});
+
+elements.editorSave?.addEventListener("click", () => {
+  persistLayout();
+});
+
+elements.editorReset?.addEventListener("click", () => {
+  resetEditorLayout();
+});
+
+elements.editorExport?.addEventListener("click", () => {
+  exportEditorLayout();
+});
+
+elements.editorImport?.addEventListener("change", async (event) => {
+  const input = event.currentTarget;
+  await importEditorLayout(input.files?.[0] || null);
+  input.value = "";
 });
 
 function renderRecentThreads(threads) {
@@ -877,11 +1138,12 @@ function drawRoomBase(tone = "calm") {
   context.fillStyle = COLORS.bg0;
   context.fillRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
 
-  const wallGradient = context.createLinearGradient(0, 0, 0, ROOM_LAYOUT.canvas.wall_height);
+  const layout = currentLayout();
+  const wallGradient = context.createLinearGradient(0, 0, 0, layout.canvas.wall_height);
   wallGradient.addColorStop(0, COLORS.bg2);
   wallGradient.addColorStop(1, COLORS.bg1);
   context.fillStyle = wallGradient;
-  context.fillRect(0, 0, CANVAS_WIDTH, ROOM_LAYOUT.canvas.wall_height);
+  context.fillRect(0, 0, CANVAS_WIDTH, layout.canvas.wall_height);
 
   const glowAlpha =
     tone === "busy" ? 0.22 : tone === "steady" ? 0.18 : tone === "rest" ? 0.08 : 0.12;
@@ -890,20 +1152,20 @@ function drawRoomBase(tone = "calm") {
   context.fillRect(250, 42, 140, 72);
 
   context.fillStyle = COLORS.bg2;
-  context.fillRect(0, ROOM_LAYOUT.canvas.floor_top, CANVAS_WIDTH, CANVAS_HEIGHT - ROOM_LAYOUT.canvas.floor_top);
+  context.fillRect(0, layout.canvas.floor_top, CANVAS_WIDTH, CANVAS_HEIGHT - layout.canvas.floor_top);
 
   for (let row = 0; row < 12; row += 1) {
     context.strokeStyle = COLORS.floorLine;
     context.beginPath();
-    context.moveTo(0, ROOM_LAYOUT.canvas.floor_top + row * 18);
-    context.lineTo(CANVAS_WIDTH, ROOM_LAYOUT.canvas.floor_top + row * 18);
+    context.moveTo(0, layout.canvas.floor_top + row * 18);
+    context.lineTo(CANVAS_WIDTH, layout.canvas.floor_top + row * 18);
     context.stroke();
   }
 
   for (let col = 0; col < 18; col += 1) {
     context.strokeStyle = "rgba(255, 255, 255, 0.025)";
     context.beginPath();
-    context.moveTo(col * 36, ROOM_LAYOUT.canvas.floor_top);
+    context.moveTo(col * 36, layout.canvas.floor_top);
     context.lineTo(col * 36 + 20, CANVAS_HEIGHT);
     context.stroke();
   }
@@ -1095,7 +1357,7 @@ function drawZoneLabel(zone, active) {
 function drawDesk(x, y, accent, active) {
   drawLayoutRects(
     { x, y },
-    ROOM_LAYOUT.desk_base.rects,
+    currentLayout().desk_base.rects,
     {
       accent,
       desk_shadow: "rgba(0, 0, 0, 0.25)",
@@ -1109,8 +1371,8 @@ function drawDesk(x, y, accent, active) {
 function drawRestCorner(restCorner) {
   const active = Boolean(restCorner?.active);
   drawLayoutRects(
-    ROOM_LAYOUT.rest_corner.origin,
-    ROOM_LAYOUT.rest_corner.rects,
+    currentLayout().rest_corner.origin,
+    currentLayout().rest_corner.rects,
     {
       rest_glow: "rgba(184, 162, 255, 0.18)",
       rest_glow_idle: "rgba(255, 255, 255, 0.05)",
@@ -1135,7 +1397,8 @@ function drawPlanningBoard(scene) {
   const intensity = cueIntensity(scene.ambient_cues, "board_glow");
   const glow =
     intensity === "high" ? 0.22 : intensity === "medium" ? 0.14 : 0.08;
-  drawLayoutRects(propLayoutById("planning_board").origin, propLayoutById("planning_board").rects, {
+  const layout = propLayoutById("planning_board", currentLayout());
+  drawLayoutRects(layout.origin, layout.rects, {
     board_glow: `rgba(101, 228, 255, ${glow})`,
     ink: COLORS.ink,
     cyan: COLORS.cyan,
@@ -1149,7 +1412,8 @@ function drawPlanningBoard(scene) {
 function drawStatusMonitor(scene, frame) {
   const flicker = cueIntensity(scene.ambient_cues, "monitor_flicker");
   const lit = flicker === "medium" ? (frame % 18 < 13 ? COLORS.cyan : COLORS.white) : COLORS.cyan;
-  drawLayoutRects(propLayoutById("status_monitor").origin, propLayoutById("status_monitor").rects, {
+  const layout = propLayoutById("status_monitor", currentLayout());
+  drawLayoutRects(layout.origin, layout.rects, {
     ink: COLORS.ink,
     monitor_lit: lit,
     bg1: COLORS.bg1
@@ -1159,7 +1423,8 @@ function drawStatusMonitor(scene, frame) {
 function drawToolRack(scene, frame) {
   const pulse = cueIntensity(scene.ambient_cues, "status_pulse");
   const lit = pulse !== "off" ? (frame % 20 < 10 ? COLORS.mint : COLORS.cyan) : "rgba(0,0,0,0)";
-  drawLayoutRects(propLayoutById("tool_rack").origin, propLayoutById("tool_rack").rects, {
+  const layout = propLayoutById("tool_rack", currentLayout());
+  drawLayoutRects(layout.origin, layout.rects, {
     bg1: COLORS.bg1,
     white: COLORS.white,
     rack_pulse: lit
@@ -1167,7 +1432,8 @@ function drawToolRack(scene, frame) {
 }
 
 function drawDocumentTray(scene) {
-  drawLayoutRects(propLayoutById("document_tray").origin, propLayoutById("document_tray").rects, {
+  const layout = propLayoutById("document_tray", currentLayout());
+  drawLayoutRects(layout.origin, layout.rects, {
     white: COLORS.white,
     bg2: COLORS.bg2,
     rose: COLORS.rose
@@ -1183,7 +1449,7 @@ function drawAmbientProps(scene, frame) {
 
 function drawFurniture(zone, active) {
   const accent = active ? zone.color : "rgba(255, 255, 255, 0.12)";
-  const furniture = furnitureLayoutById(zone.furniture);
+  const furniture = furnitureLayoutById(zone.furniture, currentLayout());
 
   drawDesk(zone.x, zone.y, accent, active);
   drawLayoutRects(
@@ -1255,6 +1521,87 @@ function drawDeskOccupancy(zone, occupancy) {
   if (occupancy.primary_agent_id) {
     drawPixelRect(zone.x + 8, zone.y + 10, 6, 11, accent);
   }
+}
+
+function editorEntityBounds(entityId) {
+  if (!entityId) {
+    return null;
+  }
+
+  if (entityId.startsWith("zone:")) {
+    const zone = zoneById(entityId.slice("zone:".length));
+    return {
+      x: zone.x + (zone.hotspot?.x || -66),
+      y: zone.y + (zone.hotspot?.y || -58),
+      width: zone.hotspot?.width || 132,
+      height: zone.hotspot?.height || 108,
+      accent: zone.color
+    };
+  }
+
+  if (entityId.startsWith("prop:")) {
+    const prop = propLayoutById(entityId.slice("prop:".length), currentLayout());
+    const hotspot = prop?.hotspot;
+    if (!hotspot) {
+      return null;
+    }
+
+    return {
+      x: prop.origin.x + hotspot.x,
+      y: prop.origin.y + hotspot.y,
+      width: hotspot.width,
+      height: hotspot.height,
+      accent: COLORS.rose
+    };
+  }
+
+  if (entityId === "rest:rest_corner") {
+    const restCorner = currentLayout().rest_corner;
+    return {
+      x: restCorner.origin.x + restCorner.hotspot.x,
+      y: restCorner.origin.y + restCorner.hotspot.y,
+      width: restCorner.hotspot.width,
+      height: restCorner.hotspot.height,
+      accent: COLORS.violet
+    };
+  }
+
+  return null;
+}
+
+function drawEditorOverlay() {
+  if (!renderState.editorActive) {
+    return;
+  }
+
+  const entities = collectEditableLayoutEntities(currentLayout());
+  const pulse = renderState.reducedMotion ? 0.24 : 0.2 + (Math.sin(renderState.frame / 8) + 1) * 0.08;
+
+  entities.forEach((entity) => {
+    const bounds = editorEntityBounds(entity.id);
+    if (!bounds) {
+      return;
+    }
+
+    const selected = entity.id === renderState.editorSelectionId;
+    const accent = bounds.accent || COLORS.rose;
+    const alpha = selected ? pulse : 0.12;
+
+    drawPixelRect(bounds.x, bounds.y, bounds.width, 2, withAlpha(accent, alpha));
+    drawPixelRect(bounds.x, bounds.y + bounds.height - 2, bounds.width, 2, withAlpha(accent, alpha));
+    drawPixelRect(bounds.x, bounds.y, 2, bounds.height, withAlpha(accent, alpha));
+    drawPixelRect(bounds.x + bounds.width - 2, bounds.y, 2, bounds.height, withAlpha(accent, alpha));
+
+    if (selected) {
+      const chipWidth = Math.min(156, 36 + entity.title.length * 6);
+      const chipX = Math.max(18, Math.min(CANVAS_WIDTH - chipWidth - 18, bounds.x));
+      const chipY = Math.max(18, bounds.y - 18);
+      drawPixelRect(chipX, chipY, chipWidth, 14, withAlpha(accent, 0.86));
+      context.fillStyle = COLORS.ink;
+      context.font = "10px monospace";
+      context.fillText(truncate(entity.title, 20), chipX + 6, chipY + 10);
+    }
+  });
 }
 
 function actorPalette(actorId, accent) {
@@ -1477,12 +1824,14 @@ function drawScene() {
 
   const highlightZones = new Set(data.scene?.desk_highlights || ["lab"]);
 
-  ZONES.forEach((zone) => {
+  (renderState.zones || []).forEach((zone) => {
     const activeZone = highlightZones.has(zone.id);
     drawZoneLabel(zone, activeZone);
     drawFurniture(zone, activeZone);
     drawDeskOccupancy(zone, occupancyForZone(zone.id));
   });
+
+  drawEditorOverlay();
 
   renderState.actors.forEach((actor) => {
     const agentState = agentById(actor.id) || {
@@ -1553,10 +1902,35 @@ canvas.addEventListener("mouseleave", () => {
 canvas.addEventListener("click", (event) => {
   const pointer = scenePointer(event);
   renderState.selectedHotspot = findSceneHotspotAt(renderState.hotspots, pointer.x, pointer.y);
+  if (renderState.editorActive) {
+    const entityId = editorEntityIdFromHotspot(renderState.selectedHotspot);
+    if (entityId) {
+      setEditorSelection(entityId);
+    }
+  }
   updateSceneDetailCard();
 
   if (renderState.selectedHotspot?.kind === "event") {
     elements.runtimePanel?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+  }
+});
+
+window.addEventListener("keydown", (event) => {
+  if (!renderState.editorActive) {
+    return;
+  }
+
+  if (["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight"].includes(event.key)) {
+    event.preventDefault();
+    applyEditorNudge(
+      event.key === "ArrowUp"
+        ? "up"
+        : event.key === "ArrowDown"
+          ? "down"
+          : event.key === "ArrowLeft"
+            ? "left"
+            : "right"
+    );
   }
 });
 
@@ -1579,13 +1953,17 @@ function animate() {
     roomPhase: renderState.data.room?.phase || "standby",
     agents: renderState.data.agents || [],
     scene: renderState.data.scene || {},
-    zones: ZONES
+    zones: renderState.zones
   });
   renderState.hotspots = buildInteractiveHotspots();
   drawScene();
 }
 
+loadSavedLayout();
+syncDerivedLayout();
 initMode();
+renderEditorControls();
+renderState.hotspots = buildInteractiveHotspots();
 drawScene();
 setInterval(animate, 160);
 

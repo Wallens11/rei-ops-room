@@ -2,6 +2,16 @@
 
 Viewer kecil buat nampilin repo/thread Codex terbaru dengan `pixel room`, squad mini-Rei, mode room/widget, dan state kerja vs istirahat.
 
+## Office Editor
+
+Di mode `room`, klik `Layout Edit` buat masuk ke editor layout lokal.
+
+- pilih desk / prop / rest corner yang mau digeser
+- geser pakai tombol panah atau keyboard arrow key
+- `Save Local` buat simpan layout ke browser/device itu
+- `Reset` buat balik ke schema default
+- `Export JSON` / `Import JSON` buat pindah layout antar device
+
 ## Jalankan
 
 ```bash
@@ -58,6 +68,7 @@ CODEX_HOME=/path/to/.codex ./agent-pixel room
 
 - Kalau workspace aktif masih root `/Users/funtoco/workSpace`, panel `Last Specific Repo` bantu nunjukin repo terakhir yang lebih spesifik.
 - Zona fokus room dipilih dari thread title, cwd, branch, dan activity terbaru yang lolos filter observer.
+- Office editor sekarang cuma ngubah posisi zone/prop/rest secara aman di atas schema layout; movement logic tetap ngikut anchor yang ikut bergeser.
 - Tool observasi seperti Playwright viewer check tidak dihitung sebagai kerja utama.
 - `Scout Rei` cuma bergerak saat ada handoff yang berarti.
 - Skill Codex tidak otomatis “ter-update” dari app ini; app ini membaca runtime Codex, bukan menulis balik ke skill.

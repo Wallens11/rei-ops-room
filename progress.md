@@ -190,3 +190,45 @@ Status: Day 5 complete.
 - Evaluate sprite-sheet support only if the current pose grammar stays readable in live use.
 - Consider extracting the remaining room-base renderer primitives if Day 6 needs bigger visual swaps.
 - Only start office-editor work once this Day 5 grammar feels stable in normal daily use.
+
+## 2026-03-26 (Day 6)
+
+Status: Office editor MVP complete.
+
+### Completed
+- Added [/Users/funtoco/workSpace/codex-pixel-agent/public/layout-editor.js](/Users/funtoco/workSpace/codex-pixel-agent/public/layout-editor.js) as the editor-side layout utility layer for:
+  - cloning the room schema safely
+  - enumerating editable entities across zones, props, and the rest corner
+  - nudging anchors without mutating the shipped default schema
+  - serializing / parsing portable layout JSON documents
+- Added an in-app `Layout Edit` flow in [/Users/funtoco/workSpace/codex-pixel-agent/public/index.html](/Users/funtoco/workSpace/codex-pixel-agent/public/index.html), [/Users/funtoco/workSpace/codex-pixel-agent/public/styles.css](/Users/funtoco/workSpace/codex-pixel-agent/public/styles.css), and [/Users/funtoco/workSpace/codex-pixel-agent/public/app.js](/Users/funtoco/workSpace/codex-pixel-agent/public/app.js):
+  - toggleable editor panel inside room mode
+  - selectable desk / prop / rest-corner chips
+  - 4px / 8px / 16px nudge controls
+  - keyboard arrow-key nudging
+  - local save / reset
+  - export / import JSON for moving custom layouts across devices
+- Added live editor overlays on the room canvas so the selected zone or prop is visible directly in the scene instead of only in side controls.
+- Wired derived zones and hotspots to the editable layout state so movement routing, room props, and interaction hotspots all stay aligned after edits.
+- Added regression coverage in [/Users/funtoco/workSpace/codex-pixel-agent/tests/layout-editor.test.mjs](/Users/funtoco/workSpace/codex-pixel-agent/tests/layout-editor.test.mjs) for layout nudging, entity enumeration, and JSON round-trips.
+
+### Verification
+- `npm test` -> 100/100 passing
+- `node --check public/app.js`
+- `node --check public/layout-editor.js`
+- Playwright live smoke on `http://127.0.0.1:4317/?mode=room` covering:
+  - open/close editor
+  - select entity
+  - nudge movement
+  - save/reset local layout
+  - export/import JSON round-trip
+
+### What Still Feels Off
+- This is an editor MVP, not a full furniture/tileset editor yet; background room geometry is still mostly renderer-driven.
+- Layout persistence is browser-local unless exported, so cross-device syncing is still a manual JSON step.
+- There is still no drag-and-drop placement; nudging is intentional for safety and to keep movement anchors coherent.
+
+### Next Best Moves
+- Expand the editor from anchor nudging into higher-level room presets only if daily use proves the MVP valuable.
+- Consider externalizing the layout document fully once migration/versioning rules are stable.
+- If we ever jump to richer sprites/furniture packs, keep this editor as the layout control plane instead of re-hardcoding coordinates.
