@@ -5,12 +5,17 @@ import {
   VISUAL_CAST
 } from "./room-schema.js";
 import {
-  REST_CORNER,
   buildCrewActors,
   createDefaultZones,
   stepCrewActors
 } from "./room-engine.js";
 import { getCanvasRenderMetrics } from "./canvas-layout.js";
+import {
+  furnitureLayoutById,
+  propLayoutById,
+  REST_CORNER,
+  ROOM_LAYOUT
+} from "./room-layout.js";
 import {
   buildRuntimeEventSnapshot,
   reduceRuntimeEventState
@@ -66,7 +71,9 @@ const EVENT_LABELS = {
   result_returned: "Result Returned"
 };
 
-const ZONES = createDefaultZones();
+const ZONES = createDefaultZones(ROOM_LAYOUT);
+const CANVAS_WIDTH = ROOM_LAYOUT.canvas.width;
+const CANVAS_HEIGHT = ROOM_LAYOUT.canvas.height;
 
 const elements = {
   statusPill: document.getElementById("status-pill"),
@@ -315,7 +322,7 @@ function eventBadgeHotspot(badge) {
     kind: "event",
     zone: badge.zone,
     label: badge.label,
-    x: Math.min(640 - 96 - 18, zone.labelX + 92),
+    x: Math.min(CANVAS_WIDTH - 96 - 18, zone.labelX + 92),
     y: Math.max(18, zone.labelY),
     width: Math.min(96, 24 + badge.label.length * 6),
     height: 12
@@ -342,58 +349,34 @@ function buildInteractiveHotspots() {
     kind: "desk",
     zone: zone.id,
     label: zone.title,
-    x: zone.x - 66,
-    y: zone.y - 58,
-    width: 132,
-    height: 108
+    x: zone.x + (zone.hotspot?.x || -66),
+    y: zone.y + (zone.hotspot?.y || -58),
+    width: zone.hotspot?.width || 132,
+    height: zone.hotspot?.height || 108
   }));
 
-  const props = (renderState.data.scene?.props || []).map((prop) => ({
-    id: prop.id,
-    kind: "prop",
-    zone: prop.zone,
-    label: prop.label,
-    x:
-      prop.id === "planning_board"
-        ? 266
-        : prop.id === "status_monitor"
-          ? 520
-          : prop.id === "tool_rack"
-            ? 548
-            : prop.id === "document_tray"
-              ? 468
-              : REST_CORNER.x - 50,
-    y:
-      prop.id === "planning_board"
-        ? 44
-        : prop.id === "status_monitor"
-          ? 32
-          : prop.id === "tool_rack"
-            ? 176
-            : prop.id === "document_tray"
-              ? 230
-              : REST_CORNER.y - 24,
-    width:
-      prop.id === "planning_board"
-        ? 108
-        : prop.id === "status_monitor"
-          ? 64
-          : prop.id === "tool_rack"
-            ? 34
-            : prop.id === "document_tray"
-              ? 40
-              : 112,
-    height:
-      prop.id === "planning_board"
-        ? 54
-        : prop.id === "status_monitor"
-          ? 34
-          : prop.id === "tool_rack"
-            ? 68
-            : prop.id === "document_tray"
-              ? 28
-              : 56
-  }));
+  const props = (renderState.data.scene?.props || [])
+    .map((prop) => {
+      const layout = propLayoutById(prop.id);
+      const hotspot = layout?.hotspot;
+      const origin = layout?.origin || { x: REST_CORNER.x, y: REST_CORNER.y };
+
+      if (!hotspot) {
+        return null;
+      }
+
+      return {
+        id: prop.id,
+        kind: "prop",
+        zone: prop.zone,
+        label: prop.label,
+        x: origin.x + hotspot.x,
+        y: origin.y + hotspot.y,
+        width: hotspot.width,
+        height: hotspot.height
+      };
+    })
+    .filter(Boolean);
 
   const events = renderState.runtimeEvent.badge ? [eventBadgeHotspot(renderState.runtimeEvent.badge)] : [];
   return buildSceneHotspots({ agents, desks, events, props });
@@ -784,17 +767,43 @@ function drawPixelRect(x, y, w, h, color) {
   context.fillRect(Math.round(x), Math.round(y), w, h);
 }
 
+function resolveLayoutColor(fill, palette = {}) {
+  if (!fill) {
+    return null;
+  }
+
+  return palette[fill] || COLORS[fill] || fill;
+}
+
+function drawLayoutRects(origin, rects = [], palette = {}, { active = false } = {}) {
+  for (const rect of rects) {
+    const fillToken =
+      active && rect.fill_active
+        ? rect.fill_active
+        : !active && rect.fill_inactive
+          ? rect.fill_inactive
+          : rect.fill;
+    const fill = resolveLayoutColor(fillToken, palette);
+
+    if (!fill || fill === "transparent" || fill === "rgba(0,0,0,0)") {
+      continue;
+    }
+
+    drawPixelRect(origin.x + rect.x, origin.y + rect.y, rect.w, rect.h, fill);
+  }
+}
+
 function drawRoomBase(tone = "calm") {
-  context.clearRect(0, 0, 640, 420);
+  context.clearRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
 
   context.fillStyle = COLORS.bg0;
-  context.fillRect(0, 0, 640, 420);
+  context.fillRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
 
-  const wallGradient = context.createLinearGradient(0, 0, 0, 220);
+  const wallGradient = context.createLinearGradient(0, 0, 0, ROOM_LAYOUT.canvas.wall_height);
   wallGradient.addColorStop(0, COLORS.bg2);
   wallGradient.addColorStop(1, COLORS.bg1);
   context.fillStyle = wallGradient;
-  context.fillRect(0, 0, 640, 220);
+  context.fillRect(0, 0, CANVAS_WIDTH, ROOM_LAYOUT.canvas.wall_height);
 
   const glowAlpha =
     tone === "busy" ? 0.22 : tone === "steady" ? 0.18 : tone === "rest" ? 0.08 : 0.12;
@@ -803,21 +812,21 @@ function drawRoomBase(tone = "calm") {
   context.fillRect(250, 42, 140, 72);
 
   context.fillStyle = COLORS.bg2;
-  context.fillRect(0, 220, 640, 200);
+  context.fillRect(0, ROOM_LAYOUT.canvas.floor_top, CANVAS_WIDTH, CANVAS_HEIGHT - ROOM_LAYOUT.canvas.floor_top);
 
   for (let row = 0; row < 12; row += 1) {
     context.strokeStyle = COLORS.floorLine;
     context.beginPath();
-    context.moveTo(0, 220 + row * 18);
-    context.lineTo(640, 220 + row * 18);
+    context.moveTo(0, ROOM_LAYOUT.canvas.floor_top + row * 18);
+    context.lineTo(CANVAS_WIDTH, ROOM_LAYOUT.canvas.floor_top + row * 18);
     context.stroke();
   }
 
   for (let col = 0; col < 18; col += 1) {
     context.strokeStyle = "rgba(255, 255, 255, 0.025)";
     context.beginPath();
-    context.moveTo(col * 36, 220);
-    context.lineTo(col * 36 + 20, 420);
+    context.moveTo(col * 36, ROOM_LAYOUT.canvas.floor_top);
+    context.lineTo(col * 36 + 20, CANVAS_HEIGHT);
     context.stroke();
   }
 
@@ -841,7 +850,7 @@ function drawRoomBase(tone = "calm") {
 
 function drawZoneLabel(zone, active) {
   context.fillStyle = active ? zone.color || COLORS.cyan : "rgba(237, 243, 255, 0.16)";
-  context.fillRect(zone.labelX, zone.labelY, 84, 12);
+  context.fillRect(zone.labelX, zone.labelY, zone.labelWidth || 84, zone.labelHeight || 12);
 
   context.fillStyle = COLORS.ink;
   context.font = "10px monospace";
@@ -849,35 +858,38 @@ function drawZoneLabel(zone, active) {
 }
 
 function drawDesk(x, y, accent, active) {
-  drawPixelRect(x - 58, y + 26, 116, 10, "rgba(0, 0, 0, 0.25)");
-  drawPixelRect(x - 52, y - 8, 104, 18, accent);
-  drawPixelRect(x - 46, y - 2, 92, 12, COLORS.bg1);
-  drawPixelRect(x - 34, y + 10, 12, 28, COLORS.bg1);
-  drawPixelRect(x + 22, y + 10, 12, 28, COLORS.bg1);
-
-  if (active) {
-    drawPixelRect(x - 60, y - 12, 120, 4, accent);
-  }
+  drawLayoutRects(
+    { x, y },
+    ROOM_LAYOUT.desk_base.rects,
+    {
+      accent,
+      desk_shadow: "rgba(0, 0, 0, 0.25)",
+      bg1: COLORS.bg1,
+      transparent: "rgba(0,0,0,0)"
+    },
+    { active }
+  );
 }
 
 function drawRestCorner(restCorner) {
   const active = Boolean(restCorner?.active);
-  const accent = active ? "rgba(184, 162, 255, 0.9)" : "rgba(255, 255, 255, 0.12)";
-  const glow = active ? "rgba(184, 162, 255, 0.18)" : "rgba(255, 255, 255, 0.05)";
-
-  drawPixelRect(REST_CORNER.x - 76, REST_CORNER.y - 26, 152, 56, glow);
-  drawPixelRect(REST_CORNER.x - 62, REST_CORNER.y + 2, 54, 18, accent);
-  drawPixelRect(REST_CORNER.x - 62, REST_CORNER.y - 8, 54, 12, COLORS.bg1);
-  drawPixelRect(REST_CORNER.x - 8, REST_CORNER.y + 2, 22, 14, COLORS.violet);
-  drawPixelRect(REST_CORNER.x + 20, REST_CORNER.y - 2, 16, 18, COLORS.amber);
-  drawPixelRect(REST_CORNER.x + 24, REST_CORNER.y - 14, 8, 12, COLORS.white);
-  drawPixelRect(REST_CORNER.x + 42, REST_CORNER.y, 22, 12, COLORS.bg1);
-  drawPixelRect(REST_CORNER.x + 48, REST_CORNER.y - 10, 8, 10, COLORS.white);
-
-  if (active) {
-    drawPixelRect(REST_CORNER.x - 54, REST_CORNER.y - 16, 26, 4, COLORS.violet);
-    drawPixelRect(REST_CORNER.x + 28, REST_CORNER.y - 18, 18, 4, COLORS.cyan);
-  }
+  drawLayoutRects(
+    ROOM_LAYOUT.rest_corner.origin,
+    ROOM_LAYOUT.rest_corner.rects,
+    {
+      rest_glow: "rgba(184, 162, 255, 0.18)",
+      rest_glow_idle: "rgba(255, 255, 255, 0.05)",
+      rest_accent: "rgba(184, 162, 255, 0.9)",
+      rest_surface: "rgba(255, 255, 255, 0.12)",
+      bg1: COLORS.bg1,
+      violet: COLORS.violet,
+      amber: COLORS.amber,
+      white: COLORS.white,
+      cyan: COLORS.cyan,
+      transparent: "rgba(0,0,0,0)"
+    },
+    { active }
+  );
 }
 
 function cueIntensity(ambientCues, id) {
@@ -888,41 +900,43 @@ function drawPlanningBoard(scene) {
   const intensity = cueIntensity(scene.ambient_cues, "board_glow");
   const glow =
     intensity === "high" ? 0.22 : intensity === "medium" ? 0.14 : 0.08;
-
-  drawPixelRect(268, 44, 104, 52, `rgba(101, 228, 255, ${glow})`);
-  drawPixelRect(278, 52, 84, 36, COLORS.ink);
-  drawPixelRect(284, 58, 24, 4, COLORS.cyan);
-  drawPixelRect(314, 58, 18, 4, COLORS.amber);
-  drawPixelRect(338, 58, 14, 4, COLORS.rose);
-  drawPixelRect(284, 68, 48, 4, COLORS.white);
-  drawPixelRect(284, 76, 60, 4, COLORS.violet);
+  drawLayoutRects(propLayoutById("planning_board").origin, propLayoutById("planning_board").rects, {
+    board_glow: `rgba(101, 228, 255, ${glow})`,
+    ink: COLORS.ink,
+    cyan: COLORS.cyan,
+    amber: COLORS.amber,
+    rose: COLORS.rose,
+    white: COLORS.white,
+    violet: COLORS.violet
+  });
 }
 
 function drawStatusMonitor(scene, frame) {
   const flicker = cueIntensity(scene.ambient_cues, "monitor_flicker");
   const lit = flicker === "medium" ? (frame % 18 < 13 ? COLORS.cyan : COLORS.white) : COLORS.cyan;
-  drawPixelRect(520, 32, 62, 32, COLORS.ink);
-  drawPixelRect(526, 38, 50, 18, lit);
-  drawPixelRect(534, 60, 34, 4, COLORS.bg1);
+  drawLayoutRects(propLayoutById("status_monitor").origin, propLayoutById("status_monitor").rects, {
+    ink: COLORS.ink,
+    monitor_lit: lit,
+    bg1: COLORS.bg1
+  });
 }
 
 function drawToolRack(scene, frame) {
   const pulse = cueIntensity(scene.ambient_cues, "status_pulse");
-  drawPixelRect(548, 176, 30, 64, COLORS.bg1);
-  for (let row = 0; row < 4; row += 1) {
-    drawPixelRect(552, 184 + row * 14, 22, 4, COLORS.white);
-  }
-
-  if (pulse !== "off") {
-    const lit = frame % 20 < 10 ? COLORS.mint : COLORS.cyan;
-    drawPixelRect(558, 238, 8, 4, lit);
-  }
+  const lit = pulse !== "off" ? (frame % 20 < 10 ? COLORS.mint : COLORS.cyan) : "rgba(0,0,0,0)";
+  drawLayoutRects(propLayoutById("tool_rack").origin, propLayoutById("tool_rack").rects, {
+    bg1: COLORS.bg1,
+    white: COLORS.white,
+    rack_pulse: lit
+  });
 }
 
 function drawDocumentTray(scene) {
-  drawPixelRect(468, 230, 38, 26, COLORS.white);
-  drawPixelRect(474, 236, 24, 4, COLORS.bg2);
-  drawPixelRect(474, 244, 18, 4, COLORS.rose);
+  drawLayoutRects(propLayoutById("document_tray").origin, propLayoutById("document_tray").rects, {
+    white: COLORS.white,
+    bg2: COLORS.bg2,
+    rose: COLORS.rose
+  });
 }
 
 function drawAmbientProps(scene, frame) {
@@ -934,56 +948,30 @@ function drawAmbientProps(scene, frame) {
 
 function drawFurniture(zone, active) {
   const accent = active ? zone.color : "rgba(255, 255, 255, 0.12)";
+  const furniture = furnitureLayoutById(zone.furniture);
 
-  if (zone.furniture === "frontend") {
-    drawDesk(zone.x, zone.y, accent, active);
-    drawPixelRect(zone.x - 20, zone.y - 44, 40, 28, COLORS.ink);
-    drawPixelRect(zone.x - 14, zone.y - 38, 28, 16, zone.color);
-    drawPixelRect(zone.x - 10, zone.y - 34, 8, 4, COLORS.white);
-    drawPixelRect(zone.x, zone.y - 34, 10, 4, COLORS.rose);
-    drawPixelRect(zone.x - 6, zone.y - 26, 18, 4, COLORS.mint);
-    drawPixelRect(zone.x - 4, zone.y - 16, 8, 8, COLORS.ink);
-  }
-
-  if (zone.furniture === "backend") {
-    drawDesk(zone.x, zone.y, accent, active);
-    drawPixelRect(zone.x - 22, zone.y - 48, 44, 40, COLORS.ink);
-    for (let row = 0; row < 4; row += 1) {
-      drawPixelRect(zone.x - 16, zone.y - 40 + row * 8, 32, 4, COLORS.bg2);
-      drawPixelRect(
-        zone.x + 6,
-        zone.y - 40 + row * 8,
-        4,
-        4,
-        row % 2 === 0 ? zone.color : COLORS.amber
-      );
-    }
-  }
-
-  if (zone.furniture === "database") {
-    drawDesk(zone.x, zone.y, accent, active);
-    drawPixelRect(zone.x - 28, zone.y - 44, 56, 10, COLORS.amber);
-    drawPixelRect(zone.x - 28, zone.y - 34, 56, 12, "rgba(255, 204, 102, 0.55)");
-    drawPixelRect(zone.x - 28, zone.y - 22, 56, 10, COLORS.amber);
-    drawPixelRect(zone.x - 20, zone.y - 10, 40, 8, "rgba(255, 204, 102, 0.45)");
-  }
-
-  if (zone.furniture === "review") {
-    drawDesk(zone.x, zone.y, accent, active);
-    drawPixelRect(zone.x - 24, zone.y - 42, 46, 30, COLORS.white);
-    drawPixelRect(zone.x - 18, zone.y - 36, 24, 4, COLORS.bg2);
-    drawPixelRect(zone.x - 18, zone.y - 28, 28, 4, COLORS.bg2);
-    drawPixelRect(zone.x - 18, zone.y - 20, 20, 4, COLORS.rose);
-    drawPixelRect(zone.x + 8, zone.y - 40, 8, 6, COLORS.rose);
-  }
-
-  if (zone.furniture === "lab") {
-    drawPixelRect(zone.x - 52, zone.y + 30, 104, 10, "rgba(0, 0, 0, 0.24)");
-    drawPixelRect(zone.x - 44, zone.y - 10, 88, 30, accent);
-    drawPixelRect(zone.x - 34, zone.y - 2, 68, 14, COLORS.bg1);
-    drawPixelRect(zone.x - 12, zone.y - 38, 24, 28, zone.color);
-    drawPixelRect(zone.x - 6, zone.y - 32, 12, 8, COLORS.white);
-  }
+  drawDesk(zone.x, zone.y, accent, active);
+  drawLayoutRects(
+    { x: zone.x, y: zone.y },
+    furniture.rects,
+    {
+      accent,
+      zone: zone.color,
+      ink: COLORS.ink,
+      white: COLORS.white,
+      rose: COLORS.rose,
+      mint: COLORS.mint,
+      amber: COLORS.amber,
+      bg1: COLORS.bg1,
+      bg2: COLORS.bg2,
+      backend_led_a: zone.color,
+      backend_led_b: COLORS.amber,
+      database_glow_a: "rgba(255, 204, 102, 0.55)",
+      database_glow_b: "rgba(255, 204, 102, 0.45)",
+      lab_shadow: "rgba(0, 0, 0, 0.24)"
+    },
+    { active }
+  );
 }
 
 function actorPalette(actorId, accent) {
@@ -1151,7 +1139,7 @@ function drawSleepMarks(actor) {
 
 function drawBubble(actor, text, tone = "steady", verticalOffset = 0, opacity = 1) {
   const width = Math.min(220, 82 + text.length * 4);
-  const x = Math.max(18, Math.min(640 - width - 18, actor.x - width / 2));
+  const x = Math.max(18, Math.min(CANVAS_WIDTH - width - 18, actor.x - width / 2));
   const y = Math.max(18, actor.y - 78 - verticalOffset);
   const fill = bubbleColor(tone);
 
@@ -1184,7 +1172,7 @@ function drawZoneBadge(badge) {
 
   const zone = zoneById(badge.zone);
   const width = Math.min(96, 24 + badge.label.length * 6);
-  const x = Math.min(640 - width - 18, zone.labelX + 92);
+  const x = Math.min(CANVAS_WIDTH - width - 18, zone.labelX + 92);
   const y = Math.max(18, zone.labelY);
   const fill = badgeColor(badge.severity);
 
@@ -1258,8 +1246,8 @@ function drawScene() {
 
 function scenePointer(event) {
   const rect = canvas.getBoundingClientRect();
-  const x = ((event.clientX - rect.left) / rect.width) * 640;
-  const y = ((event.clientY - rect.top) / rect.height) * 420;
+  const x = ((event.clientX - rect.left) / rect.width) * CANVAS_WIDTH;
+  const y = ((event.clientY - rect.top) / rect.height) * CANVAS_HEIGHT;
   return { x, y };
 }
 

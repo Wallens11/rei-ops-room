@@ -116,3 +116,36 @@ Status: Day 3 complete.
 - Extract layout data into JSON so scene editing stops depending on hardcoded coordinates.
 - Prepare the room for future office-editor work without breaking movement routing.
 - Keep refining objective continuity only if a new class of runtime noise shows up in live use.
+
+## 2026-03-26 (Day 4)
+
+Status: Day 4 complete.
+
+### Completed
+- Added [/Users/funtoco/workSpace/codex-pixel-agent/public/room-layout.js](/Users/funtoco/workSpace/codex-pixel-agent/public/room-layout.js) as a layout schema source of truth for:
+  - zone origins, labels, hotspots, transit anchors, family hubs, patrol offsets, and seat offsets
+  - desk furniture overlays
+  - ambient props like the planning board, status monitor, tool rack, and document tray
+  - rest corner coordinates and sprite rectangles
+- Refactored [/Users/funtoco/workSpace/codex-pixel-agent/public/room-engine.js](/Users/funtoco/workSpace/codex-pixel-agent/public/room-engine.js) to build zones from schema data instead of inline hardcoded coordinates.
+- Refactored [/Users/funtoco/workSpace/codex-pixel-agent/public/app.js](/Users/funtoco/workSpace/codex-pixel-agent/public/app.js) so hotspots, desk labels, rest corner, ambient props, and furniture overlays now read layout primitives from the schema.
+- Updated [/Users/funtoco/workSpace/codex-pixel-agent/public/canvas-layout.js](/Users/funtoco/workSpace/codex-pixel-agent/public/canvas-layout.js) to use the schema canvas dimensions.
+- Added regression coverage in [/Users/funtoco/workSpace/codex-pixel-agent/tests/room-layout.test.mjs](/Users/funtoco/workSpace/codex-pixel-agent/tests/room-layout.test.mjs) to prove custom layout overrides drive zone positions and anchors.
+
+### Verification
+- `npm test` -> 97/97 passing
+- `node --check public/room-layout.js`
+- `node --check public/room-engine.js`
+- `node --check public/app.js`
+- `node --check public/canvas-layout.js`
+- live API smoke on `http://localhost:4317/?mode=room`
+
+### What Still Feels Off
+- The layout is schema-driven now, but it still lives in a JS module, not a user-editable external JSON file yet.
+- Background room geometry is still partially renderer logic, so a future editor would still need one more extraction pass.
+- Browser smoke via Playwright MCP was blocked by a local Chrome launch failure, so visual verification for this pass stayed at test + live API level.
+
+### Next Best Moves
+- Move from JS schema to a safer external layout document once migration rules are stable.
+- Extract the remaining room-base/background primitives so a future editor can reshape more than desk/prop placement.
+- Start Day 5 scene-polish work only after the layout schema feels stable in normal use.

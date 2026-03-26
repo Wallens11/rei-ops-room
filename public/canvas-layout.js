@@ -1,5 +1,7 @@
-const LOGICAL_WIDTH = 640;
-const LOGICAL_HEIGHT = 420;
+import { ROOM_LAYOUT } from "./room-layout.js";
+
+const LOGICAL_WIDTH = ROOM_LAYOUT.canvas.width;
+const LOGICAL_HEIGHT = ROOM_LAYOUT.canvas.height;
 
 export function getCanvasRenderMetrics({
   clientWidth,

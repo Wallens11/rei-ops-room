@@ -1,17 +1,16 @@
 import { VISUAL_CAST } from "./room-schema.js";
+import {
+  createZonesFromLayout,
+  REST_CORNER,
+  ROOM_LAYOUT
+} from "./room-layout.js";
+export { REST_CORNER } from "./room-layout.js";
 
 export const DEFAULT_CREW = VISUAL_CAST.map((agent) => ({
   id: agent.id,
   name: agent.displayName,
   home: agent.homeZone
 }));
-
-export const REST_CORNER = {
-  id: "rest_corner",
-  title: "Recharge Nook",
-  x: 322,
-  y: 112
-};
 
 const SETTLED_ACTIVITIES = new Set([
   "reading",
@@ -26,165 +25,6 @@ const OBSERVATION_ACTIVITIES = new Set(["waiting", "idle"]);
 const OBSERVE_ROUTE_HOLD_FRAMES = 18;
 const OBSERVE_STANDBY_HOLD_FRAMES = 54;
 const SCOUT_HANDOFF_LINGER_FRAMES = 18;
-
-const BASE_ZONES = [
-  {
-    id: "frontend",
-    title: "Frontend Desk",
-    color: "#65e4ff",
-    x: 132,
-    y: 136,
-    labelX: 82,
-    labelY: 78,
-    furniture: "frontend"
-  },
-  {
-    id: "backend",
-    title: "Backend Rack",
-    color: "#7cffba",
-    x: 498,
-    y: 136,
-    labelX: 432,
-    labelY: 78,
-    furniture: "backend"
-  },
-  {
-    id: "database",
-    title: "Database Vault",
-    color: "#ffcc66",
-    x: 156,
-    y: 292,
-    labelX: 78,
-    labelY: 246,
-    furniture: "database"
-  },
-  {
-    id: "review",
-    title: "Docs / Ops Corner",
-    color: "#ff907c",
-    x: 488,
-    y: 292,
-    labelX: 420,
-    labelY: 246,
-    furniture: "review"
-  },
-  {
-    id: "lab",
-    title: "General Lab",
-    color: "#b8a2ff",
-    x: 322,
-    y: 216,
-    labelX: 270,
-    labelY: 182,
-    furniture: "lab"
-  }
-];
-
-const PATROL_OFFSETS = {
-  frontend: [
-    { x: -18, y: 40 },
-    { x: 18, y: 40 },
-    { x: 20, y: 18 },
-    { x: -12, y: 18 }
-  ],
-  backend: [
-    { x: -16, y: 38 },
-    { x: 16, y: 38 },
-    { x: 18, y: 18 },
-    { x: -18, y: 16 }
-  ],
-  database: [
-    { x: -16, y: 44 },
-    { x: 16, y: 44 },
-    { x: 22, y: 24 },
-    { x: -18, y: 22 }
-  ],
-  review: [
-    { x: -18, y: 42 },
-    { x: 16, y: 42 },
-    { x: 18, y: 22 },
-    { x: -18, y: 20 }
-  ],
-  lab: [
-    { x: -10, y: 42 },
-    { x: 10, y: 42 },
-    { x: 10, y: 18 },
-    { x: -10, y: 18 }
-  ]
-};
-
-const ACTIVE_PATROL_OFFSETS = {
-  frontend: [
-    { x: -26, y: 44 },
-    { x: 22, y: 44 },
-    { x: 26, y: 16 },
-    { x: -18, y: 14 }
-  ],
-  backend: [
-    { x: -24, y: 42 },
-    { x: 20, y: 42 },
-    { x: 20, y: 14 },
-    { x: -24, y: 14 }
-  ],
-  database: [
-    { x: -20, y: 48 },
-    { x: 20, y: 48 },
-    { x: 28, y: 20 },
-    { x: -20, y: 16 }
-  ],
-  review: [
-    { x: -22, y: 46 },
-    { x: 18, y: 46 },
-    { x: 22, y: 18 },
-    { x: -22, y: 18 }
-  ],
-  lab: [
-    { x: -12, y: 44 },
-    { x: 12, y: 44 },
-    { x: 12, y: 20 },
-    { x: -12, y: 20 }
-  ]
-};
-
-const WORK_SPOT_OFFSETS = {
-  frontend: [
-    { x: -6, y: 40 },
-    { x: 6, y: 40 }
-  ],
-  backend: [
-    { x: -6, y: 40 },
-    { x: 6, y: 40 }
-  ],
-  database: [
-    { x: -6, y: 48 },
-    { x: 6, y: 48 }
-  ],
-  review: [
-    { x: -6, y: 44 },
-    { x: 6, y: 44 }
-  ],
-  lab: [
-    { x: -8, y: 42 },
-    { x: 8, y: 42 }
-  ]
-};
-
-const MEETING_SPOT_OFFSETS = {
-  lead: [{ x: 0, y: 54 }],
-  ui: [{ x: -44, y: 42 }],
-  api: [{ x: 44, y: 42 }],
-  db: [{ x: -30, y: 62 }],
-  docs: [{ x: 30, y: 62 }],
-  scout: [{ x: 0, y: 68 }]
-};
-const REST_SPOT_OFFSETS = {
-  lead: [{ x: -10, y: 18 }],
-  ui: [{ x: -44, y: 26 }],
-  api: [{ x: 46, y: 24 }],
-  db: [{ x: -24, y: 44 }],
-  docs: [{ x: 24, y: 42 }],
-  scout: [{ x: 0, y: 52 }]
-};
 
 function samePoint(left, right) {
   return left && right && left.x === right.x && left.y === right.y;
@@ -206,44 +46,19 @@ function dedupePoints(points) {
 }
 
 function hallwayCenter(zones) {
-  const lab = zoneById(zones, "lab");
-  return { x: lab.x, y: lab.y + 12 };
+  return zones[0]?.hallwayCenter
+    ? { ...zones[0].hallwayCenter }
+    : { ...ROOM_LAYOUT.hallway.center };
 }
 
 function familyHubForZone(zones, zoneId) {
-  const center = hallwayCenter(zones);
-
-  if (zoneId === "frontend" || zoneId === "backend") {
-    return { x: center.x, y: 186 };
-  }
-
-  if (zoneId === "database" || zoneId === "review") {
-    return { x: center.x, y: 248 };
-  }
-
-  return center;
+  const zone = zoneById(zones, zoneId);
+  return zone.familyHub ? { ...zone.familyHub } : hallwayCenter(zones);
 }
 
 function transitAnchorForZone(zones, zoneId) {
   const zone = zoneById(zones, zoneId);
-
-  if (zoneId === "frontend") {
-    return { x: zone.x + 82, y: 186 };
-  }
-
-  if (zoneId === "backend") {
-    return { x: zone.x - 84, y: 186 };
-  }
-
-  if (zoneId === "database") {
-    return { x: zone.x + 72, y: 248 };
-  }
-
-  if (zoneId === "review") {
-    return { x: zone.x - 84, y: 248 };
-  }
-
-  return hallwayCenter(zones);
+  return zone.transitAnchor ? { ...zone.transitAnchor } : hallwayCenter(zones);
 }
 
 function alternateWorkSpot(actor, targetZone) {
@@ -255,15 +70,6 @@ function alternateWorkSpot(actor, targetZone) {
     targetZone.patrol.find((point) => !samePoint(point, primary)) ||
     primary
   );
-}
-
-function buildSeats(zone) {
-  return (WORK_SPOT_OFFSETS[zone.id] || []).map((offset, index) => ({
-    id: `${zone.id}_seat_${index}`,
-    x: zone.x + offset.x,
-    y: zone.y + offset.y,
-    facing: index === 0 ? 1 : -1
-  }));
 }
 
 function seatForActor(actor, targetZone) {
@@ -388,14 +194,8 @@ function createScoutRoute(zones, scoutScene) {
   };
 }
 
-export function createDefaultZones() {
-  return BASE_ZONES.map((zone) => ({
-    ...zone,
-    seats: buildSeats(zone),
-    patrol: withOffsets(zone, PATROL_OFFSETS[zone.id]),
-    activePatrol: withOffsets(zone, ACTIVE_PATROL_OFFSETS[zone.id]),
-    workSpot: buildSeats(zone).map((seat) => ({ x: seat.x, y: seat.y }))
-  }));
+export function createDefaultZones(layout = ROOM_LAYOUT) {
+  return createZonesFromLayout(layout);
 }
 
 export function buildCrewActors(zones = createDefaultZones()) {
@@ -423,18 +223,20 @@ export function buildCrewActors(zones = createDefaultZones()) {
 
 function createMeetingRoute(zones, actorId) {
   const lab = zoneById(zones, "lab");
+  const offsets = ROOM_LAYOUT.actor_offsets.meeting[actorId] || ROOM_LAYOUT.actor_offsets.meeting.scout;
   return {
     zoneId: "lab",
     routeType: "meeting",
-    points: withOffsets(lab, MEETING_SPOT_OFFSETS[actorId] || MEETING_SPOT_OFFSETS.scout)
+    points: withOffsets(lab, offsets)
   };
 }
 
 function createRestRoute(zones, actorId) {
+  const offsets = ROOM_LAYOUT.actor_offsets.rest[actorId] || ROOM_LAYOUT.actor_offsets.rest.scout;
   return {
     zoneId: "lab",
     routeType: "rest",
-    points: withOffsets(REST_CORNER, REST_SPOT_OFFSETS[actorId] || REST_SPOT_OFFSETS.scout)
+    points: withOffsets(REST_CORNER, offsets)
   };
 }
 
