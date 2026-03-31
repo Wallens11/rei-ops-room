@@ -141,6 +141,23 @@ Perilaku default:
 - log hanya keluar saat status berubah, jadi skip yang sama tidak spam terus
 - dedupe issue tetap ditentukan marker comment yang sudah ada
 
+## Report-only Service
+
+Kalau mau worker background-nya gampang dikelola lintas shell / device session:
+
+```bash
+npm run report-only-service -- start
+npm run report-only-service -- status
+npm run report-only-service -- stop
+```
+
+Catatan:
+
+- service ini cuma wrapper lokal untuk `report-only-worker`
+- pid disimpan di `.report-only-worker.pid`
+- log append ke `.report-only-worker.log`
+- `status` akan bilang kalau pid file-nya stale, jadi tidak pura-pura worker masih hidup
+
 ## Jalan Di Laptop Lain
 
 1. Clone repo ini.

@@ -12,6 +12,7 @@
     "stop": "node tools/agent-pixel-cli.mjs stop",
     "status": "node tools/agent-pixel-cli.mjs status",
     "report-only": "node tools/report-only-bridge.mjs",
-    "report-only-worker": "node tools/report-only-worker.mjs"
+    "report-only-worker": "node tools/report-only-worker.mjs",
+    "report-only-service": "node tools/report-only-worker-cli.mjs"
   }
 }
