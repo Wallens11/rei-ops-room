@@ -28,6 +28,25 @@ import {
   reduceRuntimeEventState
 } from "./runtime-events.js";
 import {
+  buildGithubInboxViewModel,
+  createEmptyGithubInboxState,
+  createGithubInboxErrorState,
+  normalizeGithubInboxPayload
+} from "./github-inbox.js";
+import {
+  buildReportOnlyViewModel,
+  createEmptyReportOnlyState
+} from "./report-only-view.js";
+import {
+  buildReportOnlyAutopilotViewModel,
+  createReportOnlyAutopilotState,
+  shouldAutoTriggerReportOnly
+} from "./report-only-autopilot.js";
+import {
+  buildReportOnlyServiceViewModel,
+  createEmptyReportOnlyServiceState
+} from "./report-only-service-view.js";
+import {
   buildSceneHotspots,
   describeSceneSelection,
   findSceneHotspotAt
@@ -82,6 +101,8 @@ const INITIAL_LAYOUT = createEditableLayout(ROOM_LAYOUT);
 const INITIAL_ZONES = createDefaultZones(INITIAL_LAYOUT);
 const CANVAS_WIDTH = ROOM_LAYOUT.canvas.width;
 const CANVAS_HEIGHT = ROOM_LAYOUT.canvas.height;
+const GITHUB_INBOX_POLL_MS = 30_000;
+const REPORT_ONLY_AUTOPILOT_STORAGE_KEY = "codex-pixel-agent-report-only-autopilot";
 
 const elements = {
   statusPill: document.getElementById("status-pill"),
@@ -115,6 +136,25 @@ const elements = {
   repoContextName: document.getElementById("repo-context-name"),
   repoContextCwd: document.getElementById("repo-context-cwd"),
   repoContextTitle: document.getElementById("repo-context-title"),
+  githubInboxTitle: document.getElementById("github-inbox-title"),
+  githubInboxChip: document.getElementById("github-inbox-chip"),
+  githubInboxMeta: document.getElementById("github-inbox-meta"),
+  githubInboxScope: document.getElementById("github-inbox-scope"),
+  githubQueueTitle: document.getElementById("github-queue-title"),
+  githubQueueDetail: document.getElementById("github-queue-detail"),
+  githubReportTitle: document.getElementById("github-report-title"),
+  githubReportDetail: document.getElementById("github-report-detail"),
+  githubReportNote: document.getElementById("github-report-note"),
+  githubReportButton: document.getElementById("github-report-button"),
+  githubAutopilotTitle: document.getElementById("github-autopilot-title"),
+  githubAutopilotDetail: document.getElementById("github-autopilot-detail"),
+  githubAutopilotNote: document.getElementById("github-autopilot-note"),
+  githubAutopilotButton: document.getElementById("github-autopilot-button"),
+  githubServiceTitle: document.getElementById("github-service-title"),
+  githubServiceDetail: document.getElementById("github-service-detail"),
+  githubServiceNote: document.getElementById("github-service-note"),
+  githubServiceButton: document.getElementById("github-service-button"),
+  githubInboxList: document.getElementById("github-inbox-list"),
   sceneDetailTitle: document.getElementById("scene-detail-title"),
   sceneDetailBody: document.getElementById("scene-detail-body"),
   recentList: document.getElementById("recent-list"),
@@ -156,12 +196,17 @@ const renderState = {
     bubble: null,
     badge: null
   },
+  githubInbox: createEmptyGithubInboxState(),
+  reportOnly: createEmptyReportOnlyState(),
+  reportOnlyService: createEmptyReportOnlyServiceState(),
+  autopilot: loadReportOnlyAutopilotState(),
   reducedMotion: false,
   editorActive: false,
   editorSelectionId: "zone:lab",
   editorStep: 8,
   editorMessage: "Room layout masih pakai schema default."
 };
+let githubInboxPollHandle = null;
 
 const reducedMotionQuery =
   typeof window !== "undefined" && typeof window.matchMedia === "function"
@@ -529,6 +574,34 @@ function workstreamStatusLabel(status) {
   return "Queued";
 }
 
+function githubIssueToneLabel(tone) {
+  if (tone === "blocked") {
+    return "blocked";
+  }
+
+  if (tone === "in_progress") {
+    return "in progress";
+  }
+
+  if (tone === "todo") {
+    return "todo";
+  }
+
+  if (tone === "loading") {
+    return "syncing";
+  }
+
+  if (tone === "error") {
+    return "offline";
+  }
+
+  if (tone === "empty") {
+    return "empty";
+  }
+
+  return "open";
+}
+
 function formatConfidence(value) {
   return `${Math.round((value || 0) * 100)}%`;
 }
@@ -553,6 +626,43 @@ function initMode() {
   const saved = localStorage.getItem("codex-pixel-agent-mode");
   renderState.mode = requested || saved || "room";
   applyMode(renderState.mode);
+}
+
+function readSessionJson(key) {
+  if (typeof sessionStorage === "undefined") {
+    return null;
+  }
+
+  try {
+    const raw = sessionStorage.getItem(key);
+    return raw ? JSON.parse(raw) : null;
+  } catch (error) {
+    console.warn("failed to read session storage", error);
+    return null;
+  }
+}
+
+function writeSessionJson(key, value) {
+  if (typeof sessionStorage === "undefined") {
+    return;
+  }
+
+  try {
+    sessionStorage.setItem(key, JSON.stringify(value));
+  } catch (error) {
+    console.warn("failed to write session storage", error);
+  }
+}
+
+function loadReportOnlyAutopilotState() {
+  return createReportOnlyAutopilotState(readSessionJson(REPORT_ONLY_AUTOPILOT_STORAGE_KEY) || {});
+}
+
+function persistReportOnlyAutopilotState() {
+  writeSessionJson(REPORT_ONLY_AUTOPILOT_STORAGE_KEY, {
+    enabled: renderState.autopilot.enabled,
+    lastHandledIssueNumber: renderState.autopilot.lastHandledIssueNumber
+  });
 }
 
 function applyMode(mode) {
@@ -850,6 +960,123 @@ function renderWorkspaceDock(workspace) {
   });
 }
 
+function renderGithubInbox(inbox) {
+  if (!elements.githubInboxList) {
+    return;
+  }
+
+  const model = buildGithubInboxViewModel(inbox);
+  elements.githubInboxTitle.textContent = truncate(model.title, 56);
+  elements.githubInboxChip.textContent = model.chip;
+  elements.githubInboxMeta.textContent = model.meta;
+  elements.githubInboxScope.textContent = model.scope;
+  elements.githubQueueTitle.textContent = truncate(model.queueTitle, 88);
+  elements.githubQueueDetail.textContent = truncate(model.queueDetail, 140);
+  elements.githubInboxList.innerHTML = "";
+
+  model.rows.forEach((row) => {
+    const item = document.createElement("li");
+    item.className = `github-issue-item ${row.tone}`;
+
+    const head = document.createElement("div");
+    head.className = "item-head";
+
+    const title = document.createElement(row.href ? "a" : "strong");
+    title.textContent = row.title;
+    if (row.href) {
+      title.href = row.href;
+      title.target = "_blank";
+      title.rel = "noreferrer";
+      title.className = "github-issue-link";
+    } else {
+      title.className = "github-issue-title";
+    }
+
+    const chip = document.createElement("span");
+    chip.className = "item-chip";
+    chip.textContent = githubIssueToneLabel(row.tone);
+
+    head.append(title, chip);
+
+    const detail = document.createElement("p");
+    detail.textContent = row.detail;
+
+    const meta = document.createElement("p");
+    meta.className = "dim mono";
+    meta.textContent = row.meta;
+
+    item.append(head, detail, meta);
+    elements.githubInboxList.appendChild(item);
+  });
+}
+
+function renderReportOnly(state) {
+  if (!elements.githubReportButton) {
+    return;
+  }
+
+  const model = buildReportOnlyViewModel(state);
+  elements.githubReportTitle.textContent = model.title;
+  elements.githubReportDetail.textContent = model.detail;
+  elements.githubReportNote.textContent = model.note;
+  elements.githubReportButton.textContent = model.buttonLabel;
+  elements.githubReportButton.disabled = model.buttonDisabled;
+  elements.githubReportButton.dataset.tone = model.tone;
+}
+
+function renderReportOnlyAutopilot() {
+  if (!elements.githubAutopilotButton) {
+    return;
+  }
+
+  const model = buildReportOnlyAutopilotViewModel({
+    autopilot: renderState.autopilot,
+    reportOnly: renderState.reportOnly
+  });
+
+  elements.githubAutopilotTitle.textContent = model.title;
+  elements.githubAutopilotDetail.textContent = model.detail;
+  elements.githubAutopilotNote.textContent = model.note;
+  elements.githubAutopilotButton.textContent = model.buttonLabel;
+  elements.githubAutopilotButton.disabled = model.buttonDisabled;
+  elements.githubAutopilotButton.dataset.tone = model.tone;
+}
+
+function renderReportOnlyService(state) {
+  if (!elements.githubServiceTitle || !elements.githubServiceButton) {
+    return;
+  }
+
+  const model = buildReportOnlyServiceViewModel(state);
+  elements.githubServiceTitle.textContent = model.title;
+  elements.githubServiceDetail.textContent = model.detail;
+  elements.githubServiceNote.textContent = model.note;
+  elements.githubServiceTitle.dataset.tone = model.tone;
+  elements.githubServiceButton.textContent = model.buttonLabel;
+  elements.githubServiceButton.disabled = model.buttonDisabled;
+  elements.githubServiceButton.dataset.tone = model.tone;
+  elements.githubServiceButton.dataset.action = model.action;
+}
+
+async function readJsonResponseOrThrow(response) {
+  let payload = null;
+
+  try {
+    payload = await response.json();
+  } catch {
+    payload = null;
+  }
+
+  if (response.ok) {
+    return payload;
+  }
+
+  const error = new Error(payload?.detail || payload?.error || `HTTP ${response.status}`);
+  error.status = response.status;
+  error.payload = payload;
+  throw error;
+}
+
 function renderWorkstreams(workstreams) {
   elements.workstreamList.innerHTML = "";
 
@@ -1074,8 +1301,272 @@ function applyStatus(data) {
   renderEvents(data.recent_events || []);
   renderCrewList(data.agents || [], data.workstreams || []);
   renderWorkspaceDock(data.workspace || {});
+  renderGithubInbox(renderState.githubInbox);
   renderState.hotspots = buildInteractiveHotspots();
   updateSceneDetailCard();
+}
+
+async function refreshGithubInbox() {
+  if (typeof fetch !== "function") {
+    renderState.githubInbox = createGithubInboxErrorState(
+      renderState.githubInbox,
+      new Error("fetch is not available")
+    );
+    renderGithubInbox(renderState.githubInbox);
+    return;
+  }
+
+  try {
+    const response = await fetch("/api/github/issues", {
+      cache: "no-store"
+    });
+
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}`);
+    }
+
+    const payload = await response.json();
+    renderState.githubInbox = normalizeGithubInboxPayload(payload);
+  } catch (error) {
+    renderState.githubInbox = createGithubInboxErrorState(renderState.githubInbox, error);
+  }
+
+  renderGithubInbox(renderState.githubInbox);
+}
+
+async function refreshReportOnlyPreview() {
+  if (typeof fetch !== "function") {
+    renderState.reportOnly = {
+      status: "no_target",
+      canComment: false,
+      target: null,
+      detail: "fetch is not available"
+    };
+    renderReportOnly(renderState.reportOnly);
+    renderReportOnlyAutopilot();
+    return;
+  }
+
+  try {
+    const response = await fetch("/api/github/report-only", {
+      cache: "no-store"
+    });
+
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}`);
+    }
+
+    renderState.reportOnly = await response.json();
+  } catch (error) {
+    renderState.reportOnly = {
+      status: "no_target",
+      canComment: false,
+      target: null,
+      detail: error instanceof Error ? error.message : String(error)
+    };
+  }
+
+  renderReportOnly(renderState.reportOnly);
+  renderReportOnlyAutopilot();
+  void maybeRunReportOnlyAutopilot();
+}
+
+async function refreshReportOnlyService() {
+  if (typeof fetch !== "function") {
+    renderState.reportOnlyService = {
+      status: "error",
+      running: false,
+      pid: null,
+      source: "status_error",
+      detail: "fetch is not available"
+    };
+    renderReportOnlyService(renderState.reportOnlyService);
+    return;
+  }
+
+  try {
+    const response = await fetch("/api/github/report-only/service", {
+      cache: "no-store"
+    });
+
+    renderState.reportOnlyService = await readJsonResponseOrThrow(response);
+    renderState.reportOnlyService.status = renderState.reportOnlyService.running ? "running" : "idle";
+  } catch (error) {
+    const payload = error?.payload || null;
+    renderState.reportOnlyService = {
+      status: "error",
+      running: false,
+      pid: null,
+      source: payload?.source || "status_error",
+      action: payload?.action || null,
+      detail: payload?.detail || (error instanceof Error ? error.message : String(error))
+    };
+  }
+
+  renderReportOnlyService(renderState.reportOnlyService);
+}
+
+async function controlReportOnlyService(action) {
+  if (!action || (action !== "start" && action !== "stop")) {
+    return;
+  }
+
+  renderState.reportOnlyService = {
+    ...renderState.reportOnlyService,
+    pendingAction: action
+  };
+  renderReportOnlyService(renderState.reportOnlyService);
+
+  try {
+    const response = await fetch("/api/github/report-only/service", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json"
+      },
+      body: JSON.stringify({
+        action
+      })
+    });
+
+    renderState.reportOnlyService = await readJsonResponseOrThrow(response);
+    renderState.reportOnlyService.status = renderState.reportOnlyService.running ? "running" : "idle";
+  } catch (error) {
+    const payload = error?.payload || null;
+    renderState.reportOnlyService = {
+      status: "error",
+      running: false,
+      pid: null,
+      source: payload?.source || "control_error",
+      action: payload?.action || action,
+      detail: payload?.detail || (error instanceof Error ? error.message : String(error))
+    };
+  }
+
+  renderReportOnlyService(renderState.reportOnlyService);
+}
+
+async function triggerReportOnlyComment({ source = "manual" } = {}) {
+  elements.githubReportButton.disabled = true;
+  elements.githubReportButton.textContent = "Posting...";
+
+  try {
+    const response = await fetch("/api/github/report-only", {
+      method: "POST"
+    });
+
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}`);
+    }
+
+    renderState.reportOnly = await response.json();
+    if (
+      renderState.reportOnly.status === "comment_posted" &&
+      Number(renderState.reportOnly?.target?.number || 0) > 0
+    ) {
+      renderState.autopilot = {
+        ...renderState.autopilot,
+        lastHandledIssueNumber: Number(renderState.reportOnly.target.number)
+      };
+      persistReportOnlyAutopilotState();
+    }
+    renderReportOnly(renderState.reportOnly);
+    renderReportOnlyAutopilot();
+    await refreshGithubInbox();
+    await refreshReportOnlyPreview();
+    return renderState.reportOnly;
+  } catch (error) {
+    renderState.reportOnly = {
+      status: "no_target",
+      canComment: false,
+      target: null,
+      detail: error instanceof Error ? error.message : String(error)
+    };
+    renderReportOnly(renderState.reportOnly);
+    renderReportOnlyAutopilot();
+    if (source === "autopilot") {
+      console.warn("report-only autopilot failed", error);
+    }
+    return null;
+  }
+}
+
+async function maybeRunReportOnlyAutopilot() {
+  if (
+    !shouldAutoTriggerReportOnly({
+      autopilot: renderState.autopilot,
+      reportOnly: renderState.reportOnly
+    })
+  ) {
+    return;
+  }
+
+  renderState.autopilot = {
+    ...renderState.autopilot,
+    pending: true
+  };
+  renderReportOnlyAutopilot();
+
+  try {
+    await triggerReportOnlyComment({
+      source: "autopilot"
+    });
+  } finally {
+    renderState.autopilot = {
+      ...renderState.autopilot,
+      pending: false
+    };
+    persistReportOnlyAutopilotState();
+    renderReportOnlyAutopilot();
+  }
+}
+
+function toggleReportOnlyAutopilot() {
+  if (renderState.autopilot.pending) {
+    return;
+  }
+
+  renderState.autopilot = {
+    ...renderState.autopilot,
+    enabled: !renderState.autopilot.enabled
+  };
+  persistReportOnlyAutopilotState();
+  renderReportOnlyAutopilot();
+
+  if (renderState.autopilot.enabled) {
+    void maybeRunReportOnlyAutopilot();
+  }
+}
+
+function startGithubInboxPolling() {
+  if (githubInboxPollHandle) {
+    return;
+  }
+
+  if (!renderState.githubInbox.issues.length) {
+    renderState.githubInbox = {
+      ...renderState.githubInbox,
+      status: "loading"
+    };
+    renderGithubInbox(renderState.githubInbox);
+  }
+
+  void refreshGithubInbox();
+  void refreshReportOnlyPreview();
+  void refreshReportOnlyService();
+  githubInboxPollHandle = setInterval(() => {
+    void refreshGithubInbox();
+    void refreshReportOnlyPreview();
+    void refreshReportOnlyService();
+  }, GITHUB_INBOX_POLL_MS);
+}
+
+function stopGithubInboxPolling() {
+  if (!githubInboxPollHandle) {
+    return;
+  }
+
+  clearInterval(githubInboxPollHandle);
+  githubInboxPollHandle = null;
 }
 
 function drawPixelRect(x, y, w, h, color) {
@@ -1964,6 +2455,10 @@ syncDerivedLayout();
 initMode();
 renderEditorControls();
 renderState.hotspots = buildInteractiveHotspots();
+renderGithubInbox(renderState.githubInbox);
+renderReportOnly(renderState.reportOnly);
+renderReportOnlyAutopilot();
+renderReportOnlyService(renderState.reportOnlyService);
 drawScene();
 setInterval(animate, 160);
 
@@ -1981,6 +2476,17 @@ const statusTransport = createStatusTransport({
 });
 
 statusTransport.start();
+startGithubInboxPolling();
+elements.githubReportButton?.addEventListener("click", () => {
+  void triggerReportOnlyComment();
+});
+elements.githubAutopilotButton?.addEventListener("click", () => {
+  toggleReportOnlyAutopilot();
+});
+elements.githubServiceButton?.addEventListener("click", () => {
+  void controlReportOnlyService(elements.githubServiceButton.dataset.action || "");
+});
 window.addEventListener("beforeunload", () => {
   statusTransport.stop();
+  stopGithubInboxPolling();
 });

@@ -1,4 +1,6 @@
 node_modules/
 .agent-pixel.log
 .agent-pixel.pid
+.report-only-worker.log
+.report-only-worker.pid
 .DS_Store
