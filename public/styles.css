@@ -182,7 +182,8 @@ p {
 .editor-toggle,
 .editor-action-button,
 .editor-step-button,
-.editor-nudge-button {
+.editor-nudge-button,
+.report-only-button {
   border: 1px solid var(--panel-border);
   background: rgba(255, 255, 255, 0.04);
   color: var(--ink);
@@ -513,6 +514,11 @@ p {
 #objective-detail,
 #runtime-live-title,
 #runtime-finished-title,
+#github-inbox-meta,
+#github-inbox-scope,
+#github-queue-detail,
+#github-report-detail,
+#github-report-note,
 #repo-context-title,
 #scene-detail-body {
   overflow-wrap: anywhere;
@@ -531,6 +537,11 @@ p {
 #objective-detail,
 #runtime-live-title,
 #runtime-finished-title,
+#github-inbox-meta,
+#github-inbox-scope,
+#github-queue-detail,
+#github-report-detail,
+#github-report-note,
 #repo-context-title {
   display: -webkit-box;
   overflow: hidden;
@@ -719,6 +730,101 @@ p {
 .stack-list p {
   color: var(--muted);
   line-height: 1.5;
+}
+
+.github-inbox-panel {
+  background:
+    linear-gradient(135deg, rgba(101, 228, 255, 0.08), transparent 42%),
+    linear-gradient(180deg, rgba(255, 255, 255, 0.025), transparent 40%),
+    var(--panel);
+}
+
+#github-queue-title {
+  margin: 10px 0 4px;
+  font-size: 17px;
+}
+
+#github-report-title {
+  margin: 10px 0 4px;
+  font-size: 16px;
+}
+
+#github-autopilot-title {
+  margin: 10px 0 4px;
+  font-size: 16px;
+}
+
+.report-only-button {
+  min-height: 38px;
+  margin-top: 10px;
+  padding: 0 12px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-family: var(--mono-font);
+}
+
+.report-only-button:not(:disabled) {
+  background: rgba(124, 255, 186, 0.14);
+  box-shadow: inset 0 0 0 1px rgba(124, 255, 186, 0.18);
+}
+
+.report-only-button:disabled {
+  cursor: default;
+  opacity: 0.74;
+}
+
+.report-only-button[data-tone="ready"]:not(:disabled) {
+  background: rgba(124, 255, 186, 0.14);
+  box-shadow: inset 0 0 0 1px rgba(124, 255, 186, 0.18);
+}
+
+.report-only-button[data-tone="done"]:not(:disabled) {
+  background: rgba(101, 228, 255, 0.14);
+  box-shadow: inset 0 0 0 1px rgba(101, 228, 255, 0.18);
+}
+
+.report-only-button[data-tone="idle"]:not(:disabled) {
+  background: rgba(255, 204, 102, 0.14);
+  box-shadow: inset 0 0 0 1px rgba(255, 204, 102, 0.18);
+}
+
+.autopilot-button {
+  margin-bottom: 14px;
+}
+
+.github-issue-link,
+.github-issue-title {
+  color: var(--ink);
+  text-decoration: none;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.github-issue-link:hover {
+  color: var(--cyan);
+}
+
+.github-issue-item.todo .item-chip {
+  color: var(--amber);
+  background: rgba(255, 204, 102, 0.12);
+}
+
+.github-issue-item.in_progress .item-chip {
+  color: var(--mint);
+  background: rgba(124, 255, 186, 0.12);
+}
+
+.github-issue-item.blocked .item-chip,
+.github-issue-item.error .item-chip {
+  color: var(--rose);
+  background: rgba(255, 144, 124, 0.12);
+}
+
+.github-issue-item.loading .item-chip,
+.github-issue-item.empty .item-chip,
+.github-issue-item.open .item-chip {
+  color: var(--cyan);
+  background: rgba(101, 228, 255, 0.12);
 }
 
 .stream-item.active .item-chip {

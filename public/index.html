@@ -182,6 +182,37 @@
       </section>
 
       <section class="panel-grid">
+        <article class="panel github-inbox-panel">
+          <p class="panel-label">GitHub Inbox</p>
+          <div class="item-head">
+            <strong id="github-inbox-title">GitHub Inbox</strong>
+            <span id="github-inbox-chip" class="item-chip">idle</span>
+          </div>
+          <p id="github-inbox-meta">0 todo | 0 in progress | 0 blocked</p>
+          <p id="github-inbox-scope" class="dim mono">open | agent:rei | synced not yet</p>
+          <h4 id="github-queue-title">Queue idle</h4>
+          <p id="github-queue-detail" class="dim">No active in-progress issue yet.</p>
+          <div class="mini-divider"></div>
+          <p class="panel-label">Report-only Bridge</p>
+          <h4 id="github-report-title">Checking bridge...</h4>
+          <p id="github-report-detail" class="dim">Waiting for local preview.</p>
+          <p id="github-report-note" class="dim mono">No active report-only issue yet.</p>
+          <button id="github-report-button" class="report-only-button" type="button" disabled>
+            Checking...
+          </button>
+          <div class="mini-divider"></div>
+          <p class="panel-label">Autopilot</p>
+          <h4 id="github-autopilot-title">Autopilot Off</h4>
+          <p id="github-autopilot-detail" class="dim">Manual trigger only.</p>
+          <p id="github-autopilot-note" class="dim mono">
+            Enable autopilot to auto-post one report-only pickup per active issue.
+          </p>
+          <button id="github-autopilot-button" class="report-only-button autopilot-button" type="button">
+            Enable Autopilot
+          </button>
+          <ul id="github-inbox-list" class="stack-list"></ul>
+        </article>
+
         <article class="panel">
           <p class="panel-label">Workstreams</p>
           <ul id="workstream-list" class="stack-list"></ul>

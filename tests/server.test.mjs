@@ -1,14 +1,22 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { once } from "node:events";
 
 import {
   buildAgentJobItemsSql,
+  buildGithubIssueListArgs,
+  buildGithubQueuePlan,
+  buildGithubIssueSummary,
   buildGlobalRuntimeLogsSql,
   chooseLogsMessageColumn,
   contentType,
+  createServer,
   createSseFrame,
   buildThreadLogsSql,
   filterMeaningfulLogs,
+  inferGithubRepoSlugWithRunner,
+  listGithubIssuesWithRunner,
+  normalizeGithubRepoSlug,
   selectActivityLogs,
   stripWorkspacePrefix,
   SQLITE_JSON_MAX_BUFFER,
@@ -385,4 +393,328 @@ test("createSseFrame formats named events with retry and JSON data", () => {
     frame,
     'id: evt-1\nevent: status\nretry: 2500\ndata: {"ok":true,"repo":"rei-ops-room"}\n\n'
   );
+});
+
+test("normalizeGithubRepoSlug parses GitHub HTTPS and SSH remotes", () => {
+  assert.equal(
+    normalizeGithubRepoSlug("https://github.com/Wallens11/rei-ops-room.git"),
+    "Wallens11/rei-ops-room"
+  );
+  assert.equal(
+    normalizeGithubRepoSlug("git@github.com:Wallens11/rei-ops-room.git"),
+    "Wallens11/rei-ops-room"
+  );
+  assert.equal(normalizeGithubRepoSlug("https://example.com/not-github.git"), null);
+});
+
+test("buildGithubIssueListArgs includes labels and the expected JSON fields", () => {
+  const args = buildGithubIssueListArgs({
+    repo: "Wallens11/rei-ops-room",
+    state: "all",
+    labels: ["agent:rei", "status:in_progress"],
+    limit: 12
+  });
+
+  assert.deepEqual(args, [
+    "issue",
+    "list",
+    "--repo",
+    "Wallens11/rei-ops-room",
+    "--state",
+    "all",
+    "--limit",
+    "12",
+    "--label",
+    "agent:rei",
+    "--label",
+    "status:in_progress",
+    "--json",
+    "number,title,state,createdAt,updatedAt,url,labels,assignees,author"
+  ]);
+});
+
+test("inferGithubRepoSlugWithRunner reads the git remote and normalizes the repo slug", async () => {
+  const calls = [];
+  const repo = await inferGithubRepoSlugWithRunner(
+    async (file, args, options) => {
+      calls.push({ file, args, options });
+      return {
+        stdout: "git@github.com:Wallens11/rei-ops-room.git\n"
+      };
+    },
+    {
+      cwd: "/tmp/rei-ops-room"
+    }
+  );
+
+  assert.equal(repo, "Wallens11/rei-ops-room");
+  assert.deepEqual(calls, [
+    {
+      file: "git",
+      args: ["remote", "get-url", "origin"],
+      options: {
+        cwd: "/tmp/rei-ops-room"
+      }
+    }
+  ]);
+});
+
+test("listGithubIssuesWithRunner normalizes GitHub issues for the inbox view", async () => {
+  const calls = [];
+  const payload = await listGithubIssuesWithRunner(
+    async (file, args, options) => {
+      calls.push({ file, args, options });
+      return {
+        stdout: JSON.stringify([
+          {
+            number: 2,
+            title: "GitHub issue-driven assistant workflow for cross-device task handling",
+            state: "OPEN",
+            createdAt: "2026-03-30T10:00:00Z",
+            updatedAt: "2026-03-30T10:30:00Z",
+            url: "https://github.com/Wallens11/rei-ops-room/issues/2",
+            labels: [{ name: "agent:rei" }, { name: "status:todo" }],
+            assignees: [{ login: "Wallens11" }],
+            author: { login: "Wallens11" }
+          }
+        ])
+      };
+    },
+    {
+      repo: "Wallens11/rei-ops-room",
+      labels: ["agent:rei"],
+      limit: 20
+    }
+  );
+
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].file, "gh");
+  assert.equal(calls[0].options.maxBuffer, SQLITE_JSON_MAX_BUFFER);
+  assert.deepEqual(payload, {
+    repo: "Wallens11/rei-ops-room",
+    filters: {
+      state: "open",
+      labels: ["agent:rei"],
+      limit: 20
+    },
+    summary: {
+      total: 1,
+      todo: 1,
+      inProgress: 0,
+      blocked: 0
+    },
+    planner: {
+      status: "queued",
+      activeCount: 0,
+      blockedCount: 0,
+      activeIssue: null,
+      suggestedIssue: {
+        number: 2,
+        title: "GitHub issue-driven assistant workflow for cross-device task handling",
+        updatedAt: "2026-03-30T10:30:00Z",
+        status: "todo",
+        url: "https://github.com/Wallens11/rei-ops-room/issues/2"
+      }
+    },
+    issues: [
+      {
+        number: 2,
+        title: "GitHub issue-driven assistant workflow for cross-device task handling",
+        state: "OPEN",
+        createdAt: "2026-03-30T10:00:00Z",
+        updatedAt: "2026-03-30T10:30:00Z",
+        url: "https://github.com/Wallens11/rei-ops-room/issues/2",
+        labels: ["agent:rei", "status:todo"],
+        assignees: ["Wallens11"],
+        author: "Wallens11"
+      }
+    ]
+  });
+});
+
+test("buildGithubIssueSummary groups issue counts by status label", () => {
+  const summary = buildGithubIssueSummary([
+    {
+      labels: ["agent:rei", "status:todo"]
+    },
+    {
+      labels: ["agent:rei", "status:in_progress"]
+    },
+    {
+      labels: ["agent:rei", "status:blocked"]
+    }
+  ]);
+
+  assert.deepEqual(summary, {
+    total: 3,
+    todo: 1,
+    inProgress: 1,
+    blocked: 1
+  });
+});
+
+test("buildGithubQueuePlan identifies the active in-progress issue and the next queued issue", () => {
+  const planner = buildGithubQueuePlan([
+    {
+      number: 8,
+      title: "Report-only GitHub issue comment bridge",
+      updatedAt: "2026-03-31T03:15:00Z",
+      labels: ["agent:rei", "status:todo", "mode:report_only"]
+    },
+    {
+      number: 7,
+      title: "Issue queue planner and active in-progress recommendation",
+      updatedAt: "2026-03-31T04:10:00Z",
+      labels: ["agent:rei", "status:in_progress", "mode:report_only"]
+    }
+  ]);
+
+  assert.deepEqual(planner, {
+    status: "active",
+    activeCount: 1,
+    blockedCount: 0,
+    activeIssue: {
+      number: 7,
+      title: "Issue queue planner and active in-progress recommendation",
+      updatedAt: "2026-03-31T04:10:00Z",
+      status: "in_progress",
+      url: null
+    },
+    suggestedIssue: {
+      number: 8,
+      title: "Report-only GitHub issue comment bridge",
+      updatedAt: "2026-03-31T03:15:00Z",
+      status: "todo",
+      url: null
+    }
+  });
+});
+
+test("buildGithubQueuePlan prefers the newest todo issue over an older umbrella issue that only got a fresh comment", () => {
+  const planner = buildGithubQueuePlan([
+    {
+      number: 2,
+      title: "GitHub issue-driven assistant workflow for cross-device task handling",
+      createdAt: "2026-03-26T08:47:17Z",
+      updatedAt: "2026-03-31T02:18:01Z",
+      labels: ["agent:rei", "status:todo", "mode:report_only"]
+    },
+    {
+      number: 3,
+      title: "Report-only GitHub issue comment bridge",
+      createdAt: "2026-03-31T02:13:00Z",
+      updatedAt: "2026-03-31T02:13:00Z",
+      labels: ["agent:rei", "status:todo", "mode:report_only"]
+    }
+  ]);
+
+  assert.equal(planner.status, "queued");
+  assert.equal(planner.suggestedIssue?.number, 3);
+});
+
+test("createServer exposes /api/github/issues with inferred repo and default labels", async (t) => {
+  const listCalls = [];
+  const server = createServer({
+    getStatus: async () => ({ ok: true }),
+    inferGithubRepoSlug: async () => "Wallens11/rei-ops-room",
+    listGithubIssues: async (options) => {
+      listCalls.push(options);
+      return {
+        repo: options.repo,
+        filters: options,
+        summary: {
+          total: 1,
+          todo: 1,
+          inProgress: 0,
+          blocked: 0
+        },
+        planner: {
+          status: "queued",
+          activeCount: 0,
+          blockedCount: 0,
+          activeIssue: null,
+          suggestedIssue: {
+            number: 2,
+            title: "GitHub issue-driven assistant workflow for cross-device task handling",
+            updatedAt: "2026-03-31T04:10:00Z",
+            status: "todo",
+            url: "https://github.com/Wallens11/rei-ops-room/issues/2"
+          }
+        },
+        issues: [
+          {
+            number: 2,
+            title: "GitHub issue-driven assistant workflow for cross-device task handling",
+            labels: ["agent:rei", "status:todo"]
+          }
+        ]
+      };
+    }
+  });
+
+  server.listen(0);
+  await once(server, "listening");
+  t.after(() => server.close());
+
+  const { port } = server.address();
+  const response = await fetch(`http://127.0.0.1:${port}/api/github/issues`);
+  const body = await response.json();
+
+  assert.equal(response.status, 200);
+  assert.deepEqual(listCalls, [
+    {
+      repo: "Wallens11/rei-ops-room",
+      state: "open",
+      labels: ["agent:rei"],
+      limit: 20
+    }
+  ]);
+  assert.equal(body.repo, "Wallens11/rei-ops-room");
+  assert.equal(body.summary.todo, 1);
+  assert.equal(body.planner.status, "queued");
+});
+
+test("createServer exposes /api/github/report-only preview and post routes", async (t) => {
+  const server = createServer({
+    getStatus: async () => ({ ok: true }),
+    previewReportOnlyAction: async () => ({
+      repo: "Wallens11/rei-ops-room",
+      status: "ready",
+      canComment: true,
+      target: {
+        number: 5,
+        title: "Viewer report-only preview and manual trigger",
+        url: "https://github.com/Wallens11/rei-ops-room/issues/5"
+      },
+      draft: "<!-- rei:report-only issue=5 -->\nRei report-only pickup for #5."
+    }),
+    postReportOnlyAction: async () => ({
+      repo: "Wallens11/rei-ops-room",
+      status: "comment_posted",
+      canComment: false,
+      target: {
+        number: 5,
+        title: "Viewer report-only preview and manual trigger",
+        url: "https://github.com/Wallens11/rei-ops-room/issues/5"
+      },
+      draft: "<!-- rei:report-only issue=5 -->\nRei report-only pickup for #5."
+    })
+  });
+
+  server.listen(0);
+  await once(server, "listening");
+  t.after(() => server.close());
+
+  const { port } = server.address();
+  const previewResponse = await fetch(`http://127.0.0.1:${port}/api/github/report-only`);
+  const previewBody = await previewResponse.json();
+  const postResponse = await fetch(`http://127.0.0.1:${port}/api/github/report-only`, {
+    method: "POST"
+  });
+  const postBody = await postResponse.json();
+
+  assert.equal(previewResponse.status, 200);
+  assert.equal(previewBody.status, "ready");
+  assert.equal(postResponse.status, 200);
+  assert.equal(postBody.status, "comment_posted");
 });

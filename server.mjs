@@ -19,6 +19,10 @@ const port = Number(process.env.PORT || 4317);
 export const SQLITE_JSON_MAX_BUFFER = 8 * 1024 * 1024;
 export const STATUS_STREAM_RETRY_MS = 2500;
 const STATUS_STREAM_INTERVAL_MS = Number(process.env.STATUS_STREAM_INTERVAL_MS || 2000);
+const GITHUB_ISSUE_JSON_FIELDS =
+  "number,title,state,createdAt,updatedAt,url,labels,assignees,author";
+const DEFAULT_GITHUB_ISSUE_LIMIT = 20;
+const DEFAULT_GITHUB_ISSUE_LABELS = ["agent:rei"];
 const FOCUS_PROFILES = [
   {
     zone: "frontend",
@@ -334,6 +338,281 @@ export async function sqliteJsonWithRunner(runner, databasePath, sql) {
 
 async function sqliteJson(databasePath, sql) {
   return sqliteJsonWithRunner(execFileAsync, databasePath, sql);
+}
+
+function clampPositiveInteger(value, fallback) {
+  const parsed = Number.parseInt(value, 10);
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    return fallback;
+  }
+
+  return parsed;
+}
+
+function normalizeGithubIssueState(state = "open") {
+  const normalized = String(state || "open").trim().toLowerCase();
+  if (normalized === "closed" || normalized === "all") {
+    return normalized;
+  }
+
+  return "open";
+}
+
+function normalizeGithubLabels(labels, fallback = []) {
+  const values = Array.isArray(labels) ? labels : [labels];
+  const normalized = [];
+
+  for (const value of values) {
+    const label = String(value || "").trim();
+    if (!label || normalized.includes(label)) {
+      continue;
+    }
+
+    normalized.push(label);
+  }
+
+  return normalized.length > 0 ? normalized : [...fallback];
+}
+
+function parseGithubLabelsParam(searchParams) {
+  if (!searchParams.has("labels")) {
+    return [...DEFAULT_GITHUB_ISSUE_LABELS];
+  }
+
+  return normalizeGithubLabels(searchParams.get("labels")?.split(",") || [], []);
+}
+
+export function normalizeGithubRepoSlug(remoteUrl) {
+  const value = String(remoteUrl || "").trim();
+  if (!value) {
+    return null;
+  }
+
+  const match =
+    value.match(/^https:\/\/github\.com\/([^/]+\/[^/.]+?)(?:\.git)?$/i) ||
+    value.match(/^git@github\.com:([^/]+\/[^/.]+?)(?:\.git)?$/i) ||
+    value.match(/^ssh:\/\/git@github\.com\/([^/]+\/[^/.]+?)(?:\.git)?$/i);
+
+  return match ? match[1] : null;
+}
+
+export function buildGithubIssueListArgs({
+  repo,
+  state = "open",
+  labels = [],
+  limit = DEFAULT_GITHUB_ISSUE_LIMIT
+}) {
+  const normalizedState = normalizeGithubIssueState(state);
+  const normalizedLabels = normalizeGithubLabels(labels);
+  const normalizedLimit = clampPositiveInteger(limit, DEFAULT_GITHUB_ISSUE_LIMIT);
+  const args = [
+    "issue",
+    "list",
+    "--repo",
+    repo,
+    "--state",
+    normalizedState,
+    "--limit",
+    String(normalizedLimit)
+  ];
+
+  for (const label of normalizedLabels) {
+    args.push("--label", label);
+  }
+
+  args.push("--json", GITHUB_ISSUE_JSON_FIELDS);
+  return args;
+}
+
+function normalizeGithubIssue(issue = {}) {
+  return {
+    number: Number(issue.number || 0),
+    title: issue.title || "Untitled issue",
+    state: issue.state || "OPEN",
+    createdAt: issue.createdAt || null,
+    updatedAt: issue.updatedAt || null,
+    url: issue.url || null,
+    labels: (issue.labels || []).map((label) => label?.name).filter(Boolean),
+    assignees: (issue.assignees || []).map((assignee) => assignee?.login).filter(Boolean),
+    author: issue.author?.login || null
+  };
+}
+
+function detectGithubIssueStatus(labels = []) {
+  const values = new Set((labels || []).map((label) => String(label)));
+
+  if (values.has("status:in_progress")) {
+    return "in_progress";
+  }
+
+  if (values.has("status:todo")) {
+    return "todo";
+  }
+
+  if (values.has("status:blocked")) {
+    return "blocked";
+  }
+
+  return "open";
+}
+
+function byUpdatedAtDesc(left, right) {
+  return String(right?.updatedAt || "").localeCompare(String(left?.updatedAt || ""));
+}
+
+function bySuggestedTodoPriority(left, right) {
+  const creationOrder = String(right?.createdAt || right?.updatedAt || "").localeCompare(
+    String(left?.createdAt || left?.updatedAt || "")
+  );
+
+  if (creationOrder !== 0) {
+    return creationOrder;
+  }
+
+  return byUpdatedAtDesc(left, right);
+}
+
+function toPlannerIssue(issue, status) {
+  if (!issue) {
+    return null;
+  }
+
+  return {
+    number: issue.number,
+    title: issue.title,
+    updatedAt: issue.updatedAt || null,
+    status,
+    url: issue.url || null
+  };
+}
+
+export function buildGithubIssueSummary(issues = []) {
+  const summary = {
+    total: issues.length,
+    todo: 0,
+    inProgress: 0,
+    blocked: 0
+  };
+
+  for (const issue of issues) {
+    const labels = new Set((issue.labels || []).map((label) => String(label)));
+    if (labels.has("status:todo")) {
+      summary.todo += 1;
+    }
+    if (labels.has("status:in_progress")) {
+      summary.inProgress += 1;
+    }
+    if (labels.has("status:blocked")) {
+      summary.blocked += 1;
+    }
+  }
+
+  return summary;
+}
+
+export function buildGithubQueuePlan(issues = []) {
+  const activeIssues = issues
+    .filter((issue) => detectGithubIssueStatus(issue.labels) === "in_progress")
+    .sort(byUpdatedAtDesc);
+  const todoIssues = issues
+    .filter((issue) => detectGithubIssueStatus(issue.labels) === "todo")
+    .sort(bySuggestedTodoPriority);
+  const blockedIssues = issues
+    .filter((issue) => detectGithubIssueStatus(issue.labels) === "blocked")
+    .sort(byUpdatedAtDesc);
+
+  let status = "idle";
+  if (activeIssues.length > 0) {
+    status = "active";
+  } else if (todoIssues.length > 0) {
+    status = "queued";
+  } else if (blockedIssues.length > 0) {
+    status = "blocked";
+  }
+
+  return {
+    status,
+    activeCount: activeIssues.length,
+    blockedCount: blockedIssues.length,
+    activeIssue: toPlannerIssue(activeIssues[0], "in_progress"),
+    suggestedIssue: toPlannerIssue(todoIssues[0], "todo")
+  };
+}
+
+async function githubJsonWithRunner(runner, args, options = {}) {
+  const { stdout } = await runner("gh", args, {
+    ...options,
+    maxBuffer: SQLITE_JSON_MAX_BUFFER
+  });
+  const text = stdout.trim();
+  return text ? JSON.parse(text) : [];
+}
+
+export async function inferGithubRepoSlugWithRunner(
+  runner,
+  { cwd = __dirname, remoteName = "origin" } = {}
+) {
+  const { stdout } = await runner("git", ["remote", "get-url", remoteName], { cwd });
+  const repo = normalizeGithubRepoSlug(stdout);
+
+  if (!repo) {
+    const error = new Error(`Could not infer a GitHub repo slug from remote "${remoteName}"`);
+    error.statusCode = 500;
+    throw error;
+  }
+
+  return repo;
+}
+
+async function inferGithubRepoSlug(options) {
+  return inferGithubRepoSlugWithRunner(execFileAsync, options);
+}
+
+export async function listGithubIssuesWithRunner(
+  runner,
+  { repo, state = "open", labels = DEFAULT_GITHUB_ISSUE_LABELS, limit = DEFAULT_GITHUB_ISSUE_LIMIT } = {}
+) {
+  const filters = {
+    state: normalizeGithubIssueState(state),
+    labels: normalizeGithubLabels(labels, DEFAULT_GITHUB_ISSUE_LABELS),
+    limit: clampPositiveInteger(limit, DEFAULT_GITHUB_ISSUE_LIMIT)
+  };
+  const rawIssues = await githubJsonWithRunner(
+    runner,
+    buildGithubIssueListArgs({
+      repo,
+      ...filters
+    })
+  );
+  const issues = rawIssues.map((issue) => normalizeGithubIssue(issue));
+
+  return {
+    repo,
+    filters,
+    summary: buildGithubIssueSummary(issues),
+    planner: buildGithubQueuePlan(issues),
+    issues
+  };
+}
+
+async function listGithubIssues(options) {
+  return listGithubIssuesWithRunner(execFileAsync, options);
+}
+
+async function previewReportOnlyAction(options = {}) {
+  const module = await import("./tools/report-only-bridge.mjs");
+  return module.prepareReportOnlyAction({
+    cwd: __dirname,
+    ...options
+  });
+}
+
+async function postReportOnlyAction(options = {}) {
+  const module = await import("./tools/report-only-bridge.mjs");
+  return module.executeReportOnlyAction({
+    cwd: __dirname,
+    ...options
+  });
 }
 
 function toIso(seconds) {
@@ -978,45 +1257,107 @@ async function serveStatic(requestPath, response) {
   }
 }
 
-const server = http.createServer(async (request, response) => {
-  const url = new URL(request.url || "/", `http://${request.headers.host || "localhost"}`);
+function writeJson(response, statusCode, payload) {
+  response.writeHead(statusCode, { "Content-Type": "application/json; charset=utf-8" });
+  response.end(JSON.stringify(payload, null, 2));
+}
 
-  if (url.pathname === "/api/status") {
-    try {
-      const status = await getStatus();
-      response.writeHead(200, { "Content-Type": "application/json; charset=utf-8" });
-      response.end(JSON.stringify(status, null, 2));
-    } catch (error) {
-      response.writeHead(500, { "Content-Type": "application/json; charset=utf-8" });
-      response.end(
-        JSON.stringify(
-          {
-            error: "Failed to read Codex state",
-            detail: error instanceof Error ? error.message : String(error)
-          },
-          null,
-          2
-        )
-      );
+function buildGithubIssueFilters(url) {
+  return {
+    repo: url.searchParams.get("repo")?.trim() || null,
+    state: normalizeGithubIssueState(url.searchParams.get("state")),
+    labels: parseGithubLabelsParam(url.searchParams),
+    limit: clampPositiveInteger(url.searchParams.get("limit"), DEFAULT_GITHUB_ISSUE_LIMIT)
+  };
+}
+
+export function createServer({
+  getStatus: getStatusImpl = getStatus,
+  inferGithubRepoSlug: inferGithubRepoSlugImpl = inferGithubRepoSlug,
+  listGithubIssues: listGithubIssuesImpl = listGithubIssues,
+  previewReportOnlyAction: previewReportOnlyActionImpl = previewReportOnlyAction,
+  postReportOnlyAction: postReportOnlyActionImpl = postReportOnlyAction,
+  serveStatic: serveStaticImpl = serveStatic
+} = {}) {
+  return http.createServer(async (request, response) => {
+    const url = new URL(request.url || "/", `http://${request.headers.host || "localhost"}`);
+
+    if (url.pathname === "/api/status") {
+      try {
+        const status = await getStatusImpl();
+        writeJson(response, 200, status);
+      } catch (error) {
+        writeJson(response, 500, {
+          error: "Failed to read Codex state",
+          detail: error instanceof Error ? error.message : String(error)
+        });
+      }
+      return;
     }
-    return;
-  }
 
-  if (url.pathname === "/api/status/stream") {
-    request.socket.setTimeout(0);
-    request.socket.setNoDelay(true);
+    if (url.pathname === "/api/github/issues") {
+      try {
+        const filters = buildGithubIssueFilters(url);
+        const repo =
+          filters.repo ||
+          (await inferGithubRepoSlugImpl({
+            cwd: __dirname,
+            remoteName: "origin"
+          }));
+        const payload = await listGithubIssuesImpl({
+          ...filters,
+          repo
+        });
 
-    request.on("close", () => {
-      statusStreamClients.delete(response);
-      cleanupStatusStreamTimer();
-    });
+        writeJson(response, 200, payload);
+      } catch (error) {
+        writeJson(response, error?.statusCode || 500, {
+          error: "Failed to read GitHub issues",
+          detail: error instanceof Error ? error.message : String(error)
+        });
+      }
+      return;
+    }
 
-    await attachStatusStream(response);
-    return;
-  }
+    if (url.pathname === "/api/github/report-only") {
+      try {
+        const payload =
+          request.method === "POST"
+            ? await postReportOnlyActionImpl({
+                repo: url.searchParams.get("repo")?.trim() || null
+              })
+            : await previewReportOnlyActionImpl({
+                repo: url.searchParams.get("repo")?.trim() || null
+              });
 
-  await serveStatic(url.pathname, response);
-});
+        writeJson(response, 200, payload);
+      } catch (error) {
+        writeJson(response, error?.statusCode || 500, {
+          error: "Failed to run report-only bridge",
+          detail: error instanceof Error ? error.message : String(error)
+        });
+      }
+      return;
+    }
+
+    if (url.pathname === "/api/status/stream") {
+      request.socket.setTimeout(0);
+      request.socket.setNoDelay(true);
+
+      request.on("close", () => {
+        statusStreamClients.delete(response);
+        cleanupStatusStreamTimer();
+      });
+
+      await attachStatusStream(response);
+      return;
+    }
+
+    await serveStaticImpl(url.pathname, response);
+  });
+}
+
+const server = createServer();
 
 export function startServer(listenPort = port) {
   server.listen(listenPort, () => {
