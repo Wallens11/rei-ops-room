@@ -615,6 +615,18 @@ async function postReportOnlyAction(options = {}) {
   });
 }
 
+async function getReportOnlyServiceStatus() {
+  const module = await import("./tools/report-only-worker-cli.mjs");
+  const runtime = await module.inspectWorkerRuntime();
+
+  return {
+    running: runtime.running,
+    pid: runtime.pid,
+    source: runtime.source,
+    detail: module.buildWorkerStatusLine(runtime)
+  };
+}
+
 function toIso(seconds) {
   return seconds ? new Date(seconds * 1000).toISOString() : null;
 }
@@ -1277,6 +1289,7 @@ export function createServer({
   listGithubIssues: listGithubIssuesImpl = listGithubIssues,
   previewReportOnlyAction: previewReportOnlyActionImpl = previewReportOnlyAction,
   postReportOnlyAction: postReportOnlyActionImpl = postReportOnlyAction,
+  getReportOnlyServiceStatus: getReportOnlyServiceStatusImpl = getReportOnlyServiceStatus,
   serveStatic: serveStaticImpl = serveStatic
 } = {}) {
   return http.createServer(async (request, response) => {
@@ -1313,6 +1326,19 @@ export function createServer({
       } catch (error) {
         writeJson(response, error?.statusCode || 500, {
           error: "Failed to read GitHub issues",
+          detail: error instanceof Error ? error.message : String(error)
+        });
+      }
+      return;
+    }
+
+    if (url.pathname === "/api/github/report-only/service") {
+      try {
+        const payload = await getReportOnlyServiceStatusImpl();
+        writeJson(response, 200, payload);
+      } catch (error) {
+        writeJson(response, error?.statusCode || 500, {
+          error: "Failed to read report-only service status",
           detail: error instanceof Error ? error.message : String(error)
         });
       }

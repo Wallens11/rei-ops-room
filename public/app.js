@@ -43,6 +43,10 @@ import {
   shouldAutoTriggerReportOnly
 } from "./report-only-autopilot.js";
 import {
+  buildReportOnlyServiceViewModel,
+  createEmptyReportOnlyServiceState
+} from "./report-only-service-view.js";
+import {
   buildSceneHotspots,
   describeSceneSelection,
   findSceneHotspotAt
@@ -146,6 +150,9 @@ const elements = {
   githubAutopilotDetail: document.getElementById("github-autopilot-detail"),
   githubAutopilotNote: document.getElementById("github-autopilot-note"),
   githubAutopilotButton: document.getElementById("github-autopilot-button"),
+  githubServiceTitle: document.getElementById("github-service-title"),
+  githubServiceDetail: document.getElementById("github-service-detail"),
+  githubServiceNote: document.getElementById("github-service-note"),
   githubInboxList: document.getElementById("github-inbox-list"),
   sceneDetailTitle: document.getElementById("scene-detail-title"),
   sceneDetailBody: document.getElementById("scene-detail-body"),
@@ -190,6 +197,7 @@ const renderState = {
   },
   githubInbox: createEmptyGithubInboxState(),
   reportOnly: createEmptyReportOnlyState(),
+  reportOnlyService: createEmptyReportOnlyServiceState(),
   autopilot: loadReportOnlyAutopilotState(),
   reducedMotion: false,
   editorActive: false,
@@ -1033,6 +1041,18 @@ function renderReportOnlyAutopilot() {
   elements.githubAutopilotButton.dataset.tone = model.tone;
 }
 
+function renderReportOnlyService(state) {
+  if (!elements.githubServiceTitle) {
+    return;
+  }
+
+  const model = buildReportOnlyServiceViewModel(state);
+  elements.githubServiceTitle.textContent = model.title;
+  elements.githubServiceDetail.textContent = model.detail;
+  elements.githubServiceNote.textContent = model.note;
+  elements.githubServiceTitle.dataset.tone = model.tone;
+}
+
 function renderWorkstreams(workstreams) {
   elements.workstreamList.innerHTML = "";
 
@@ -1327,6 +1347,43 @@ async function refreshReportOnlyPreview() {
   void maybeRunReportOnlyAutopilot();
 }
 
+async function refreshReportOnlyService() {
+  if (typeof fetch !== "function") {
+    renderState.reportOnlyService = {
+      status: "idle",
+      running: false,
+      pid: null,
+      source: "none",
+      detail: "fetch is not available"
+    };
+    renderReportOnlyService(renderState.reportOnlyService);
+    return;
+  }
+
+  try {
+    const response = await fetch("/api/github/report-only/service", {
+      cache: "no-store"
+    });
+
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}`);
+    }
+
+    renderState.reportOnlyService = await response.json();
+    renderState.reportOnlyService.status = renderState.reportOnlyService.running ? "running" : "idle";
+  } catch (error) {
+    renderState.reportOnlyService = {
+      status: "idle",
+      running: false,
+      pid: null,
+      source: "none",
+      detail: error instanceof Error ? error.message : String(error)
+    };
+  }
+
+  renderReportOnlyService(renderState.reportOnlyService);
+}
+
 async function triggerReportOnlyComment({ source = "manual" } = {}) {
   elements.githubReportButton.disabled = true;
   elements.githubReportButton.textContent = "Posting...";
@@ -1434,9 +1491,11 @@ function startGithubInboxPolling() {
 
   void refreshGithubInbox();
   void refreshReportOnlyPreview();
+  void refreshReportOnlyService();
   githubInboxPollHandle = setInterval(() => {
     void refreshGithubInbox();
     void refreshReportOnlyPreview();
+    void refreshReportOnlyService();
   }, GITHUB_INBOX_POLL_MS);
 }
 
@@ -2338,6 +2397,7 @@ renderState.hotspots = buildInteractiveHotspots();
 renderGithubInbox(renderState.githubInbox);
 renderReportOnly(renderState.reportOnly);
 renderReportOnlyAutopilot();
+renderReportOnlyService(renderState.reportOnlyService);
 drawScene();
 setInterval(animate, 160);
 

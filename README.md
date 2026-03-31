@@ -62,6 +62,7 @@ Panel inbox sekarang juga punya planner konservatif:
 - `Suggested Next` fallback ke issue `status:todo` terbaru kalau belum ada yang aktif
 - `Report-only Bridge` preview menampilkan issue aktif yang siap dikomentari
 - `Autopilot` bisa diaktifkan manual dari viewer untuk auto-post sekali per issue aktif
+- `Service` menampilkan apakah background report-only worker sedang hidup di device ini
 
 Perilaku default:
 

@@ -754,6 +754,11 @@ p {
   font-size: 16px;
 }
 
+#github-service-title {
+  margin: 10px 0 4px;
+  font-size: 16px;
+}
+
 .report-only-button {
   min-height: 38px;
   margin-top: 10px;

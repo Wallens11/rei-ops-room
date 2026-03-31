@@ -145,7 +145,7 @@ async function readProcessCommand(pid) {
   }
 }
 
-async function inspectWorkerRuntime() {
+export async function inspectWorkerRuntime() {
   const pidFilePid = await readPidFile();
   const pidFileAlive = isProcessAlive(pidFilePid);
   const pidFileCommand = await readProcessCommand(pidFilePid);
