@@ -59,3 +59,22 @@ test("buildReportOnlyServiceViewModel offers a start button when the service is 
   assert.equal(model.buttonDisabled, false);
   assert.equal(model.action, "start");
 });
+
+test("buildReportOnlyServiceViewModel surfaces a failed start action clearly", () => {
+  const model = buildReportOnlyServiceViewModel({
+    status: "error",
+    running: false,
+    pid: null,
+    source: "control_error",
+    action: "start",
+    detail: "report-only worker failed to start"
+  });
+
+  assert.equal(model.title, "Service Action Failed");
+  assert.equal(model.detail, "report-only worker failed to start");
+  assert.match(model.note, /start/i);
+  assert.equal(model.tone, "error");
+  assert.equal(model.buttonLabel, "Retry Start");
+  assert.equal(model.buttonDisabled, false);
+  assert.equal(model.action, "start");
+});

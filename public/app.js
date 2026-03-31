@@ -1058,6 +1058,25 @@ function renderReportOnlyService(state) {
   elements.githubServiceButton.dataset.action = model.action;
 }
 
+async function readJsonResponseOrThrow(response) {
+  let payload = null;
+
+  try {
+    payload = await response.json();
+  } catch {
+    payload = null;
+  }
+
+  if (response.ok) {
+    return payload;
+  }
+
+  const error = new Error(payload?.detail || payload?.error || `HTTP ${response.status}`);
+  error.status = response.status;
+  error.payload = payload;
+  throw error;
+}
+
 function renderWorkstreams(workstreams) {
   elements.workstreamList.innerHTML = "";
 
@@ -1355,10 +1374,10 @@ async function refreshReportOnlyPreview() {
 async function refreshReportOnlyService() {
   if (typeof fetch !== "function") {
     renderState.reportOnlyService = {
-      status: "idle",
+      status: "error",
       running: false,
       pid: null,
-      source: "none",
+      source: "status_error",
       detail: "fetch is not available"
     };
     renderReportOnlyService(renderState.reportOnlyService);
@@ -1370,19 +1389,17 @@ async function refreshReportOnlyService() {
       cache: "no-store"
     });
 
-    if (!response.ok) {
-      throw new Error(`HTTP ${response.status}`);
-    }
-
-    renderState.reportOnlyService = await response.json();
+    renderState.reportOnlyService = await readJsonResponseOrThrow(response);
     renderState.reportOnlyService.status = renderState.reportOnlyService.running ? "running" : "idle";
   } catch (error) {
+    const payload = error?.payload || null;
     renderState.reportOnlyService = {
-      status: "idle",
+      status: "error",
       running: false,
       pid: null,
-      source: "none",
-      detail: error instanceof Error ? error.message : String(error)
+      source: payload?.source || "status_error",
+      action: payload?.action || null,
+      detail: payload?.detail || (error instanceof Error ? error.message : String(error))
     };
   }
 
@@ -1411,19 +1428,17 @@ async function controlReportOnlyService(action) {
       })
     });
 
-    if (!response.ok) {
-      throw new Error(`HTTP ${response.status}`);
-    }
-
-    renderState.reportOnlyService = await response.json();
+    renderState.reportOnlyService = await readJsonResponseOrThrow(response);
     renderState.reportOnlyService.status = renderState.reportOnlyService.running ? "running" : "idle";
   } catch (error) {
+    const payload = error?.payload || null;
     renderState.reportOnlyService = {
-      status: "idle",
+      status: "error",
       running: false,
       pid: null,
-      source: "none",
-      detail: error instanceof Error ? error.message : String(error)
+      source: payload?.source || "control_error",
+      action: payload?.action || action,
+      detail: payload?.detail || (error instanceof Error ? error.message : String(error))
     };
   }
 

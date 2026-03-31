@@ -1353,10 +1353,12 @@ export function createServer({
     }
 
     if (url.pathname === "/api/github/report-only/service") {
-      try {
-        if (request.method === "POST") {
+      if (request.method === "POST") {
+        let action = "";
+
+        try {
           const body = await readJsonRequestBody(request);
-          const action = String(body?.action || "").trim();
+          action = String(body?.action || "").trim();
 
           if (action !== "start" && action !== "stop") {
             writeJson(response, 400, {
@@ -1370,14 +1372,30 @@ export function createServer({
             action
           });
           writeJson(response, 200, payload);
-          return;
+        } catch (error) {
+          writeJson(response, error?.statusCode || 500, {
+            error: "Failed to control report-only service",
+            status: "error",
+            running: false,
+            pid: null,
+            source: "control_error",
+            action: action || null,
+            detail: error instanceof Error ? error.message : String(error)
+          });
         }
+        return;
+      }
 
+      try {
         const payload = await getReportOnlyServiceStatusImpl();
         writeJson(response, 200, payload);
       } catch (error) {
         writeJson(response, error?.statusCode || 500, {
           error: "Failed to read report-only service status",
+          status: "error",
+          running: false,
+          pid: null,
+          source: "status_error",
           detail: error instanceof Error ? error.message : String(error)
         });
       }

@@ -795,3 +795,37 @@ test("createServer can start and stop the local report-only service", async (t) 
   assert.equal(stopResponse.status, 200);
   assert.equal(stopBody.running, false);
 });
+
+test("createServer reports report-only service control failures with action context", async (t) => {
+  const server = createServer({
+    getStatus: async () => ({ ok: true }),
+    controlReportOnlyService: async ({ action }) => {
+      const error = new Error(`report-only worker refused to ${action}`);
+      error.statusCode = 503;
+      throw error;
+    }
+  });
+
+  server.listen(0);
+  await once(server, "listening");
+  t.after(() => server.close());
+
+  const { port } = server.address();
+  const response = await fetch(`http://127.0.0.1:${port}/api/github/report-only/service`, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json"
+    },
+    body: JSON.stringify({
+      action: "start"
+    })
+  });
+  const body = await response.json();
+
+  assert.equal(response.status, 503);
+  assert.equal(body.error, "Failed to control report-only service");
+  assert.equal(body.status, "error");
+  assert.equal(body.source, "control_error");
+  assert.equal(body.action, "start");
+  assert.equal(body.detail, "report-only worker refused to start");
+});

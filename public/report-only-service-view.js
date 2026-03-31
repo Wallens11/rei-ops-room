@@ -24,6 +24,23 @@ export function buildReportOnlyServiceViewModel(
     };
   }
 
+  if (state.status === "error" || state.source === "control_error" || state.source === "status_error") {
+    const actionLabel = state.action === "stop" ? "Stop" : "Start";
+    const isControlError = state.source === "control_error" && (state.action === "start" || state.action === "stop");
+
+    return {
+      title: isControlError ? "Service Action Failed" : "Service Unavailable",
+      detail: state.detail || "The local report-only service is unavailable.",
+      note: isControlError
+        ? `The last ${String(state.action)} request failed on this device. No hidden retry was attempted.`
+        : "The viewer could not read the local report-only service status.",
+      tone: "error",
+      buttonLabel: isControlError ? `Retry ${actionLabel}` : "Checking...",
+      buttonDisabled: !isControlError,
+      action: isControlError ? state.action : "status"
+    };
+  }
+
   if (state.running) {
     return {
       title: "Service Running",
