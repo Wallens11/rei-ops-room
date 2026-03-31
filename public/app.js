@@ -153,6 +153,7 @@ const elements = {
   githubServiceTitle: document.getElementById("github-service-title"),
   githubServiceDetail: document.getElementById("github-service-detail"),
   githubServiceNote: document.getElementById("github-service-note"),
+  githubServiceButton: document.getElementById("github-service-button"),
   githubInboxList: document.getElementById("github-inbox-list"),
   sceneDetailTitle: document.getElementById("scene-detail-title"),
   sceneDetailBody: document.getElementById("scene-detail-body"),
@@ -1042,7 +1043,7 @@ function renderReportOnlyAutopilot() {
 }
 
 function renderReportOnlyService(state) {
-  if (!elements.githubServiceTitle) {
+  if (!elements.githubServiceTitle || !elements.githubServiceButton) {
     return;
   }
 
@@ -1051,6 +1052,10 @@ function renderReportOnlyService(state) {
   elements.githubServiceDetail.textContent = model.detail;
   elements.githubServiceNote.textContent = model.note;
   elements.githubServiceTitle.dataset.tone = model.tone;
+  elements.githubServiceButton.textContent = model.buttonLabel;
+  elements.githubServiceButton.disabled = model.buttonDisabled;
+  elements.githubServiceButton.dataset.tone = model.tone;
+  elements.githubServiceButton.dataset.action = model.action;
 }
 
 function renderWorkstreams(workstreams) {
@@ -1363,6 +1368,47 @@ async function refreshReportOnlyService() {
   try {
     const response = await fetch("/api/github/report-only/service", {
       cache: "no-store"
+    });
+
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}`);
+    }
+
+    renderState.reportOnlyService = await response.json();
+    renderState.reportOnlyService.status = renderState.reportOnlyService.running ? "running" : "idle";
+  } catch (error) {
+    renderState.reportOnlyService = {
+      status: "idle",
+      running: false,
+      pid: null,
+      source: "none",
+      detail: error instanceof Error ? error.message : String(error)
+    };
+  }
+
+  renderReportOnlyService(renderState.reportOnlyService);
+}
+
+async function controlReportOnlyService(action) {
+  if (!action || (action !== "start" && action !== "stop")) {
+    return;
+  }
+
+  renderState.reportOnlyService = {
+    ...renderState.reportOnlyService,
+    pendingAction: action
+  };
+  renderReportOnlyService(renderState.reportOnlyService);
+
+  try {
+    const response = await fetch("/api/github/report-only/service", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json"
+      },
+      body: JSON.stringify({
+        action
+      })
     });
 
     if (!response.ok) {
@@ -2421,6 +2467,9 @@ elements.githubReportButton?.addEventListener("click", () => {
 });
 elements.githubAutopilotButton?.addEventListener("click", () => {
   toggleReportOnlyAutopilot();
+});
+elements.githubServiceButton?.addEventListener("click", () => {
+  void controlReportOnlyService(elements.githubServiceButton.dataset.action || "");
 });
 window.addEventListener("beforeunload", () => {
   statusTransport.stop();

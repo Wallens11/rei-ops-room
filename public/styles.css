@@ -797,6 +797,10 @@ p {
   margin-bottom: 14px;
 }
 
+.service-button {
+  margin-bottom: 14px;
+}
+
 .github-issue-link,
 .github-issue-title {
   color: var(--ink);

@@ -743,3 +743,55 @@ test("createServer exposes /api/github/report-only/service with local worker sta
   assert.equal(body.pid, 55297);
   assert.equal(body.detail, "report-only worker running (pid 55297)");
 });
+
+test("createServer can start and stop the local report-only service", async (t) => {
+  const actions = [];
+  const server = createServer({
+    getStatus: async () => ({ ok: true }),
+    controlReportOnlyService: async ({ action }) => {
+      actions.push(action);
+      return {
+        running: action === "start",
+        pid: action === "start" ? 60001 : null,
+        source: action === "start" ? "pid" : "none",
+        detail:
+          action === "start"
+            ? "report-only worker running (pid 60001)"
+            : "report-only worker is not running"
+      };
+    }
+  });
+
+  server.listen(0);
+  await once(server, "listening");
+  t.after(() => server.close());
+
+  const { port } = server.address();
+  const startResponse = await fetch(`http://127.0.0.1:${port}/api/github/report-only/service`, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json"
+    },
+    body: JSON.stringify({
+      action: "start"
+    })
+  });
+  const startBody = await startResponse.json();
+
+  const stopResponse = await fetch(`http://127.0.0.1:${port}/api/github/report-only/service`, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json"
+    },
+    body: JSON.stringify({
+      action: "stop"
+    })
+  });
+  const stopBody = await stopResponse.json();
+
+  assert.deepEqual(actions, ["start", "stop"]);
+  assert.equal(startResponse.status, 200);
+  assert.equal(startBody.running, true);
+  assert.equal(stopResponse.status, 200);
+  assert.equal(stopBody.running, false);
+});

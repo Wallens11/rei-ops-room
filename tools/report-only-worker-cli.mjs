@@ -109,6 +109,10 @@ export function buildWorkerStatusLine(runtime) {
   return "report-only worker is not running";
 }
 
+function defaultLogger(message) {
+  console.log(message);
+}
+
 async function readPidFile() {
   try {
     const pidText = await fs.readFile(pidFile, "utf8");
@@ -218,23 +222,28 @@ async function startDetachedWorker({ repo = null, intervalMs = defaultIntervalMs
   return child.pid;
 }
 
-async function startWorker(options) {
+export async function startWorker(options = {}) {
+  const {
+    logger = defaultLogger,
+    ...workerOptions
+  } = options;
   const runtime = await inspectWorkerRuntime();
   const action = inferWorkerAction({
     runtime
   });
 
   if (action.type === "reuse") {
-    console.log(`report-only worker already running (pid ${action.pid})`);
-    return;
+    logger(`report-only worker already running (pid ${action.pid})`);
+    return runtime;
   }
 
   await ensureCleanPidFile(runtime);
-  const pid = await startDetachedWorker(options);
-  console.log(`report-only worker started (pid ${pid})`);
+  const pid = await startDetachedWorker(workerOptions);
+  logger(`report-only worker started (pid ${pid})`);
+  return inspectWorkerRuntime();
 }
 
-async function stopWorker() {
+export async function stopWorker({ logger = defaultLogger } = {}) {
   const runtime = await inspectWorkerRuntime();
 
   if (runtime.running && runtime.pid) {
@@ -247,17 +256,56 @@ async function stopWorker() {
     }
 
     await cleanupPidFile();
-    console.log("report-only worker stopped");
-    return;
+    logger("report-only worker stopped");
+    return inspectWorkerRuntime();
   }
 
   await ensureCleanPidFile(runtime);
-  console.log(buildWorkerStatusLine(runtime));
+  logger(buildWorkerStatusLine(runtime));
+  return inspectWorkerRuntime();
 }
 
-async function printStatus() {
+export async function printStatus({ logger = defaultLogger } = {}) {
   const runtime = await inspectWorkerRuntime();
-  console.log(buildWorkerStatusLine(runtime));
+  logger(buildWorkerStatusLine(runtime));
+  return runtime;
+}
+
+export async function controlReportOnlyService({
+  action,
+  repo = null,
+  intervalMs = defaultIntervalMs,
+  logger = () => {}
+} = {}) {
+  if (action === "start") {
+    const runtime = await startWorker({
+      repo,
+      intervalMs,
+      logger
+    });
+
+    return {
+      ...runtime,
+      detail: buildWorkerStatusLine(runtime)
+    };
+  }
+
+  if (action === "stop") {
+    const runtime = await stopWorker({
+      logger
+    });
+
+    return {
+      ...runtime,
+      detail: buildWorkerStatusLine(runtime)
+    };
+  }
+
+  const runtime = await inspectWorkerRuntime();
+  return {
+    ...runtime,
+    detail: buildWorkerStatusLine(runtime)
+  };
 }
 
 async function main() {

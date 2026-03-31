@@ -627,6 +627,25 @@ async function getReportOnlyServiceStatus() {
   };
 }
 
+async function controlReportOnlyService({ action }) {
+  const module = await import("./tools/report-only-worker-cli.mjs");
+  return module.controlReportOnlyService({
+    action,
+    logger: () => {}
+  });
+}
+
+async function readJsonRequestBody(request) {
+  const chunks = [];
+
+  for await (const chunk of request) {
+    chunks.push(chunk);
+  }
+
+  const text = Buffer.concat(chunks).toString("utf8").trim();
+  return text ? JSON.parse(text) : {};
+}
+
 function toIso(seconds) {
   return seconds ? new Date(seconds * 1000).toISOString() : null;
 }
@@ -1290,6 +1309,7 @@ export function createServer({
   previewReportOnlyAction: previewReportOnlyActionImpl = previewReportOnlyAction,
   postReportOnlyAction: postReportOnlyActionImpl = postReportOnlyAction,
   getReportOnlyServiceStatus: getReportOnlyServiceStatusImpl = getReportOnlyServiceStatus,
+  controlReportOnlyService: controlReportOnlyServiceImpl = controlReportOnlyService,
   serveStatic: serveStaticImpl = serveStatic
 } = {}) {
   return http.createServer(async (request, response) => {
@@ -1334,6 +1354,25 @@ export function createServer({
 
     if (url.pathname === "/api/github/report-only/service") {
       try {
+        if (request.method === "POST") {
+          const body = await readJsonRequestBody(request);
+          const action = String(body?.action || "").trim();
+
+          if (action !== "start" && action !== "stop") {
+            writeJson(response, 400, {
+              error: "Invalid report-only service action",
+              detail: "Expected `start` or `stop`."
+            });
+            return;
+          }
+
+          const payload = await controlReportOnlyServiceImpl({
+            action
+          });
+          writeJson(response, 200, payload);
+          return;
+        }
+
         const payload = await getReportOnlyServiceStatusImpl();
         writeJson(response, 200, payload);
       } catch (error) {
