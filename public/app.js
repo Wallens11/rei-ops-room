@@ -34,6 +34,12 @@ import {
   normalizeGithubInboxPayload
 } from "./github-inbox.js";
 import {
+  buildDailyHandoffViewModel,
+  createDailyHandoffErrorState,
+  createEmptyDailyHandoffState,
+  normalizeDailyHandoffPayload
+} from "./handoff-view.js";
+import {
   buildReportOnlyViewModel,
   createEmptyReportOnlyState
 } from "./report-only-view.js";
@@ -136,6 +142,10 @@ const elements = {
   repoContextName: document.getElementById("repo-context-name"),
   repoContextCwd: document.getElementById("repo-context-cwd"),
   repoContextTitle: document.getElementById("repo-context-title"),
+  handoffTitle: document.getElementById("handoff-title"),
+  handoffChip: document.getElementById("handoff-chip"),
+  handoffMeta: document.getElementById("handoff-meta"),
+  handoffList: document.getElementById("handoff-list"),
   githubInboxTitle: document.getElementById("github-inbox-title"),
   githubInboxChip: document.getElementById("github-inbox-chip"),
   githubInboxMeta: document.getElementById("github-inbox-meta"),
@@ -196,6 +206,7 @@ const renderState = {
     bubble: null,
     badge: null
   },
+  dailyHandoff: createEmptyDailyHandoffState(),
   githubInbox: createEmptyGithubInboxState(),
   reportOnly: createEmptyReportOnlyState(),
   reportOnlyService: createEmptyReportOnlyServiceState(),
@@ -600,6 +611,22 @@ function githubIssueToneLabel(tone) {
   }
 
   return "open";
+}
+
+function handoffToneLabel(tone) {
+  if (tone === "error") {
+    return "offline";
+  }
+
+  if (tone === "loading") {
+    return "syncing";
+  }
+
+  if (tone === "empty") {
+    return "empty";
+  }
+
+  return "ready";
 }
 
 function formatConfidence(value) {
@@ -1010,6 +1037,47 @@ function renderGithubInbox(inbox) {
   });
 }
 
+function renderDailyHandoff(state) {
+  if (!elements.handoffList) {
+    return;
+  }
+
+  const model = buildDailyHandoffViewModel(state);
+  const primaryTone = model.rows[0]?.tone || state.status || "loading";
+  elements.handoffTitle.textContent = truncate(model.title, 56);
+  elements.handoffMeta.textContent = model.meta;
+  elements.handoffChip.textContent = handoffToneLabel(primaryTone);
+  elements.handoffList.innerHTML = "";
+
+  model.rows.forEach((row) => {
+    const item = document.createElement("li");
+    item.className = `github-issue-item ${row.tone}`;
+
+    const head = document.createElement("div");
+    head.className = "item-head";
+
+    const title = document.createElement("strong");
+    title.className = "github-issue-title";
+    title.textContent = row.title;
+
+    const chip = document.createElement("span");
+    chip.className = "item-chip";
+    chip.textContent = handoffToneLabel(row.tone);
+
+    head.append(title, chip);
+
+    const detail = document.createElement("p");
+    detail.textContent = row.detail;
+
+    const note = document.createElement("p");
+    note.className = "dim mono";
+    note.textContent = row.note;
+
+    item.append(head, detail, note);
+    elements.handoffList.appendChild(item);
+  });
+}
+
 function renderReportOnly(state) {
   if (!elements.githubReportButton) {
     return;
@@ -1334,6 +1402,34 @@ async function refreshGithubInbox() {
   renderGithubInbox(renderState.githubInbox);
 }
 
+async function refreshDailyHandoff() {
+  if (typeof fetch !== "function") {
+    renderState.dailyHandoff = createDailyHandoffErrorState(
+      renderState.dailyHandoff,
+      new Error("fetch is not available")
+    );
+    renderDailyHandoff(renderState.dailyHandoff);
+    return;
+  }
+
+  try {
+    const response = await fetch("/api/handoff", {
+      cache: "no-store"
+    });
+
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}`);
+    }
+
+    const payload = await response.json();
+    renderState.dailyHandoff = normalizeDailyHandoffPayload(payload);
+  } catch (error) {
+    renderState.dailyHandoff = createDailyHandoffErrorState(renderState.dailyHandoff, error);
+  }
+
+  renderDailyHandoff(renderState.dailyHandoff);
+}
+
 async function refreshReportOnlyPreview() {
   if (typeof fetch !== "function") {
     renderState.reportOnly = {
@@ -1542,6 +1638,11 @@ function startGithubInboxPolling() {
     return;
   }
 
+  if (!renderState.dailyHandoff.sections.length) {
+    renderState.dailyHandoff = createEmptyDailyHandoffState();
+    renderDailyHandoff(renderState.dailyHandoff);
+  }
+
   if (!renderState.githubInbox.issues.length) {
     renderState.githubInbox = {
       ...renderState.githubInbox,
@@ -1550,10 +1651,12 @@ function startGithubInboxPolling() {
     renderGithubInbox(renderState.githubInbox);
   }
 
+  void refreshDailyHandoff();
   void refreshGithubInbox();
   void refreshReportOnlyPreview();
   void refreshReportOnlyService();
   githubInboxPollHandle = setInterval(() => {
+    void refreshDailyHandoff();
     void refreshGithubInbox();
     void refreshReportOnlyPreview();
     void refreshReportOnlyService();
@@ -2455,6 +2558,7 @@ syncDerivedLayout();
 initMode();
 renderEditorControls();
 renderState.hotspots = buildInteractiveHotspots();
+renderDailyHandoff(renderState.dailyHandoff);
 renderGithubInbox(renderState.githubInbox);
 renderReportOnly(renderState.reportOnly);
 renderReportOnlyAutopilot();

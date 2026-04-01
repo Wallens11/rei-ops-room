@@ -15,6 +15,12 @@ const workspaceRoot = process.env.WORKSPACE_ROOT || path.resolve(__dirname, ".."
 const codexHome = process.env.CODEX_HOME || path.join(os.homedir(), ".codex");
 const stateDb = process.env.CODEX_STATE_DB || path.join(codexHome, "state_5.sqlite");
 const logsDb = process.env.CODEX_LOGS_DB || path.join(codexHome, "logs_1.sqlite");
+const dailyDeviceHandoffPaths = process.env.DAILY_DEVICE_HANDOFF_PATH
+  ? [process.env.DAILY_DEVICE_HANDOFF_PATH]
+  : [
+      path.join(workspaceRoot, ".work", "raffi-agent-skill", "references", "daily-device-handoff.md"),
+      path.join(codexHome, "skills", "raffi-agent-skill", "references", "daily-device-handoff.md")
+    ];
 const port = Number(process.env.PORT || 4317);
 export const SQLITE_JSON_MAX_BUFFER = 8 * 1024 * 1024;
 export const STATUS_STREAM_RETRY_MS = 2500;
@@ -1302,8 +1308,106 @@ function buildGithubIssueFilters(url) {
   };
 }
 
+export function parseDailyDeviceHandoffMarkdown(markdown = "") {
+  const dayEntries = [];
+  let currentDay = null;
+  let currentSection = null;
+
+  for (const rawLine of String(markdown).split(/\r?\n/)) {
+    const line = rawLine.trimEnd();
+    const dayMatch = line.match(/^##\s+(\d{4}-\d{2}-\d{2})\s*$/);
+
+    if (dayMatch) {
+      currentDay = {
+        date: dayMatch[1],
+        sections: []
+      };
+      dayEntries.push(currentDay);
+      currentSection = null;
+      continue;
+    }
+
+    if (!currentDay) {
+      continue;
+    }
+
+    const sectionMatch = line.match(/^###\s+(.+?)\s*$/);
+    if (sectionMatch) {
+      currentSection = {
+        title: sectionMatch[1].trim(),
+        items: []
+      };
+      currentDay.sections.push(currentSection);
+      continue;
+    }
+
+    if (!currentSection) {
+      continue;
+    }
+
+    const bulletMatch = line.match(/^\s*-\s+(.+?)\s*$/);
+    if (bulletMatch) {
+      currentSection.items.push(bulletMatch[1].trim());
+      continue;
+    }
+
+    if (line.trim() && currentSection.items.length > 0) {
+      const lastIndex = currentSection.items.length - 1;
+      currentSection.items[lastIndex] = `${currentSection.items[lastIndex]} ${line.trim()}`;
+    }
+  }
+
+  const latestDay = [...dayEntries].sort((left, right) => left.date.localeCompare(right.date)).at(-1);
+  if (!latestDay) {
+    return {
+      status: "empty",
+      date: null,
+      sections: []
+    };
+  }
+
+  return {
+    status: latestDay.sections.some((section) => section.items.length > 0) ? "ready" : "empty",
+    date: latestDay.date,
+    sections: latestDay.sections.filter(
+      (section) => section.title && Array.isArray(section.items) && section.items.length > 0
+    )
+  };
+}
+
+export async function readDailyDeviceHandoff(filePath = dailyDeviceHandoffPaths) {
+  const candidates = Array.isArray(filePath) ? filePath.filter(Boolean) : [filePath].filter(Boolean);
+
+  for (const candidate of candidates) {
+    try {
+      const markdown = await fs.readFile(candidate, "utf8");
+      return {
+        ...parseDailyDeviceHandoffMarkdown(markdown),
+        sourcePath: candidate,
+        checkedPaths: candidates
+      };
+    } catch (error) {
+      if (error?.code === "ENOENT") {
+        continue;
+      }
+
+      throw error;
+    }
+  }
+
+  return {
+    status: "missing",
+    date: null,
+    sections: [],
+    sourcePath: candidates[0] || null,
+    checkedPaths: candidates,
+    detail: "Daily device handoff note not found yet."
+  };
+}
+
 export function createServer({
   getStatus: getStatusImpl = getStatus,
+  getDailyDeviceHandoff: getDailyDeviceHandoffImpl = readDailyDeviceHandoff,
   inferGithubRepoSlug: inferGithubRepoSlugImpl = inferGithubRepoSlug,
   listGithubIssues: listGithubIssuesImpl = listGithubIssues,
   previewReportOnlyAction: previewReportOnlyActionImpl = previewReportOnlyAction,
@@ -1322,6 +1426,19 @@ export function createServer({
       } catch (error) {
         writeJson(response, 500, {
           error: "Failed to read Codex state",
+          detail: error instanceof Error ? error.message : String(error)
+        });
+      }
+      return;
+    }
+
+    if (url.pathname === "/api/handoff") {
+      try {
+        const payload = await getDailyDeviceHandoffImpl();
+        writeJson(response, 200, payload);
+      } catch (error) {
+        writeJson(response, 500, {
+          error: "Failed to read daily handoff",
           detail: error instanceof Error ? error.message : String(error)
         });
       }

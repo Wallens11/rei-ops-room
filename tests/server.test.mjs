@@ -1,6 +1,9 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { once } from "node:events";
+import os from "node:os";
+import path from "node:path";
+import fs from "node:fs/promises";
 
 import {
   buildAgentJobItemsSql,
@@ -17,7 +20,9 @@ import {
   inferGithubRepoSlugWithRunner,
   listGithubIssuesWithRunner,
   normalizeGithubRepoSlug,
+  parseDailyDeviceHandoffMarkdown,
   selectActivityLogs,
+  readDailyDeviceHandoff,
   stripWorkspacePrefix,
   SQLITE_JSON_MAX_BUFFER,
   sqliteJsonWithRunner
@@ -672,6 +677,117 @@ test("createServer exposes /api/github/issues with inferred repo and default lab
   assert.equal(body.repo, "Wallens11/rei-ops-room");
   assert.equal(body.summary.todo, 1);
   assert.equal(body.planner.status, "queued");
+});
+
+test("parseDailyDeviceHandoffMarkdown extracts the latest day into structured sections", () => {
+  const parsed = parseDailyDeviceHandoffMarkdown(`
+# Daily Device Handoff
+
+## 2026-03-30
+### Today At A Glance
+- Older summary
+
+## 2026-04-01
+### Today At A Glance
+- Pixel room now shows a handoff panel
+- App 50 sync guidance expanded
+
+### First Notes To Open Next
+- references/visa-bulk-mgmt.md
+- references/daily-device-handoff.md
+
+### Carry-Over Context
+- Dropbox migration still needs final verification
+  `);
+
+  assert.equal(parsed.date, "2026-04-01");
+  assert.deepEqual(parsed.sections, [
+    {
+      title: "Today At A Glance",
+      items: ["Pixel room now shows a handoff panel", "App 50 sync guidance expanded"]
+    },
+    {
+      title: "First Notes To Open Next",
+      items: ["references/visa-bulk-mgmt.md", "references/daily-device-handoff.md"]
+    },
+    {
+      title: "Carry-Over Context",
+      items: ["Dropbox migration still needs final verification"]
+    }
+  ]);
+});
+
+test("createServer exposes /api/handoff using the latest daily device handoff note", async (t) => {
+  const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "pixel-handoff-"));
+  const handoffPath = path.join(tempDir, "daily-device-handoff.md");
+  await fs.writeFile(
+    handoffPath,
+    `# Daily Device Handoff
+
+## 2026-04-01
+### Today At A Glance
+- Pixel room handoff panel wired
+- Visa sync recap available
+
+### First Notes To Open Next
+- references/visa-bulk-mgmt.md
+`,
+    "utf8"
+  );
+  t.after(async () => {
+    await fs.rm(tempDir, { recursive: true, force: true });
+  });
+
+  const server = createServer({
+    getStatus: async () => ({ ok: true }),
+    getDailyDeviceHandoff: async () => readDailyDeviceHandoff(handoffPath)
+  });
+
+  server.listen(0);
+  await once(server, "listening");
+  t.after(() => server.close());
+
+  const { port } = server.address();
+  const response = await fetch(`http://127.0.0.1:${port}/api/handoff`);
+  const body = await response.json();
+
+  assert.equal(response.status, 200);
+  assert.equal(body.date, "2026-04-01");
+  assert.equal(body.sections[0].title, "Today At A Glance");
+  assert.deepEqual(body.sections[0].items, [
+    "Pixel room handoff panel wired",
+    "Visa sync recap available"
+  ]);
+});
+
+test("readDailyDeviceHandoff falls back to the installed skill copy when the workspace repo is missing", async (t) => {
+  const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "pixel-handoff-fallback-"));
+  const missingPath = path.join(tempDir, "workspace", "daily-device-handoff.md");
+  const fallbackDir = path.join(tempDir, "runtime");
+  const fallbackPath = path.join(fallbackDir, "daily-device-handoff.md");
+
+  await fs.mkdir(fallbackDir, { recursive: true });
+  await fs.writeFile(
+    fallbackPath,
+    `# Daily Device Handoff
+
+## 2026-04-01
+### Today At A Glance
+- Runtime copy is available
+`,
+    "utf8"
+  );
+
+  t.after(async () => {
+    await fs.rm(tempDir, { recursive: true, force: true });
+  });
+
+  const payload = await readDailyDeviceHandoff([missingPath, fallbackPath]);
+
+  assert.equal(payload.status, "ready");
+  assert.equal(payload.sourcePath, fallbackPath);
+  assert.deepEqual(payload.checkedPaths, [missingPath, fallbackPath]);
+  assert.equal(payload.sections[0].title, "Today At A Glance");
 });
 
 test("createServer exposes /api/github/report-only preview and post routes", async (t) => {
