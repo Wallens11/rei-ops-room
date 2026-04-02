@@ -23,6 +23,7 @@ import {
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const DEFAULT_INTERVAL_SECONDS = 60;
 const MIN_INTERVAL_SECONDS = 30;
+const DEFAULT_CODEX_CANDIDATES = ["/Applications/Codex.app/Contents/Resources/codex"];
 
 function timestamp() {
   return new Date().toISOString();
@@ -121,8 +122,36 @@ async function sleepWithSignal(ms, signal) {
   });
 }
 
+async function fileExists(candidate) {
+  try {
+    await fs.access(candidate);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+export async function resolveCodexCommand({
+  env = process.env,
+  fileExists: fileExistsImpl = fileExists,
+  fallback = "codex"
+} = {}) {
+  const configured = String(env?.CODEX_BIN || "").trim();
+  if (configured) {
+    return configured;
+  }
+
+  for (const candidate of DEFAULT_CODEX_CANDIDATES) {
+    if (await fileExistsImpl(candidate)) {
+      return candidate;
+    }
+  }
+
+  return fallback;
+}
+
 async function runCodexMission({
-  codexCommand = "codex",
+  codexCommand = null,
   repoCwd,
   prompt,
   runDir,
@@ -136,6 +165,7 @@ async function runCodexMission({
   const outputLastMessageFile = path.join(runDir, "last-message.md");
   const eventsFile = path.join(runDir, "events.jsonl");
   await fs.writeFile(promptFile, `${prompt}\n`, "utf8");
+  const resolvedCodexCommand = codexCommand || (await resolveCodexCommand());
 
   return await new Promise((resolve, reject) => {
     const args = [
@@ -151,7 +181,7 @@ async function runCodexMission({
       outputLastMessageFile,
       "-"
     ];
-    const child = spawn(codexCommand, args, {
+    const child = spawn(resolvedCodexCommand, args, {
       cwd: projectRoot,
       env: process.env,
       stdio: ["pipe", "pipe", "pipe"]
