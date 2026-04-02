@@ -187,6 +187,7 @@ Di viewer:
 
 - panel `Execute Agent` akan bilang apakah queue siap jalan, lagi running, atau idle
 - kalau queue datang dari roadmap parent, panel akan bilang child issue mana yang dipilih dari roadmap itu
+- execute preview juga akan menampilkan specialist profile yang kepilih dari isi issue, misalnya frontend, backend, scraping, atau docs
 - tombol `Start Agent` menyalakan executor lokal
 - tombol `Stop Agent` menghentikan watcher lokal setelah sinyal stop dikirim ke worker aktif
 

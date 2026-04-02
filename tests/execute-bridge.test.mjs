@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 
 import {
   buildExecutePrompt,
+  selectExecuteSkillProfile,
   prepareExecuteAction,
   selectExecuteTarget
 } from "../tools/execute-bridge.mjs";
@@ -67,6 +68,62 @@ test("buildExecutePrompt folds issue scope and handoff context into one launch p
   assert.match(prompt, /claim mode:execute issues/i);
   assert.match(prompt, /Scrapling is installed and available/i);
   assert.match(prompt, /Do not push or create a PR unless explicitly asked/i);
+});
+
+test("selectExecuteSkillProfile chooses a frontend specialist bundle for UI-heavy issues", () => {
+  const profile = selectExecuteSkillProfile({
+    title: "Polish the Execute Agent panel layout",
+    body: "Improve the viewer UI, spacing, button states, responsive layout, and styling for the room panel."
+  });
+
+  assert.equal(profile.id, "frontend");
+  assert.match(profile.label, /frontend/i);
+  assert.ok(profile.skills.some((skill) => skill.id === "frontend-design"));
+  assert.ok(profile.skills.some((skill) => skill.id === "arrange"));
+});
+
+test("selectExecuteSkillProfile chooses a scraping specialist bundle for scraping issues", () => {
+  const profile = selectExecuteSkillProfile({
+    title: "Scrape inquiry pages through the bridge",
+    body: "Use browser automation or scraping to extract page data and keep a fallback when anti-bot protection appears."
+  });
+
+  assert.equal(profile.id, "scraping");
+  assert.ok(profile.skills.some((skill) => skill.id === "scrapling-official"));
+  assert.ok(profile.skills.some((skill) => skill.id === "playwright"));
+});
+
+test("selectExecuteSkillProfile prefers backend specialist when integration keywords dominate", () => {
+  const profile = selectExecuteSkillProfile({
+    title: "Realtime GitHub intake and queue refresh bridge",
+    body: "Add a webhook bridge, update the queue when issue labels change, keep the polling fallback, and preserve the server-side workflow."
+  });
+
+  assert.equal(profile.id, "backend");
+  assert.ok(profile.skills.some((skill) => skill.id === "systematic-debugging"));
+});
+
+test("buildExecutePrompt includes the recommended specialist profile and skills", () => {
+  const prompt = buildExecutePrompt({
+    repo: "Wallens11/rei-ops-room",
+    repoCwd: "/Users/funtoco/workSpace/codex-pixel-agent",
+    issue: {
+      number: 19,
+      title: "Polish the Execute Agent panel layout",
+      body: "Improve the viewer UI, spacing, button states, responsive layout, and styling for the room panel.",
+      url: "https://github.com/Wallens11/rei-ops-room/issues/19",
+      labels: ["agent:rei", "mode:execute", "status:todo"]
+    },
+    handoff: {
+      date: "2026-04-02",
+      sections: []
+    }
+  });
+
+  assert.match(prompt, /Suggested specialist profile/i);
+  assert.match(prompt, /frontend/i);
+  assert.match(prompt, /frontend-design/i);
+  assert.match(prompt, /arrange/i);
 });
 
 test("prepareExecuteAction returns the next execute issue with a launch prompt", async () => {

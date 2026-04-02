@@ -14,6 +14,140 @@ import {
 
 const execFileAsync = promisify(execFile);
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const CODEX_SKILLS_ROOT = path.join(os.homedir(), ".codex", "skills");
+const EXECUTE_SKILL_CATALOG = {
+  "frontend-design": {
+    id: "frontend-design",
+    label: "frontend-design",
+    path: path.join(CODEX_SKILLS_ROOT, "frontend-design", "SKILL.md")
+  },
+  arrange: {
+    id: "arrange",
+    label: "arrange",
+    path: path.join(CODEX_SKILLS_ROOT, "arrange", "SKILL.md")
+  },
+  polish: {
+    id: "polish",
+    label: "polish",
+    path: path.join(CODEX_SKILLS_ROOT, "polish", "SKILL.md")
+  },
+  adapt: {
+    id: "adapt",
+    label: "adapt",
+    path: path.join(CODEX_SKILLS_ROOT, "adapt", "SKILL.md")
+  },
+  "next-best-practices": {
+    id: "next-best-practices",
+    label: "next-best-practices",
+    path: path.join(CODEX_SKILLS_ROOT, "next-best-practices", "SKILL.md")
+  },
+  "scrapling-official": {
+    id: "scrapling-official",
+    label: "scrapling-official",
+    path: path.join(CODEX_SKILLS_ROOT, "scrapling-official", "SKILL.md")
+  },
+  playwright: {
+    id: "playwright",
+    label: "playwright",
+    path: path.join(CODEX_SKILLS_ROOT, "playwright", "SKILL.md")
+  },
+  "webapp-testing": {
+    id: "webapp-testing",
+    label: "webapp-testing",
+    path: path.join(CODEX_SKILLS_ROOT, "webapp-testing", "SKILL.md")
+  },
+  "systematic-debugging": {
+    id: "systematic-debugging",
+    label: "systematic-debugging",
+    path: path.join(CODEX_SKILLS_ROOT, "systematic-debugging", "SKILL.md")
+  },
+  "verification-before-completion": {
+    id: "verification-before-completion",
+    label: "verification-before-completion",
+    path: path.join(CODEX_SKILLS_ROOT, "verification-before-completion", "SKILL.md")
+  },
+  "requesting-code-review": {
+    id: "requesting-code-review",
+    label: "requesting-code-review",
+    path: path.join(CODEX_SKILLS_ROOT, "requesting-code-review", "SKILL.md")
+  },
+  clarify: {
+    id: "clarify",
+    label: "clarify",
+    path: path.join(CODEX_SKILLS_ROOT, "clarify", "SKILL.md")
+  }
+};
+const EXECUTE_SKILL_PROFILES = [
+  {
+    id: "scraping",
+    label: "Scraping specialist",
+    keywords: [
+      "scrape",
+      "scraping",
+      "crawl",
+      "extract",
+      "parser",
+      "anti-bot",
+      "cloudflare",
+      "playwright",
+      "browser automation",
+      "page data"
+    ],
+    reason: "Issue points at scraping, extraction, or browser automation work.",
+    skills: ["scrapling-official", "playwright", "webapp-testing"]
+  },
+  {
+    id: "frontend",
+    label: "Frontend specialist",
+    keywords: [
+      "frontend",
+      "ui",
+      "ux",
+      "layout",
+      "spacing",
+      "styling",
+      "style",
+      "css",
+      "panel",
+      "viewer",
+      "widget",
+      "room",
+      "pixel",
+      "component",
+      "responsive",
+      "screen",
+      "button"
+    ],
+    reason: "Issue is centered on UI, layout, or interaction polish.",
+    skills: ["frontend-design", "arrange", "polish", "adapt", "next-best-practices"]
+  },
+  {
+    id: "backend",
+    label: "Backend specialist",
+    keywords: [
+      "backend",
+      "api",
+      "server",
+      "worker",
+      "webhook",
+      "queue",
+      "sync",
+      "service",
+      "bridge",
+      "route",
+      "endpoint"
+    ],
+    reason: "Issue is centered on server-side flow, workers, or integration plumbing.",
+    skills: ["systematic-debugging", "verification-before-completion", "requesting-code-review"]
+  },
+  {
+    id: "docs",
+    label: "Docs and guidance specialist",
+    keywords: ["docs", "copy", "message", "label", "explain", "summary", "comment", "readme"],
+    reason: "Issue is mostly about language clarity, docs, or outward communication.",
+    skills: ["clarify", "requesting-code-review", "verification-before-completion"]
+  }
+];
 
 function normalizeLabelNames(labels = []) {
   return labels.map((label) => (typeof label === "string" ? label : label?.name)).filter(Boolean);
@@ -87,6 +221,46 @@ function summarizeHandoff(handoff = {}) {
   }
 
   return lines.length > 0 ? lines.join("\n") : "- No current handoff recap was available.";
+}
+
+function resolveSkillBundle(skillIds = []) {
+  return skillIds.map((skillId) => EXECUTE_SKILL_CATALOG[skillId]).filter(Boolean);
+}
+
+export function selectExecuteSkillProfile(issue = {}) {
+  const text = `${issue?.title || ""}\n${issue?.body || ""}\n${normalizeLabelNames(issue?.labels || []).join(" ")}`
+    .toLowerCase();
+  let bestProfile = null;
+  let bestScore = 0;
+
+  for (const profile of EXECUTE_SKILL_PROFILES) {
+    const score = profile.keywords.reduce((total, keyword) => total + (text.includes(keyword) ? 1 : 0), 0);
+
+    if (score > bestScore) {
+      bestProfile = profile;
+      bestScore = score;
+    }
+  }
+
+  if (bestProfile && bestScore > 0) {
+    return {
+      id: bestProfile.id,
+      label: bestProfile.label,
+      reason: bestProfile.reason,
+      skills: resolveSkillBundle(bestProfile.skills)
+    };
+  }
+
+  return {
+    id: "general",
+    label: "General implementation specialist",
+    reason: "No narrower domain dominated the issue text, so keep the default implementation discipline tight.",
+    skills: resolveSkillBundle([
+      "systematic-debugging",
+      "verification-before-completion",
+      "requesting-code-review"
+    ])
+  };
 }
 
 async function ghJsonWithRunner(runner, args) {
@@ -286,6 +460,11 @@ export function selectExecuteTarget(payload = {}) {
 export function buildExecutePrompt({ repo, repoCwd, issue, handoff }) {
   const issueBody = String(issue?.body || "").trim() || "No issue body provided.";
   const repoLabel = stripWorkspacePrefix(repoCwd) || repoCwd;
+  const skillProfile = selectExecuteSkillProfile(issue);
+  const skillLines =
+    skillProfile.skills.length > 0
+      ? skillProfile.skills.map((skill) => `- ${skill.label}: ${skill.path}`).join("\n")
+      : "- No specialized skills were matched.";
 
   return [
     `You are handling GitHub issue #${issue.number} in repo ${repo}.`,
@@ -302,11 +481,18 @@ export function buildExecutePrompt({ repo, repoCwd, issue, handoff }) {
     "Issue body:",
     issueBody,
     "",
+    "Suggested specialist profile:",
+    `- Profile: ${skillProfile.label}`,
+    `- Why: ${skillProfile.reason}`,
+    "- Recommended skills to use if they match the work:",
+    skillLines,
+    "",
     `Latest handoff (${handoff?.date || "no date"}):`,
     summarizeHandoff(handoff),
     "",
     "Execution rules:",
     "- Inspect the repository and issue history before changing code.",
+    "- Lean on the suggested specialist profile and skills before falling back to generic implementation patterns.",
     "- Implement the smallest safe slice that satisfies the issue scope.",
     "- Run the relevant verification before finishing.",
     "- Leave the working tree changes in place locally.",
@@ -315,6 +501,20 @@ export function buildExecutePrompt({ repo, repoCwd, issue, handoff }) {
   ]
     .filter(Boolean)
     .join("\n");
+}
+
+function buildExecutePreviewDetail(target, skillProfile, { roadmap = null } = {}) {
+  const specialistLine = skillProfile?.label ? ` Suggested specialist: ${skillProfile.label}.` : "";
+
+  if (roadmap?.number) {
+    return `Roadmap #${roadmap.number} selected #${target.number} as the next unresolved child issue.${specialistLine}`;
+  }
+
+  if (target?.status === "in_progress") {
+    return `Resume the active execute issue #${target.number}.${specialistLine}`;
+  }
+
+  return `Ready to run the next execute issue #${target.number}.${specialistLine}`;
 }
 
 export function buildExecuteStartComment({ issue, repoCwd }) {
@@ -398,6 +598,7 @@ export async function prepareExecuteAction({
         repo: resolvedRepo,
         issueNumber: roadmapTarget.issue.number
       });
+      const skillProfile = selectExecuteSkillProfile(issue);
       const resolvedHandoff = handoff || (await readDailyDeviceHandoff());
       const prompt = buildExecutePrompt({
         repo: resolvedRepo,
@@ -417,9 +618,12 @@ export async function prepareExecuteAction({
           ...issue,
           roadmap: roadmapTarget.roadmap
         },
+        skillProfile,
         prompt,
         handoff: resolvedHandoff,
-        detail: `Roadmap #${roadmapTarget.roadmap.number} selected #${roadmapTarget.issue.number} as the next unresolved child issue.`
+        detail: buildExecutePreviewDetail(roadmapTarget.issue, skillProfile, {
+          roadmap: roadmapTarget.roadmap
+        })
       };
     }
   }
@@ -440,6 +644,7 @@ export async function prepareExecuteAction({
     issueNumber: target.issue.number
   });
   const resolvedHandoff = handoff || (await readDailyDeviceHandoff());
+  const skillProfile = selectExecuteSkillProfile(issue);
   const prompt = buildExecutePrompt({
     repo: resolvedRepo,
     repoCwd: cwd,
@@ -455,12 +660,10 @@ export async function prepareExecuteAction({
       status: target.status
     },
     issue,
+    skillProfile,
     prompt,
     handoff: resolvedHandoff,
-    detail:
-      target.status === "in_progress"
-        ? `Resume the active execute issue #${target.issue.number}.`
-        : `Ready to run the next execute issue #${target.issue.number}.`
+    detail: buildExecutePreviewDetail(target.issue, skillProfile)
   };
 }
 
