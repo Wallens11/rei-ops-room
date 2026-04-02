@@ -150,6 +150,29 @@ export async function resolveCodexCommand({
   return fallback;
 }
 
+export function buildCodexExecInvocation({
+  codexCommand,
+  repoCwd,
+  outputLastMessageFile
+} = {}) {
+  return {
+    command: codexCommand,
+    args: [
+      "-a",
+      "never",
+      "-s",
+      "workspace-write",
+      "exec",
+      "-C",
+      repoCwd,
+      "--json",
+      "--output-last-message",
+      outputLastMessageFile,
+      "-"
+    ]
+  };
+}
+
 async function runCodexMission({
   codexCommand = null,
   repoCwd,
@@ -166,22 +189,14 @@ async function runCodexMission({
   const eventsFile = path.join(runDir, "events.jsonl");
   await fs.writeFile(promptFile, `${prompt}\n`, "utf8");
   const resolvedCodexCommand = codexCommand || (await resolveCodexCommand());
+  const invocation = buildCodexExecInvocation({
+    codexCommand: resolvedCodexCommand,
+    repoCwd,
+    outputLastMessageFile
+  });
 
   return await new Promise((resolve, reject) => {
-    const args = [
-      "exec",
-      "-C",
-      repoCwd,
-      "-a",
-      "never",
-      "-s",
-      "workspace-write",
-      "--json",
-      "--output-last-message",
-      outputLastMessageFile,
-      "-"
-    ];
-    const child = spawn(resolvedCodexCommand, args, {
+    const child = spawn(invocation.command, invocation.args, {
       cwd: projectRoot,
       env: process.env,
       stdio: ["pipe", "pipe", "pipe"]
