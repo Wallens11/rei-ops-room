@@ -2,7 +2,10 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import {
+  classifyExecuteMissionResult,
   buildCodexExecInvocation,
+  findNewMeaningfulWorktreeChanges,
+  listMeaningfulWorktreePaths,
   resolveCodexCommand
 } from "../tools/execute-worker.mjs";
 
@@ -52,4 +55,56 @@ test("buildCodexExecInvocation places global flags before the exec subcommand", 
     "exec",
     "-C"
   ]);
+});
+
+test("listMeaningfulWorktreePaths ignores execute runtime artifacts", async () => {
+  const paths = await listMeaningfulWorktreePaths({
+    cwd: "/Users/funtoco/workSpace/codex-pixel-agent",
+    runner: async () => ({
+      stdout: [
+        " M README.md",
+        "?? .execute-worker.log",
+        "?? .execute-worker.pid",
+        "?? .execute-worker-state.json",
+        "?? .execute-runs/run-1/events.jsonl",
+        "?? public/app.js",
+        "R  tools/old.mjs -> tools/new.mjs"
+      ].join("\n")
+    })
+  });
+
+  assert.deepEqual(paths, ["README.md", "public/app.js", "tools/new.mjs"]);
+});
+
+test("findNewMeaningfulWorktreeChanges keeps only new repo changes", () => {
+  const changes = findNewMeaningfulWorktreeChanges({
+    beforePaths: ["README.md", "tools/existing.mjs"],
+    afterPaths: ["README.md", "tools/existing.mjs", "public/app.js", ".execute-worker.log"]
+  });
+
+  assert.deepEqual(changes, ["public/app.js"]);
+});
+
+test("classifyExecuteMissionResult requires meaningful changes before auto-close", () => {
+  assert.equal(
+    classifyExecuteMissionResult({
+      mission: {
+        exitCode: 0,
+        aborted: false
+      },
+      newChanges: []
+    }),
+    "review_needed"
+  );
+
+  assert.equal(
+    classifyExecuteMissionResult({
+      mission: {
+        exitCode: 0,
+        aborted: false
+      },
+      newChanges: ["public/app.js"]
+    }),
+    "completed"
+  );
 });

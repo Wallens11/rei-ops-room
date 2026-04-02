@@ -3,4 +3,8 @@ node_modules/
 .agent-pixel.pid
 .report-only-worker.log
 .report-only-worker.pid
+.execute-runs/
+.execute-worker.log
+.execute-worker.pid
+.execute-worker-state.json
 .DS_Store

@@ -1,8 +1,9 @@
-import { spawn } from "node:child_process";
+import { execFile, spawn } from "node:child_process";
 import fs from "node:fs/promises";
 import { createWriteStream } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { promisify } from "node:util";
 
 import {
   buildExecuteCompletionComment,
@@ -24,6 +25,14 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const DEFAULT_INTERVAL_SECONDS = 60;
 const MIN_INTERVAL_SECONDS = 30;
 const DEFAULT_CODEX_CANDIDATES = ["/Applications/Codex.app/Contents/Resources/codex"];
+const execFileAsync = promisify(execFile);
+const EXECUTE_RUNTIME_PATH_PREFIXES = [
+  ".execute-runs/",
+  ".execute-worker.log",
+  ".execute-worker.pid",
+  ".execute-worker.state.json",
+  ".execute-worker-state.json"
+];
 
 function timestamp() {
   return new Date().toISOString();
@@ -171,6 +180,62 @@ export function buildCodexExecInvocation({
       "-"
     ]
   };
+}
+
+export function parseGitStatusPaths(statusText = "") {
+  return String(statusText)
+    .split("\n")
+    .map((line) => line.trimEnd())
+    .filter(Boolean)
+    .map((line) => {
+      const candidate = line.slice(3).trim();
+      if (!candidate) {
+        return null;
+      }
+
+      const renameIndex = candidate.indexOf(" -> ");
+      return renameIndex >= 0 ? candidate.slice(renameIndex + 4) : candidate;
+    })
+    .filter(Boolean);
+}
+
+export function isMeaningfulWorktreePath(filePath = "") {
+  return Boolean(filePath) && !EXECUTE_RUNTIME_PATH_PREFIXES.some((prefix) => filePath.startsWith(prefix));
+}
+
+export async function listMeaningfulWorktreePaths({
+  cwd = projectRoot,
+  runner = execFileAsync
+} = {}) {
+  const { stdout = "" } = await runner("git", ["status", "--short", "--untracked-files=all"], {
+    cwd
+  });
+
+  return parseGitStatusPaths(stdout).filter(isMeaningfulWorktreePath);
+}
+
+export function findNewMeaningfulWorktreeChanges({
+  beforePaths = [],
+  afterPaths = []
+} = {}) {
+  const beforeSet = new Set(beforePaths.filter(isMeaningfulWorktreePath));
+
+  return afterPaths.filter((filePath) => isMeaningfulWorktreePath(filePath) && !beforeSet.has(filePath));
+}
+
+export function classifyExecuteMissionResult({
+  mission = {},
+  newChanges = []
+} = {}) {
+  if (mission.aborted) {
+    return "aborted";
+  }
+
+  if (Number(mission.exitCode || 0) !== 0) {
+    return "failed";
+  }
+
+  return newChanges.length > 0 ? "completed" : "review_needed";
 }
 
 async function runCodexMission({
@@ -329,6 +394,10 @@ async function executeNextIssue({
     recursive: true
   });
   const runDir = path.join(executeRunsDir, createRunDirName(preview.issue));
+  const baselineWorktreePaths = await listMeaningfulWorktreePaths({
+    cwd,
+    runner
+  });
   await onStateChange({
     status: "launching",
     currentTarget: preview.target,
@@ -354,6 +423,18 @@ async function executeNextIssue({
     }
   });
   const lastMessage = await readTextIfExists(mission.outputLastMessageFile);
+  const nextWorktreePaths = await listMeaningfulWorktreePaths({
+    cwd,
+    runner
+  });
+  const newChanges = findNewMeaningfulWorktreeChanges({
+    beforePaths: baselineWorktreePaths,
+    afterPaths: nextWorktreePaths
+  });
+  const outcome = classifyExecuteMissionResult({
+    mission,
+    newChanges
+  });
 
   if (mission.aborted) {
     const result = {
@@ -377,7 +458,7 @@ async function executeNextIssue({
     return result;
   }
 
-  if (mission.exitCode === 0) {
+  if (outcome === "completed") {
     await transitionExecuteIssueToDone({
       runner,
       repo: preview.repo,
@@ -399,6 +480,47 @@ async function executeNextIssue({
       status: "completed",
       target: preview.target,
       detail: `Completed execute issue #${preview.target.number}.`,
+      runDir
+    };
+
+    await onStateChange({
+      status: "idle",
+      currentTarget: null,
+      currentChildPid: null,
+      currentRunDir: null,
+      detail: result.detail,
+      lastResult: {
+        ...result,
+        finishedAt: new Date().toISOString()
+      }
+    });
+    return result;
+  }
+
+  if (outcome === "review_needed") {
+    const detail = `Codex exited cleanly for issue #${preview.target.number} but left no new meaningful repo changes.`;
+
+    await transitionExecuteIssueToBlocked({
+      runner,
+      repo: preview.repo,
+      issueNumber: preview.target.number
+    });
+    await postExecuteIssueComment({
+      runner,
+      repo: preview.repo,
+      issueNumber: preview.target.number,
+      body: buildExecuteCompletionComment({
+        issue: preview.issue,
+        outcome: "review_needed",
+        lastMessage: [detail, String(lastMessage || "").trim()].filter(Boolean).join("\n\n"),
+        runDir
+      })
+    });
+
+    const result = {
+      status: "review_needed",
+      target: preview.target,
+      detail,
       runDir
     };
 

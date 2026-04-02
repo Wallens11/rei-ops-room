@@ -224,10 +224,16 @@ export function buildExecuteCompletionComment({
   const summary = String(lastMessage || "").trim() || "Codex finished without a final summary message.";
   const detail = summary.length > 600 ? `${summary.slice(0, 597)}...` : summary;
   const artifactLine = runDir ? `Artifacts: \`${runDir}\`` : "Artifacts: local worker log only.";
+  const stateVerb =
+    outcome === "completed"
+      ? "finished"
+      : outcome === "review_needed"
+        ? "finished without closing"
+        : "stopped";
 
   return [
     `<!-- rei:execute issue=${issue.number} state=${outcome} -->`,
-    `Rei execute service ${outcome === "completed" ? "finished" : "stopped"} #${issue.number}.`,
+    `Rei execute service ${stateVerb} #${issue.number}.`,
     "",
     `Target: [#${issue.number} ${issue.title}](${issue.url})`,
     artifactLine,
