@@ -85,6 +85,16 @@ const SKILL_HEURISTICS = [
   {
     id: "webapp-testing",
     patterns: ["playwright", "browser_navigate", "browser_wait_for", "browser_click", "browser_take_screenshot"]
+  },
+  {
+    id: "scrapling-official",
+    patterns: [
+      "scrapling extract",
+      "scrapling mcp",
+      "stealthy_fetch",
+      "bulk_fetch",
+      "bulk_stealthy_fetch"
+    ]
   }
 ];
 const REVIEW_STAGE_RESULT_RETURNING_MAX = 24;

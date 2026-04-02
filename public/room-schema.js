@@ -21,6 +21,10 @@ export const SKILL_BADGE_LIBRARY = {
     label: "UI Check",
     color: "#ffcc66"
   },
+  "scrapling-official": {
+    label: "Scrape",
+    color: "#7fd8ff"
+  },
   playwright: {
     label: "Browser",
     color: "#ff907c"

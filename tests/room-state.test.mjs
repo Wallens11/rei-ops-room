@@ -1542,3 +1542,32 @@ test("skill badge awareness extracts active skills from runtime traces", () => {
   assert.equal(state.scene.skill_badges.length, 3);
   assert.equal(state.scene.skill_badges[0].label, "TDD");
 });
+
+test("skill badge awareness recognizes Scrapling CLI and MCP traces", () => {
+  const state = buildRoomState({
+    status: "busy",
+    thread: makeThread({
+      title: "Extract store data from a protected website"
+    }),
+    repoContext: null,
+    recentThreads: [],
+    activity: makeActivity({
+      summary: "Use Scrapling to scrape targeted content"
+    }),
+    logs: [
+      {
+        ts: 1710000001,
+        message:
+          'ToolCall: functions.exec_command {"cmd":"~/.local/bin/scrapling extract get \\"https://example.com\\" /tmp/store.md --css-selector \\"article.product\\""}'
+      },
+      {
+        ts: 1710000000,
+        message:
+          'ToolCall: functions.exec_command {"cmd":"sed -n \'1,220p\' /Users/funtoco/.codex/skills/scrapling-official/SKILL.md"}'
+      }
+    ]
+  });
+
+  assert.equal(state.skills[0]?.id, "scrapling-official");
+  assert.equal(state.scene.skill_badges[0]?.label, "Scrape");
+});
