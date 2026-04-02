@@ -53,6 +53,11 @@ import {
   createEmptyReportOnlyServiceState
 } from "./report-only-service-view.js";
 import {
+  buildExecuteAgentViewModel,
+  createEmptyExecutePreviewState,
+  createEmptyExecuteServiceState
+} from "./execute-agent-view.js";
+import {
   buildSceneHotspots,
   describeSceneSelection,
   findSceneHotspotAt
@@ -164,6 +169,11 @@ const elements = {
   githubServiceDetail: document.getElementById("github-service-detail"),
   githubServiceNote: document.getElementById("github-service-note"),
   githubServiceButton: document.getElementById("github-service-button"),
+  githubExecuteTitle: document.getElementById("github-execute-title"),
+  githubExecuteChip: document.getElementById("github-execute-chip"),
+  githubExecuteDetail: document.getElementById("github-execute-detail"),
+  githubExecuteNote: document.getElementById("github-execute-note"),
+  githubExecuteButton: document.getElementById("github-execute-button"),
   githubInboxList: document.getElementById("github-inbox-list"),
   sceneDetailTitle: document.getElementById("scene-detail-title"),
   sceneDetailBody: document.getElementById("scene-detail-body"),
@@ -210,6 +220,8 @@ const renderState = {
   githubInbox: createEmptyGithubInboxState(),
   reportOnly: createEmptyReportOnlyState(),
   reportOnlyService: createEmptyReportOnlyServiceState(),
+  executePreview: createEmptyExecutePreviewState(),
+  executeService: createEmptyExecuteServiceState(),
   autopilot: loadReportOnlyAutopilotState(),
   reducedMotion: false,
   editorActive: false,
@@ -624,6 +636,22 @@ function handoffToneLabel(tone) {
 
   if (tone === "empty") {
     return "empty";
+  }
+
+  return "ready";
+}
+
+function executeToneLabel(tone) {
+  if (tone === "error") {
+    return "offline";
+  }
+
+  if (tone === "loading") {
+    return "syncing";
+  }
+
+  if (tone === "idle") {
+    return "idle";
   }
 
   return "ready";
@@ -1126,6 +1154,25 @@ function renderReportOnlyService(state) {
   elements.githubServiceButton.dataset.action = model.action;
 }
 
+function renderExecuteAgent() {
+  if (!elements.githubExecuteTitle || !elements.githubExecuteButton) {
+    return;
+  }
+
+  const model = buildExecuteAgentViewModel({
+    preview: renderState.executePreview,
+    service: renderState.executeService
+  });
+  elements.githubExecuteTitle.textContent = model.title;
+  elements.githubExecuteDetail.textContent = model.detail;
+  elements.githubExecuteNote.textContent = model.note;
+  elements.githubExecuteChip.textContent = executeToneLabel(model.tone);
+  elements.githubExecuteButton.textContent = model.buttonLabel;
+  elements.githubExecuteButton.disabled = model.buttonDisabled;
+  elements.githubExecuteButton.dataset.tone = model.tone;
+  elements.githubExecuteButton.dataset.action = model.action;
+}
+
 async function readJsonResponseOrThrow(response) {
   let payload = null;
 
@@ -1502,6 +1549,117 @@ async function refreshReportOnlyService() {
   renderReportOnlyService(renderState.reportOnlyService);
 }
 
+async function refreshExecutePreview() {
+  if (typeof fetch !== "function") {
+    renderState.executePreview = {
+      status: "no_target",
+      target: null,
+      detail: "fetch is not available"
+    };
+    renderExecuteAgent();
+    return;
+  }
+
+  try {
+    const response = await fetch("/api/github/execute", {
+      cache: "no-store"
+    });
+
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}`);
+    }
+
+    renderState.executePreview = await response.json();
+  } catch (error) {
+    renderState.executePreview = {
+      status: "no_target",
+      target: null,
+      detail: error instanceof Error ? error.message : String(error)
+    };
+  }
+
+  renderExecuteAgent();
+}
+
+async function refreshExecuteService() {
+  if (typeof fetch !== "function") {
+    renderState.executeService = {
+      status: "error",
+      running: false,
+      pid: null,
+      source: "status_error",
+      detail: "fetch is not available",
+      currentTarget: null
+    };
+    renderExecuteAgent();
+    return;
+  }
+
+  try {
+    const response = await fetch("/api/github/execute/service", {
+      cache: "no-store"
+    });
+
+    renderState.executeService = await readJsonResponseOrThrow(response);
+    renderState.executeService.status = renderState.executeService.running ? "running" : "idle";
+  } catch (error) {
+    const payload = error?.payload || null;
+    renderState.executeService = {
+      status: "error",
+      running: false,
+      pid: null,
+      source: payload?.source || "status_error",
+      action: payload?.action || null,
+      detail: payload?.detail || (error instanceof Error ? error.message : String(error)),
+      currentTarget: payload?.currentTarget || null
+    };
+  }
+
+  renderExecuteAgent();
+}
+
+async function controlExecuteService(action) {
+  if (!action || (action !== "start" && action !== "stop")) {
+    return;
+  }
+
+  renderState.executeService = {
+    ...renderState.executeService,
+    pendingAction: action
+  };
+  renderExecuteAgent();
+
+  try {
+    const response = await fetch("/api/github/execute/service", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json"
+      },
+      body: JSON.stringify({
+        action
+      })
+    });
+
+    renderState.executeService = await readJsonResponseOrThrow(response);
+    renderState.executeService.status = renderState.executeService.running ? "running" : "idle";
+  } catch (error) {
+    const payload = error?.payload || null;
+    renderState.executeService = {
+      status: "error",
+      running: false,
+      pid: null,
+      source: payload?.source || "control_error",
+      action: payload?.action || action,
+      detail: payload?.detail || (error instanceof Error ? error.message : String(error)),
+      currentTarget: payload?.currentTarget || null
+    };
+  }
+
+  renderExecuteAgent();
+  await refreshGithubInbox();
+  await refreshExecutePreview();
+}
+
 async function controlReportOnlyService(action) {
   if (!action || (action !== "start" && action !== "stop")) {
     return;
@@ -1655,11 +1813,15 @@ function startGithubInboxPolling() {
   void refreshGithubInbox();
   void refreshReportOnlyPreview();
   void refreshReportOnlyService();
+  void refreshExecutePreview();
+  void refreshExecuteService();
   githubInboxPollHandle = setInterval(() => {
     void refreshDailyHandoff();
     void refreshGithubInbox();
     void refreshReportOnlyPreview();
     void refreshReportOnlyService();
+    void refreshExecutePreview();
+    void refreshExecuteService();
   }, GITHUB_INBOX_POLL_MS);
 }
 
@@ -2563,6 +2725,7 @@ renderGithubInbox(renderState.githubInbox);
 renderReportOnly(renderState.reportOnly);
 renderReportOnlyAutopilot();
 renderReportOnlyService(renderState.reportOnlyService);
+renderExecuteAgent();
 drawScene();
 setInterval(animate, 160);
 
@@ -2589,6 +2752,9 @@ elements.githubAutopilotButton?.addEventListener("click", () => {
 });
 elements.githubServiceButton?.addEventListener("click", () => {
   void controlReportOnlyService(elements.githubServiceButton.dataset.action || "");
+});
+elements.githubExecuteButton?.addEventListener("click", () => {
+  void controlExecuteService(elements.githubExecuteButton.dataset.action || "");
 });
 window.addEventListener("beforeunload", () => {
   statusTransport.stop();

@@ -945,3 +945,99 @@ test("createServer reports report-only service control failures with action cont
   assert.equal(body.action, "start");
   assert.equal(body.detail, "report-only worker refused to start");
 });
+
+test("createServer exposes /api/github/execute preview and service routes", async (t) => {
+  const server = createServer({
+    getStatus: async () => ({ ok: true }),
+    previewExecuteAction: async () => ({
+      repo: "Wallens11/rei-ops-room",
+      status: "ready",
+      target: {
+        number: 31,
+        title: "Queue-driven execute service MVP",
+        url: "https://github.com/Wallens11/rei-ops-room/issues/31"
+      },
+      detail: "Ready to run the next execute issue."
+    }),
+    getExecuteServiceStatus: async () => ({
+      status: "running",
+      running: true,
+      pid: 61001,
+      source: "pid",
+      detail: "execute worker running (pid 61001)",
+      currentTarget: {
+        number: 31,
+        title: "Queue-driven execute service MVP"
+      }
+    })
+  });
+
+  server.listen(0);
+  await once(server, "listening");
+  t.after(() => server.close());
+
+  const { port } = server.address();
+  const previewResponse = await fetch(`http://127.0.0.1:${port}/api/github/execute`);
+  const previewBody = await previewResponse.json();
+  const serviceResponse = await fetch(`http://127.0.0.1:${port}/api/github/execute/service`);
+  const serviceBody = await serviceResponse.json();
+
+  assert.equal(previewResponse.status, 200);
+  assert.equal(previewBody.status, "ready");
+  assert.equal(serviceResponse.status, 200);
+  assert.equal(serviceBody.running, true);
+  assert.equal(serviceBody.pid, 61001);
+});
+
+test("createServer can start and stop the local execute service", async (t) => {
+  const actions = [];
+  const server = createServer({
+    getStatus: async () => ({ ok: true }),
+    controlExecuteService: async ({ action }) => {
+      actions.push(action);
+      return {
+        status: action === "start" ? "running" : "idle",
+        running: action === "start",
+        pid: action === "start" ? 62001 : null,
+        source: action === "start" ? "pid" : "none",
+        detail:
+          action === "start"
+            ? "execute worker running (pid 62001)"
+            : "execute worker is not running"
+      };
+    }
+  });
+
+  server.listen(0);
+  await once(server, "listening");
+  t.after(() => server.close());
+
+  const { port } = server.address();
+  const startResponse = await fetch(`http://127.0.0.1:${port}/api/github/execute/service`, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json"
+    },
+    body: JSON.stringify({
+      action: "start"
+    })
+  });
+  const startBody = await startResponse.json();
+
+  const stopResponse = await fetch(`http://127.0.0.1:${port}/api/github/execute/service`, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json"
+    },
+    body: JSON.stringify({
+      action: "stop"
+    })
+  });
+  const stopBody = await stopResponse.json();
+
+  assert.deepEqual(actions, ["start", "stop"]);
+  assert.equal(startResponse.status, 200);
+  assert.equal(startBody.running, true);
+  assert.equal(stopResponse.status, 200);
+  assert.equal(stopBody.running, false);
+});

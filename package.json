@@ -13,6 +13,8 @@
     "status": "node tools/agent-pixel-cli.mjs status",
     "report-only": "node tools/report-only-bridge.mjs",
     "report-only-worker": "node tools/report-only-worker.mjs",
-    "report-only-service": "node tools/report-only-worker-cli.mjs"
+    "report-only-service": "node tools/report-only-worker-cli.mjs",
+    "execute-worker": "node tools/execute-worker.mjs",
+    "execute-service": "node tools/execute-worker-cli.mjs"
   }
 }

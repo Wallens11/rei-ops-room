@@ -61,6 +61,7 @@ Panel inbox sekarang juga punya planner konservatif:
 - `Active Queue` diambil dari issue berlabel `status:in_progress`
 - `Suggested Next` fallback ke issue `status:todo` terbaru kalau belum ada yang aktif
 - `Report-only Bridge` preview menampilkan issue aktif yang siap dikomentari
+- `Execute Agent` menampilkan antrean `mode:execute` dan bisa start/stop executor lokal
 - `Autopilot` bisa diaktifkan manual dari viewer untuk auto-post sekali per issue aktif
 - `Service` menampilkan apakah background report-only worker sedang hidup di device ini
 
@@ -158,6 +159,50 @@ Catatan:
 - pid disimpan di `.report-only-worker.pid`
 - log append ke `.report-only-worker.log`
 - `status` akan bilang kalau pid file-nya stale, jadi tidak pura-pura worker masih hidup
+
+## Execute Agent
+
+Mode ini buat issue yang memang boleh dijalankan agent secara lokal.
+
+Label yang dipakai:
+
+- `agent:rei`
+- `mode:execute`
+- `status:todo` untuk antrean baru
+- `status:in_progress` saat sudah diklaim executor
+- `status:blocked` kalau run gagal dan butuh intervensi
+
+Perilaku default:
+
+- execute queue hanya melihat issue `mode:execute`
+- saat service hidup, issue `status:todo` berikutnya akan diklaim ke `status:in_progress`
+- worker akan launch `codex exec` dari repo ini, pakai issue body + daily handoff sebagai context awal
+- saat sukses, worker akan comment ringkasan hasil lalu close issue
+- saat gagal, worker akan comment hasil terakhir lalu pindahkan issue ke `status:blocked`
+
+Di viewer:
+
+- panel `Execute Agent` akan bilang apakah queue siap jalan, lagi running, atau idle
+- tombol `Start Agent` menyalakan executor lokal
+- tombol `Stop Agent` menghentikan watcher lokal setelah sinyal stop dikirim ke worker aktif
+
+## Execute Service
+
+Kalau mau executor queue dikelola lintas shell / device session:
+
+```bash
+npm run execute-service -- start
+npm run execute-service -- status
+npm run execute-service -- stop
+```
+
+Catatan:
+
+- service ini wrapper lokal untuk `execute-worker`
+- pid disimpan di `.execute-worker.pid`
+- log append ke `.execute-worker.log`
+- state aktif disimpan di `.execute-worker-state.json`
+- artifact per run ditulis ke `.execute-runs/`
 
 ## Jalan Di Laptop Lain
 

@@ -641,6 +641,37 @@ async function controlReportOnlyService({ action }) {
   });
 }
 
+async function previewExecuteAction(options = {}) {
+  const module = await import("./tools/execute-bridge.mjs");
+  return module.prepareExecuteAction({
+    cwd: __dirname,
+    ...options
+  });
+}
+
+async function getExecuteServiceStatus() {
+  const module = await import("./tools/execute-worker-cli.mjs");
+  const runtime = await module.inspectExecuteWorkerRuntime();
+
+  return {
+    status: runtime.status || (runtime.running ? "running" : "idle"),
+    running: runtime.running,
+    pid: runtime.pid,
+    source: runtime.source,
+    currentTarget: runtime.currentTarget || null,
+    lastResult: runtime.lastResult || null,
+    detail: module.buildExecuteWorkerStatusLine(runtime)
+  };
+}
+
+async function controlExecuteService({ action }) {
+  const module = await import("./tools/execute-worker-cli.mjs");
+  return module.controlExecuteService({
+    action,
+    logger: () => {}
+  });
+}
+
 async function readJsonRequestBody(request) {
   const chunks = [];
 
@@ -1414,6 +1445,9 @@ export function createServer({
   postReportOnlyAction: postReportOnlyActionImpl = postReportOnlyAction,
   getReportOnlyServiceStatus: getReportOnlyServiceStatusImpl = getReportOnlyServiceStatus,
   controlReportOnlyService: controlReportOnlyServiceImpl = controlReportOnlyService,
+  previewExecuteAction: previewExecuteActionImpl = previewExecuteAction,
+  getExecuteServiceStatus: getExecuteServiceStatusImpl = getExecuteServiceStatus,
+  controlExecuteService: controlExecuteServiceImpl = controlExecuteService,
   serveStatic: serveStaticImpl = serveStatic
 } = {}) {
   return http.createServer(async (request, response) => {
@@ -1513,6 +1547,72 @@ export function createServer({
           running: false,
           pid: null,
           source: "status_error",
+          detail: error instanceof Error ? error.message : String(error)
+        });
+      }
+      return;
+    }
+
+    if (url.pathname === "/api/github/execute/service") {
+      if (request.method === "POST") {
+        let action = "";
+
+        try {
+          const body = await readJsonRequestBody(request);
+          action = String(body?.action || "").trim();
+
+          if (action !== "start" && action !== "stop") {
+            writeJson(response, 400, {
+              error: "Invalid execute service action",
+              detail: "Expected `start` or `stop`."
+            });
+            return;
+          }
+
+          const payload = await controlExecuteServiceImpl({
+            action
+          });
+          writeJson(response, 200, payload);
+        } catch (error) {
+          writeJson(response, error?.statusCode || 500, {
+            error: "Failed to control execute service",
+            status: "error",
+            running: false,
+            pid: null,
+            source: "control_error",
+            action: action || null,
+            detail: error instanceof Error ? error.message : String(error)
+          });
+        }
+        return;
+      }
+
+      try {
+        const payload = await getExecuteServiceStatusImpl();
+        writeJson(response, 200, payload);
+      } catch (error) {
+        writeJson(response, error?.statusCode || 500, {
+          error: "Failed to read execute service status",
+          status: "error",
+          running: false,
+          pid: null,
+          source: "status_error",
+          detail: error instanceof Error ? error.message : String(error)
+        });
+      }
+      return;
+    }
+
+    if (url.pathname === "/api/github/execute") {
+      try {
+        const payload = await previewExecuteActionImpl({
+          repo: url.searchParams.get("repo")?.trim() || null
+        });
+
+        writeJson(response, 200, payload);
+      } catch (error) {
+        writeJson(response, error?.statusCode || 500, {
+          error: "Failed to inspect execute queue",
           detail: error instanceof Error ? error.message : String(error)
         });
       }
