@@ -23,6 +23,10 @@ function hasLabel(labels = [], label) {
   return normalizeLabelNames(labels).includes(label);
 }
 
+function hasAnyModeLabel(labels = []) {
+  return normalizeLabelNames(labels).some((label) => label.startsWith("mode:"));
+}
+
 function issueStatus(issue) {
   const labels = normalizeLabelNames(issue?.labels || []);
 
@@ -47,6 +51,10 @@ function issueStatus(issue) {
 
 function isExecuteIssue(issue) {
   return hasLabel(issue?.labels, "agent:rei") && hasLabel(issue?.labels, "mode:execute");
+}
+
+function isRoadmapIssue(issue) {
+  return hasLabel(issue?.labels, "agent:rei") && !hasAnyModeLabel(issue?.labels);
 }
 
 function byUpdatedAtDesc(left, right) {
@@ -95,12 +103,13 @@ async function viewIssueWithRunner(runner, { repo, issueNumber }) {
     "--repo",
     repo,
     "--json",
-    "number,title,body,url,labels"
+    "number,title,body,url,labels,comments"
   ]);
 
   return {
     ...issue,
-    labels: normalizeLabelNames(issue.labels || [])
+    labels: normalizeLabelNames(issue.labels || []),
+    comments: Array.isArray(issue.comments) ? issue.comments : []
   };
 }
 
@@ -147,6 +156,106 @@ function formatTarget(target) {
   };
 }
 
+function extractIssueNumbers(text = "") {
+  const seen = new Set();
+  const issueNumbers = [];
+
+  for (const match of String(text || "").matchAll(/#(\d+)/g)) {
+    const issueNumber = Number(match[1] || 0);
+    if (!issueNumber || seen.has(issueNumber)) {
+      continue;
+    }
+
+    seen.add(issueNumber);
+    issueNumbers.push(issueNumber);
+  }
+
+  return issueNumbers;
+}
+
+function getRoadmapChildIssueNumbers(roadmap = {}) {
+  const issueNumbers = [];
+  const seen = new Set();
+  const fragments = [
+    roadmap.body || "",
+    ...(Array.isArray(roadmap.comments) ? roadmap.comments.map((comment) => comment?.body || "") : [])
+  ];
+
+  for (const fragment of fragments) {
+    for (const issueNumber of extractIssueNumbers(fragment)) {
+      if (issueNumber === Number(roadmap.number || 0) || seen.has(issueNumber)) {
+        continue;
+      }
+
+      seen.add(issueNumber);
+      issueNumbers.push(issueNumber);
+    }
+  }
+
+  return issueNumbers;
+}
+
+function attachRoadmap(target, roadmap) {
+  return {
+    ...formatTarget(target),
+    roadmap: formatTarget(roadmap),
+    queueSource: "roadmap"
+  };
+}
+
+async function selectRoadmapTarget({ payload = {}, repo, runner }) {
+  const openIssues = Array.isArray(payload.issues) ? payload.issues : [];
+  const openIssueMap = new Map(
+    openIssues.map((issue) => [
+      Number(issue?.number || 0),
+      issue
+    ])
+  );
+  const roadmapIssues = openIssues.filter((issue) => isRoadmapIssue(issue)).sort(byUpdatedAtDesc);
+
+  for (const roadmapCandidate of roadmapIssues) {
+    const roadmap = await viewIssueWithRunner(runner, {
+      repo,
+      issueNumber: roadmapCandidate.number
+    });
+    const childIssueNumbers = getRoadmapChildIssueNumbers(roadmap);
+
+    for (const childIssueNumber of childIssueNumbers) {
+      const childIssue = openIssueMap.get(childIssueNumber);
+      if (!childIssue) {
+        continue;
+      }
+
+      const status = issueStatus(childIssue);
+      const target = attachRoadmap(
+        {
+          ...childIssue,
+          status
+        },
+        roadmap
+      );
+
+      if (status === "blocked") {
+        return {
+          status: "roadmap_blocked",
+          issue: target,
+          roadmap: formatTarget(roadmap)
+        };
+      }
+
+      if (status === "in_progress" || status === "todo" || status === "open") {
+        return {
+          status: "roadmap_ready",
+          issue: target,
+          roadmap: formatTarget(roadmap)
+        };
+      }
+    }
+  }
+
+  return null;
+}
+
 export function selectExecuteTarget(payload = {}) {
   const executeIssues = (payload.issues || []).filter((issue) => isExecuteIssue(issue));
   const activeIssue = executeIssues
@@ -186,6 +295,9 @@ export function buildExecutePrompt({ repo, repoCwd, issue, handoff }) {
     `- Title: ${issue.title}`,
     `- URL: ${issue.url || "n/a"}`,
     `- Labels: ${(issue.labels || []).join(", ") || "none"}`,
+    issue?.roadmap?.number
+      ? `- Selected from roadmap: #${issue.roadmap.number} ${issue.roadmap.title || "Untitled roadmap"}`
+      : null,
     "",
     "Issue body:",
     issueBody,
@@ -200,7 +312,9 @@ export function buildExecutePrompt({ repo, repoCwd, issue, handoff }) {
     "- Leave the working tree changes in place locally.",
     "- Do not push or create a PR unless explicitly asked.",
     "- End with a concise summary suitable for posting back to the GitHub issue."
-  ].join("\n");
+  ]
+    .filter(Boolean)
+    .join("\n");
 }
 
 export function buildExecuteStartComment({ issue, repoCwd }) {
@@ -261,6 +375,56 @@ export async function prepareExecuteAction({
   const target = selectExecuteTarget(payload);
 
   if (!target?.issue) {
+    const roadmapTarget = await selectRoadmapTarget({
+      payload,
+      repo: resolvedRepo,
+      runner
+    });
+
+    if (roadmapTarget?.status === "roadmap_blocked") {
+      return {
+        repo: resolvedRepo,
+        status: "roadmap_blocked",
+        target: roadmapTarget.issue,
+        issue: null,
+        prompt: null,
+        handoff: null,
+        detail: `Roadmap #${roadmapTarget.roadmap.number} is halted because #${roadmapTarget.issue.number} is blocked.`
+      };
+    }
+
+    if (roadmapTarget?.status === "roadmap_ready" && roadmapTarget.issue) {
+      const issue = await viewIssueWithRunner(runner, {
+        repo: resolvedRepo,
+        issueNumber: roadmapTarget.issue.number
+      });
+      const resolvedHandoff = handoff || (await readDailyDeviceHandoff());
+      const prompt = buildExecutePrompt({
+        repo: resolvedRepo,
+        repoCwd: cwd,
+        issue: {
+          ...issue,
+          roadmap: roadmapTarget.roadmap
+        },
+        handoff: resolvedHandoff
+      });
+
+      return {
+        repo: resolvedRepo,
+        status: "roadmap_ready",
+        target: roadmapTarget.issue,
+        issue: {
+          ...issue,
+          roadmap: roadmapTarget.roadmap
+        },
+        prompt,
+        handoff: resolvedHandoff,
+        detail: `Roadmap #${roadmapTarget.roadmap.number} selected #${roadmapTarget.issue.number} as the next unresolved child issue.`
+      };
+    }
+  }
+
+  if (!target?.issue) {
     return {
       repo: resolvedRepo,
       status: "no_target",
@@ -308,8 +472,8 @@ export async function transitionExecuteIssueToInProgress({
   await editIssueLabelsWithRunner(runner, {
     repo,
     issueNumber,
-    addLabels: ["status:in_progress"],
-    removeLabels: ["status:todo", "status:blocked"]
+    addLabels: ["status:in_progress", "mode:execute"],
+    removeLabels: ["status:todo", "status:blocked", "mode:report_only"]
   });
 }
 

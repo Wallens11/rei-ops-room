@@ -122,3 +122,164 @@ test("prepareExecuteAction returns the next execute issue with a launch prompt",
   assert.match(preview.prompt, /start Codex/i);
   assert.match(preview.prompt, /Cross-device handoff is the current continuity source/i);
 });
+
+test("prepareExecuteAction can auto-pick the next roadmap child when no explicit execute issue is queued", async () => {
+  const preview = await prepareExecuteAction({
+    repo: "Wallens11/rei-ops-room",
+    handoff: {
+      date: "2026-04-02",
+      sections: []
+    },
+    runner: async (file, args) => {
+      if (file === "gh" && args[0] === "issue" && args[1] === "list") {
+        return {
+          stdout: JSON.stringify([
+            {
+              number: 13,
+              title: "Roadmap: Paperclip-lite gap map for Rei Ops Room",
+              state: "OPEN",
+              createdAt: "2026-04-02T01:00:00Z",
+              updatedAt: "2026-04-02T03:00:00Z",
+              url: "https://github.com/Wallens11/rei-ops-room/issues/13",
+              labels: [{ name: "agent:rei" }],
+              assignees: [],
+              author: { login: "Wallens11" }
+            },
+            {
+              number: 15,
+              title: "Approval-gated execution lane beyond report-only",
+              state: "OPEN",
+              createdAt: "2026-04-02T01:10:00Z",
+              updatedAt: "2026-04-02T03:10:00Z",
+              url: "https://github.com/Wallens11/rei-ops-room/issues/15",
+              labels: [{ name: "agent:rei" }, { name: "status:todo" }, { name: "mode:report_only" }],
+              assignees: [],
+              author: { login: "Wallens11" }
+            },
+            {
+              number: 16,
+              title: "Runtime registry for Codex and Claude workers",
+              state: "OPEN",
+              createdAt: "2026-04-02T01:20:00Z",
+              updatedAt: "2026-04-02T03:20:00Z",
+              url: "https://github.com/Wallens11/rei-ops-room/issues/16",
+              labels: [{ name: "agent:rei" }, { name: "status:todo" }, { name: "mode:report_only" }],
+              assignees: [],
+              author: { login: "Wallens11" }
+            }
+          ])
+        };
+      }
+
+      if (file === "gh" && args[0] === "issue" && args[1] === "view" && args[2] === "13") {
+        return {
+          stdout: JSON.stringify({
+            number: 13,
+            title: "Roadmap: Paperclip-lite gap map for Rei Ops Room",
+            body: "Child issues for this roadmap:\n- #14\n- #15\n- #16",
+            url: "https://github.com/Wallens11/rei-ops-room/issues/13",
+            labels: [{ name: "agent:rei" }],
+            comments: [
+              {
+                body: "Recommended next pickup from home: #15"
+              }
+            ]
+          })
+        };
+      }
+
+      if (file === "gh" && args[0] === "issue" && args[1] === "view" && args[2] === "15") {
+        return {
+          stdout: JSON.stringify({
+            number: 15,
+            title: "Approval-gated execution lane beyond report-only",
+            body: "## Scope\n- auto-pick the next child issue from roadmap context",
+            url: "https://github.com/Wallens11/rei-ops-room/issues/15",
+            labels: [{ name: "agent:rei" }, { name: "status:todo" }, { name: "mode:report_only" }],
+            comments: []
+          })
+        };
+      }
+
+      throw new Error(`Unexpected call: ${file} ${args.join(" ")}`);
+    }
+  });
+
+  assert.equal(preview.status, "roadmap_ready");
+  assert.equal(preview.target.number, 15);
+  assert.equal(preview.target.roadmap.number, 13);
+  assert.match(preview.detail, /roadmap #13/i);
+  assert.match(preview.prompt, /issue #15/i);
+});
+
+test("prepareExecuteAction halts the roadmap queue when the next child is blocked", async () => {
+  const preview = await prepareExecuteAction({
+    repo: "Wallens11/rei-ops-room",
+    handoff: {
+      date: "2026-04-02",
+      sections: []
+    },
+    runner: async (file, args) => {
+      if (file === "gh" && args[0] === "issue" && args[1] === "list") {
+        return {
+          stdout: JSON.stringify([
+            {
+              number: 13,
+              title: "Roadmap: Paperclip-lite gap map for Rei Ops Room",
+              state: "OPEN",
+              createdAt: "2026-04-02T01:00:00Z",
+              updatedAt: "2026-04-02T03:00:00Z",
+              url: "https://github.com/Wallens11/rei-ops-room/issues/13",
+              labels: [{ name: "agent:rei" }],
+              assignees: [],
+              author: { login: "Wallens11" }
+            },
+            {
+              number: 15,
+              title: "Approval-gated execution lane beyond report-only",
+              state: "OPEN",
+              createdAt: "2026-04-02T01:10:00Z",
+              updatedAt: "2026-04-02T03:10:00Z",
+              url: "https://github.com/Wallens11/rei-ops-room/issues/15",
+              labels: [{ name: "agent:rei" }, { name: "status:blocked" }, { name: "mode:report_only" }],
+              assignees: [],
+              author: { login: "Wallens11" }
+            },
+            {
+              number: 16,
+              title: "Runtime registry for Codex and Claude workers",
+              state: "OPEN",
+              createdAt: "2026-04-02T01:20:00Z",
+              updatedAt: "2026-04-02T03:20:00Z",
+              url: "https://github.com/Wallens11/rei-ops-room/issues/16",
+              labels: [{ name: "agent:rei" }, { name: "status:todo" }, { name: "mode:report_only" }],
+              assignees: [],
+              author: { login: "Wallens11" }
+            }
+          ])
+        };
+      }
+
+      if (file === "gh" && args[0] === "issue" && args[1] === "view" && args[2] === "13") {
+        return {
+          stdout: JSON.stringify({
+            number: 13,
+            title: "Roadmap: Paperclip-lite gap map for Rei Ops Room",
+            body: "Child issues for this roadmap:\n- #15\n- #16",
+            url: "https://github.com/Wallens11/rei-ops-room/issues/13",
+            labels: [{ name: "agent:rei" }],
+            comments: []
+          })
+        };
+      }
+
+      throw new Error(`Unexpected call: ${file} ${args.join(" ")}`);
+    }
+  });
+
+  assert.equal(preview.status, "roadmap_blocked");
+  assert.equal(preview.target.number, 15);
+  assert.equal(preview.target.roadmap.number, 13);
+  assert.match(preview.detail, /blocked/i);
+  assert.equal(preview.prompt, null);
+});

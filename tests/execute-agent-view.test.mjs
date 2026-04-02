@@ -109,3 +109,61 @@ test("buildExecuteAgentViewModel surfaces a failed start request clearly", () =>
   assert.equal(model.action, "start");
   assert.equal(model.tone, "error");
 });
+
+test("buildExecuteAgentViewModel explains when a roadmap child was auto-selected", () => {
+  const model = buildExecuteAgentViewModel({
+    preview: {
+      status: "roadmap_ready",
+      target: {
+        number: 15,
+        title: "Approval-gated execution lane beyond report-only",
+        roadmap: {
+          number: 13,
+          title: "Roadmap: Paperclip-lite gap map for Rei Ops Room"
+        }
+      },
+      detail: "Roadmap #13 selected #15 as the next unresolved child issue."
+    },
+    service: {
+      status: "idle",
+      running: false,
+      pid: null,
+      source: "none",
+      detail: "execute worker is not running"
+    }
+  });
+
+  assert.equal(model.title, "Roadmap Ready");
+  assert.equal(model.detail, "#15 Approval-gated execution lane beyond report-only");
+  assert.match(model.note, /roadmap #13/i);
+  assert.equal(model.buttonLabel, "Start Agent");
+});
+
+test("buildExecuteAgentViewModel blocks start when the roadmap queue is halted on a blocked child", () => {
+  const model = buildExecuteAgentViewModel({
+    preview: {
+      status: "roadmap_blocked",
+      target: {
+        number: 15,
+        title: "Approval-gated execution lane beyond report-only",
+        roadmap: {
+          number: 13,
+          title: "Roadmap: Paperclip-lite gap map for Rei Ops Room"
+        }
+      },
+      detail: "Roadmap #13 is halted because #15 is blocked."
+    },
+    service: {
+      status: "idle",
+      running: false,
+      pid: null,
+      source: "none",
+      detail: "execute worker is not running"
+    }
+  });
+
+  assert.equal(model.title, "Roadmap Blocked");
+  assert.match(model.note, /blocked/i);
+  assert.equal(model.buttonLabel, "Blocked");
+  assert.equal(model.buttonDisabled, true);
+});

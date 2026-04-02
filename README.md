@@ -175,14 +175,18 @@ Label yang dipakai:
 Perilaku default:
 
 - execute queue hanya melihat issue `mode:execute`
+- kalau tidak ada `mode:execute` yang siap, executor akan cek roadmap parent `agent:rei` tanpa mode label lalu auto-pick child issue open berikutnya dari daftar child issue di body/comment roadmap
 - saat service hidup, issue `status:todo` berikutnya akan diklaim ke `status:in_progress`
+- child issue roadmap yang masih `mode:report_only` akan dipromote ke `mode:execute` saat benar-benar diklaim untuk run
 - worker akan launch `codex exec` dari repo ini, pakai issue body + daily handoff sebagai context awal
-- saat sukses, worker akan comment ringkasan hasil lalu close issue
+- worker hanya akan auto-close issue kalau run meninggalkan perubahan repo yang benar-benar baru dan bermakna
+- kalau run selesai bersih tapi hasilnya cuma analisis / tidak meninggalkan perubahan repo, issue akan tetap open dan dipindahkan ke `status:blocked` untuk review manual
 - saat gagal, worker akan comment hasil terakhir lalu pindahkan issue ke `status:blocked`
 
 Di viewer:
 
 - panel `Execute Agent` akan bilang apakah queue siap jalan, lagi running, atau idle
+- kalau queue datang dari roadmap parent, panel akan bilang child issue mana yang dipilih dari roadmap itu
 - tombol `Start Agent` menyalakan executor lokal
 - tombol `Stop Agent` menghentikan watcher lokal setelah sinyal stop dikirim ke worker aktif
 

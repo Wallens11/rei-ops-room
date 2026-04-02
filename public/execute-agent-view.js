@@ -71,6 +71,30 @@ export function buildExecuteAgentViewModel({
     };
   }
 
+  if (preview.status === "roadmap_blocked" && preview.target?.number) {
+    return {
+      title: "Roadmap Blocked",
+      detail: formatTarget(preview.target),
+      note: preview.detail || "The roadmap queue is halted on a blocked child issue.",
+      tone: "error",
+      buttonLabel: "Blocked",
+      buttonDisabled: true,
+      action: "status"
+    };
+  }
+
+  if (preview.status === "roadmap_ready" && preview.target?.number) {
+    return {
+      title: "Roadmap Ready",
+      detail: formatTarget(preview.target),
+      note: preview.detail || "A roadmap parent selected the next child issue automatically.",
+      tone: "ready",
+      buttonLabel: "Start Agent",
+      buttonDisabled: false,
+      action: "start"
+    };
+  }
+
   if (preview.status === "ready" && preview.target?.number) {
     return {
       title: "Execute Ready",

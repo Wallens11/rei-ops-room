@@ -372,7 +372,7 @@ async function executeNextIssue({
     return preview;
   }
 
-  if (preview.target.status === "todo") {
+  if (preview.target.status !== "in_progress") {
     await transitionExecuteIssueToInProgress({
       runner,
       repo: preview.repo,
