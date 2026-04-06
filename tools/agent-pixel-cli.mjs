@@ -190,6 +190,20 @@ async function readProcessCommand(pid) {
     return "";
   }
 
+  if (process.platform === "win32") {
+    try {
+      const { stdout } = await execFileAsync(
+        "wmic",
+        ["process", "where", `ProcessId=${pid}`, "get", "CommandLine", "/value"],
+        { windowsHide: true }
+      );
+      const match = stdout.match(/CommandLine=(.+)/);
+      return match ? match[1].trim() : "";
+    } catch {
+      return "";
+    }
+  }
+
   try {
     const { stdout } = await execFileAsync("ps", ["-p", String(pid), "-o", "command="]);
     return stdout.trim();
@@ -199,6 +213,22 @@ async function readProcessCommand(pid) {
 }
 
 async function readListenerPid(port) {
+  if (process.platform === "win32") {
+    try {
+      const { stdout } = await execFileAsync("netstat", ["-ano"], { windowsHide: true });
+      for (const line of stdout.split(/\r?\n/)) {
+        if (line.includes(`:${port}`) && line.includes("LISTENING")) {
+          const parts = line.trim().split(/\s+/);
+          const pid = Number(parts[parts.length - 1]);
+          if (Number.isFinite(pid) && pid > 0) return pid;
+        }
+      }
+      return null;
+    } catch {
+      return null;
+    }
+  }
+
   try {
     const { stdout } = await execFileAsync("lsof", [
       "-nP",
