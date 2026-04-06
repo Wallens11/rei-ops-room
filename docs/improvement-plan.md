@@ -318,15 +318,57 @@ Jalankan test dulu: node --test tests/*.test.mjs
 
 ---
 
-## Item 6 — Post-run Learning Loop (planned)
+## Item 6 — Post-run Learning Loop
 
-Setelah tiap execute run selesai, extract otomatis:
-- File apa yang disentuh
-- Apa yang berhasil / gagal
-- Hasilnya masuk ke daily handoff berikutnya
+**Status**: ✅ Done — commit berikut setelah ini
 
-Ini yang bikin Rei makin pinter tiap sesi — bukan reset dari nol.
+**Motivasi**: Setelah tiap run, Rei "lupa" apa yang baru dikerjakan.
+Run berikutnya mulai dari nol — tidak ada konteks "kemarin issue #38 gagal karena anti-bot".
+Item ini bikin Rei makin pinter tiap sesi.
+
+### File yang dibuat/diubah
+
+| File | Perubahan |
+|---|---|
+| `tools/execute-learning.mjs` | NEW — learning log (record, format, getLearningContext) |
+| `tools/execute-worker.mjs` | `recordRunInsight()` setelah tiap GitHub issue run + direct task |
+| `tools/execute-bridge.mjs` | `getLearningContext()` di `prepareExecuteAction`, inject ke semua `buildExecutePrompt` calls + `buildDirectTaskPrompt` |
+| `tests/execute-learning.test.mjs` | NEW — 20 tests |
+| `.gitignore` | tambah `.execute-queue.json`, `.execute-workers.json`, `.execute-learning.json` |
+
+### Yang dicatat per run
+
+```js
+{
+  date, recordedAt,
+  issueNumber,       // null untuk direct task
+  taskTitle,
+  runtimeId,         // "codex" | "claude-code"
+  outcome,           // "completed" | "review_needed" | "failed" | "aborted"
+  filesChanged,      // array path relatif
+  keySummary         // baris pertama substantif dari last message
+}
+```
+
+### Yang di-inject ke prompt
+
+```
+Recent run history (use to avoid repeating past mistakes):
+- [2026-04-07] completed #42 "fix auth bug" (claude-code) — changed: auth.js, auth.test.js
+    ↳ Fixed JWT expiry issue in middleware.
+- [2026-04-06] review_needed #38 "scrape target" (codex) — no file changes
+```
+
+Max 50 entries, auto-trim yang paling lama. 5 entries terbaru di-inject ke prompt.
+
+### Prompt untuk lanjut di session baru
+
+```
+Semua item di docs/improvement-plan.md sudah selesai (Item 1–6).
+Jalankan test: node --test tests/*.test.mjs
+Kalau mau lanjut, cek bagian "What's missing" di overview untuk ide berikutnya.
+```
 
 ---
 
-*Last updated: 2026-04-07 — Item 4 & 5 selesai ✅, Item 6 planned*
+*Last updated: 2026-04-07 — Item 1–6 selesai semua ✅*

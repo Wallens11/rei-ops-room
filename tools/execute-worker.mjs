@@ -33,6 +33,7 @@ import {
   unregisterWorker,
   updateWorkerActivity
 } from "./execute-queue.mjs";
+import { recordRunInsight } from "./execute-learning.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const DEFAULT_INTERVAL_SECONDS = 60;
@@ -403,13 +404,16 @@ async function runDirectTask({
 } = {}) {
   const { buildDirectTaskPrompt } = await import("./execute-bridge.mjs");
   const { readDailyDeviceHandoff } = await import("../server.mjs");
+  const { getLearningContext } = await import("./execute-learning.mjs");
 
   const handoff = await readDailyDeviceHandoff().catch(() => null);
+  const learningContext = await getLearningContext({ limit: 5 }).catch(() => null);
   const prompt = buildDirectTaskPrompt({
     task: task.task,
     context: task.context,
     repoCwd: projectRoot,
-    handoff
+    handoff,
+    learningContext
   });
 
   const runtimeId = task.runtimeId
@@ -453,6 +457,16 @@ async function runDirectTask({
   const status = mission.aborted ? "failed" : mission.exitCode === 0 ? "done" : "failed";
 
   await resolveQueueTask(task.id, { status, result: lastMessage || null });
+
+  // Catat ke learning log
+  await recordRunInsight({
+    issueNumber: null,
+    taskTitle: task.task,
+    runtimeId,
+    outcome: status,
+    filesChanged: [],
+    lastMessage
+  }).catch(() => {});
 
   if (workerId) {
     await updateWorkerActivity(workerId, { taskId: null, runtimeId: null });
@@ -582,6 +596,16 @@ async function executeNextIssue({
     mission,
     newChanges
   });
+
+  // Catat insight ke learning log — best-effort, tidak crash worker kalau gagal
+  await recordRunInsight({
+    issueNumber: preview.target.number,
+    taskTitle: preview.issue?.title ?? "",
+    runtimeId,
+    outcome: mission.aborted ? "aborted" : outcome,
+    filesChanged: newChanges,
+    lastMessage
+  }).catch(() => {});
 
   if (mission.aborted) {
     const result = {

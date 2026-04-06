@@ -11,6 +11,7 @@ import {
   readDailyDeviceHandoff,
   stripWorkspacePrefix
 } from "../server.mjs";
+import { getLearningContext } from "./execute-learning.mjs";
 
 const execFileAsync = promisify(execFile);
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -322,7 +323,7 @@ export function selectExecuteSkillProfile(issue = {}) {
  * Lebih simpel dari buildExecutePrompt — tidak ada GitHub issue context,
  * tidak ada skill profile. Cukup task, context opsional, dan handoff.
  */
-export function buildDirectTaskPrompt({ task, context = null, repoCwd, handoff = null } = {}) {
+export function buildDirectTaskPrompt({ task, context = null, repoCwd, handoff = null, learningContext = null } = {}) {
   const repoLabel = stripWorkspacePrefix(repoCwd) || repoCwd;
 
   return [
@@ -340,6 +341,7 @@ export function buildDirectTaskPrompt({ task, context = null, repoCwd, handoff =
     handoff?.blockers?.length > 0
       ? `Known blockers:\n${handoff.blockers.map((b) => `- ${b}`).join("\n")}`
       : null,
+    learningContext ? `\n${learningContext}` : null,
     "",
     "Execution rules:",
     "- Inspect the repo before changing anything.",
@@ -623,7 +625,7 @@ export function selectExecuteTarget(payload = {}, { nowMs = Date.now() } = {}) {
   return null;
 }
 
-export function buildExecutePrompt({ repo, repoCwd, issue, handoff }) {
+export function buildExecutePrompt({ repo, repoCwd, issue, handoff, learningContext = null }) {
   const issueBody = String(issue?.body || "").trim() || "No issue body provided.";
   const repoLabel = stripWorkspacePrefix(repoCwd) || repoCwd;
   const skillProfile = selectExecuteSkillProfile(issue);
@@ -662,6 +664,7 @@ export function buildExecutePrompt({ repo, repoCwd, issue, handoff }) {
     handoff?.blockers?.length > 0
       ? `Known blockers from handoff:\n${handoff.blockers.map((b) => `- ${b}`).join("\n")}\nAvoid re-attempting these without a plan to resolve them.`
       : null,
+    learningContext ? `\n${learningContext}` : null,
     "",
     "Execution rules:",
     "- Inspect the repository and issue history before changing code.",
@@ -746,6 +749,9 @@ export async function prepareExecuteAction({
   const payload = await listGithubIssuesWithRunner(runner, {
     repo: resolvedRepo
   });
+
+  // Fetch learning context sekali — di-share ke semua buildExecutePrompt calls di bawah
+  const learningContext = await getLearningContext({ limit: 5 }).catch(() => null);
   const target = selectExecuteTarget(payload);
 
   if (!target?.issue) {
@@ -781,7 +787,8 @@ export async function prepareExecuteAction({
           ...issue,
           roadmap: roadmapTarget.roadmap
         },
-        handoff: resolvedHandoff
+        handoff: resolvedHandoff,
+        learningContext
       });
 
       return {
@@ -820,7 +827,8 @@ export async function prepareExecuteAction({
           repo: resolvedRepo,
           repoCwd: cwd,
           issue: fullIssue,
-          handoff: resolvedHandoff
+          handoff: resolvedHandoff,
+          learningContext
         });
 
         return {
@@ -856,7 +864,8 @@ export async function prepareExecuteAction({
     repo: resolvedRepo,
     repoCwd: cwd,
     issue,
-    handoff: resolvedHandoff
+    handoff: resolvedHandoff,
+    learningContext
   });
 
   return {

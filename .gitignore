@@ -7,4 +7,7 @@ node_modules/
 .execute-worker.log
 .execute-worker.pid
 .execute-worker-state.json
+.execute-queue.json
+.execute-workers.json
+.execute-learning.json
 .DS_Store
