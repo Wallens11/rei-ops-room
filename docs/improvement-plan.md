@@ -171,4 +171,104 @@ Gambaran awal:
 
 ---
 
-*Last updated: 2026-04-06 — semua item selesai ✅*
+---
+
+## Item 4 — Multi-LLM Runtime Abstraction
+
+**Status**: ✅ Done — commit berikut setelah ini
+
+**Motivasi**: execute-worker.mjs sebelumnya hardcode `codex exec` sebagai satu-satunya runtime.
+Supaya Rei bisa pakai Claude Code CLI (atau runtime lain di masa depan), kita butuh abstraction layer.
+
+### File yang dibuat/diubah
+
+| File | Perubahan |
+|---|---|
+| `tools/runtimes/codex.mjs` | NEW — Codex runtime adapter |
+| `tools/runtimes/claude-code.mjs` | NEW — Claude Code CLI runtime adapter |
+| `tools/runtimes/index.mjs` | NEW — Registry, probe, select |
+| `tools/execute-worker.mjs` | Tambah import runtimes, `runMission()` runtime-aware, `runExecuteWorker` probe di startup |
+| `tools/execute-bridge.mjs` | `buildExecuteStartComment` terima `runtimeLabel`, tambah `selectRuntimeForProfile()` |
+| `tests/runtimes.test.mjs` | NEW — full test coverage runtime layer |
+
+### Runtime Interface
+
+Tiap runtime adalah module yang export:
+
+```js
+export const RUNTIME_ID    = "codex";           // identifier unik
+export const RUNTIME_LABEL = "Codex";           // human-readable
+export async function resolveCommand({ env, fallback }) { ... }  // → path string
+export function buildInvocation({ command, repoCwd, outputLastMessageFile }) { ... }
+// buildInvocation return: { command, args, outputMode, stdinMode, cwd? }
+// outputMode: "file" (Codex --output-last-message) | "stdout" (Claude Code)
+```
+
+### Routing Logic
+
+```
+RUNTIME_PREFERENCES = {
+  scraping:  ["codex"],                   // butuh ~/.codex/skills (Playwright)
+  frontend:  ["codex"],                   // butuh frontend-design skills
+  backend:   ["claude-code", "codex"],    // reasoning-heavy → Claude Code lebih tepat
+  docs:      ["claude-code", "codex"],    // writing-heavy → Claude Code lebih tepat
+  general:   ["codex"],                   // default
+}
+```
+
+`selectRuntime(profileId, availableRuntimes)` — ambil runtime pertama yang tersedia.
+`probeAvailableRuntimes(env)` — cek binary. Absolute path → `fs.access`. Relative → trust PATH.
+
+### Cara tambah runtime baru (misalnya Gemini)
+
+1. Buat `tools/runtimes/gemini.mjs` dengan interface yang sama
+2. Import dan masukkan ke `RUNTIME_LIST` di `tools/runtimes/index.mjs`
+3. Tambah ke `RUNTIME_PREFERENCES` untuk profile yang cocok
+4. Set env `GEMINI_BIN` kalau binary tidak di PATH
+
+### Env overrides
+
+| Env var | Runtime | Fungsi |
+|---|---|---|
+| `CODEX_BIN` | codex | Custom path ke Codex binary |
+| `CLAUDE_BIN` | claude-code | Custom path ke `claude` binary |
+
+### Prompt untuk lanjut di session baru
+
+```
+Lanjut dari docs/improvement-plan.md Item 4 di repo rei-ops-room.
+Item 4 sudah selesai (multi-LLM runtime abstraction).
+Yang belum:
+- Item 5: Multi-worker coordinator (beberapa Rei jalan paralel, shared state)
+- Item 6: Post-run learning loop (hasil run balik ke daily handoff)
+Cek status tabel di atas dulu, lalu jalankan test:
+node --test tests/runtimes.test.mjs
+node --test tests/execute-worker.test.mjs
+```
+
+---
+
+## Item 5 — Multi-Worker Coordinator (planned)
+
+Memungkinkan beberapa `execute-worker` instance jalan paralel tanpa double-claim.
+
+Gambaran:
+- Shared state file `.execute-workers.json` berisi array worker aktif
+- Tiap worker register `{ workerId, issueNumber, runtimeId, startedAt }`
+- Room visualization baca file ini → tampilkan berapa Rei aktif
+- Atomic claim pakai file lock atau staggered startup
+
+---
+
+## Item 6 — Post-run Learning Loop (planned)
+
+Setelah tiap execute run selesai, extract otomatis:
+- File apa yang disentuh
+- Apa yang berhasil / gagal
+- Hasilnya masuk ke daily handoff berikutnya
+
+Ini yang bikin Rei makin pinter tiap sesi — bukan reset dari nol.
+
+---
+
+*Last updated: 2026-04-07 — Item 4 selesai ✅, Item 5 & 6 planned*

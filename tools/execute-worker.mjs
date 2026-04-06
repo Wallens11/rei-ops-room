@@ -20,6 +20,11 @@ import {
   projectRoot,
   writeExecuteWorkerState
 } from "./execute-worker-state.mjs";
+import {
+  getRuntime,
+  probeAvailableRuntimes,
+  selectRuntime
+} from "./runtimes/index.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const DEFAULT_INTERVAL_SECONDS = 60;
@@ -140,6 +145,8 @@ async function fileExists(candidate) {
   }
 }
 
+// Backward-compat re-exports — code lama dan test yang import ini tetap jalan.
+// Implementasi sekarang ada di tools/runtimes/codex.mjs.
 export async function resolveCodexCommand({
   env = process.env,
   fileExists: fileExistsImpl = fileExists,
@@ -238,37 +245,50 @@ export function classifyExecuteMissionResult({
   return newChanges.length > 0 ? "completed" : "review_needed";
 }
 
-async function runCodexMission({
-  codexCommand = null,
+/**
+ * Jalankan satu mission (execute task) dengan runtime yang dipilih.
+ *
+ * @param runtimeId  — "codex" | "claude-code" | runtime lain yang terdaftar
+ * @param repoCwd    — working directory repo target
+ * @param prompt     — prompt lengkap yang dikirim ke runtime
+ * @param runDir     — direktori untuk artifact (prompt.md, last-message.md, events.jsonl)
+ * @param signal     — AbortSignal untuk cancel
+ * @param onChildPid — callback saat child process PID diketahui
+ *
+ * Return: { exitCode, signal, aborted, outputLastMessageFile, eventsFile }
+ */
+async function runMission({
+  runtimeId = "codex",
   repoCwd,
   prompt,
   runDir,
   signal = null,
   onChildPid = () => {}
 } = {}) {
-  await fs.mkdir(runDir, {
-    recursive: true
-  });
+  await fs.mkdir(runDir, { recursive: true });
+
   const promptFile = path.join(runDir, "prompt.md");
   const outputLastMessageFile = path.join(runDir, "last-message.md");
   const eventsFile = path.join(runDir, "events.jsonl");
+
   await fs.writeFile(promptFile, `${prompt}\n`, "utf8");
-  const resolvedCodexCommand = codexCommand || (await resolveCodexCommand());
-  const invocation = buildCodexExecInvocation({
-    codexCommand: resolvedCodexCommand,
+
+  const runtime = getRuntime(runtimeId);
+  const runtimeCommand = await runtime.resolveCommand({ env: process.env });
+  const invocation = runtime.buildInvocation({
+    command: runtimeCommand,
     repoCwd,
     outputLastMessageFile
   });
 
   return await new Promise((resolve, reject) => {
     const child = spawn(invocation.command, invocation.args, {
-      cwd: projectRoot,
+      cwd: invocation.cwd || projectRoot,
       env: process.env,
       stdio: ["pipe", "pipe", "pipe"]
     });
-    const stream = createWriteStream(eventsFile, {
-      flags: "a"
-    });
+    const stream = createWriteStream(eventsFile, { flags: "a" });
+    const stdoutChunks = [];
     let aborted = false;
     let finished = false;
 
@@ -276,28 +296,34 @@ async function runCodexMission({
 
     child.stdout.on("data", (chunk) => {
       stream.write(chunk);
+      // outputMode "stdout": kumpulkan stdout sebagai last message
+      if (invocation.outputMode === "stdout") {
+        stdoutChunks.push(chunk);
+      }
     });
     child.stderr.on("data", (chunk) => {
       stream.write(chunk);
     });
 
     child.on("error", (error) => {
-      if (finished) {
-        return;
-      }
-
+      if (finished) return;
       finished = true;
       stream.end();
       reject(error);
     });
 
-    child.on("close", (exitCode, exitSignal) => {
-      if (finished) {
-        return;
-      }
-
+    child.on("close", async (exitCode, exitSignal) => {
+      if (finished) return;
       finished = true;
       stream.end();
+
+      // Untuk runtime yang output lewat stdout (bukan --output-last-message file),
+      // tulis buffer ke outputLastMessageFile supaya caller bisa baca seragam.
+      if (invocation.outputMode === "stdout" && stdoutChunks.length > 0) {
+        const output = Buffer.concat(stdoutChunks).toString("utf8");
+        await fs.writeFile(outputLastMessageFile, output, "utf8").catch(() => {});
+      }
+
       resolve({
         exitCode: Number.isInteger(exitCode) ? exitCode : exitSignal ? 1 : 0,
         signal: exitSignal || null,
@@ -311,22 +337,24 @@ async function runCodexMission({
       aborted = true;
       child.kill("SIGTERM");
       setTimeout(() => {
-        if (!finished) {
-          child.kill("SIGKILL");
-        }
+        if (!finished) child.kill("SIGKILL");
       }, 1_000).unref();
     };
 
     if (signal?.aborted) {
       abortHandler();
     } else {
-      signal?.addEventListener?.("abort", abortHandler, {
-        once: true
-      });
+      signal?.addEventListener?.("abort", abortHandler, { once: true });
     }
 
     child.stdin.end(prompt);
   });
+}
+
+// Backward-compat alias — test dan code lama yang call runCodexMission tetap jalan.
+// Semua call baru pakai runMission({ runtimeId, ... }) langsung.
+async function runCodexMission({ codexCommand = null, repoCwd, prompt, runDir, signal = null, onChildPid = () => {} } = {}) {
+  return runMission({ runtimeId: "codex", repoCwd, prompt, runDir, signal, onChildPid });
 }
 
 export function createExecuteWorkerResultSignature(result = {}) {
@@ -346,7 +374,8 @@ async function executeNextIssue({
   cwd = projectRoot,
   repo = null,
   signal = null,
-  codexCommand = "codex",
+  codexCommand = "codex", // backward-compat — diabaikan kalau availableRuntimes disediakan
+  availableRuntimes = null, // null = fallback ke codex saja
   runner = undefined,
   onStateChange = async () => {}
 } = {}) {
@@ -372,6 +401,14 @@ async function executeNextIssue({
     return preview;
   }
 
+  // Pilih runtime berdasarkan specialist profile issue.
+  // Kalau availableRuntimes tidak disediakan (caller lama), fallback ke codex.
+  const profileId = preview.skillProfile?.id ?? "general";
+  const runtimeId = availableRuntimes
+    ? selectRuntime(profileId, availableRuntimes)
+    : "codex";
+  const runtimeLabel = getRuntime(runtimeId).RUNTIME_LABEL;
+
   if (preview.target.status !== "in_progress") {
     await transitionExecuteIssueToInProgress({
       runner,
@@ -386,7 +423,8 @@ async function executeNextIssue({
     issueNumber: preview.target.number,
     body: buildExecuteStartComment({
       issue: preview.issue,
-      repoCwd: cwd
+      repoCwd: cwd,
+      runtimeLabel
     })
   });
 
@@ -403,11 +441,11 @@ async function executeNextIssue({
     currentTarget: preview.target,
     currentChildPid: null,
     currentRunDir: runDir,
-    detail: `Launching Codex for issue #${preview.target.number}.`
+    detail: `Launching ${runtimeLabel} for issue #${preview.target.number}.`
   });
 
-  const mission = await runCodexMission({
-    codexCommand,
+  const mission = await runMission({
+    runtimeId,
     repoCwd: cwd,
     prompt: preview.prompt,
     runDir,
@@ -418,7 +456,7 @@ async function executeNextIssue({
         currentTarget: preview.target,
         currentChildPid: childPid,
         currentRunDir: runDir,
-        detail: `Codex is running issue #${preview.target.number}.`
+        detail: `${runtimeLabel} is running issue #${preview.target.number}.`
       });
     }
   });
@@ -583,18 +621,22 @@ export async function runExecuteWorker({
   intervalMs = DEFAULT_INTERVAL_SECONDS * 1000,
   signal = null,
   stdout = process.stdout,
-  codexCommand = "codex",
+  codexCommand = "codex", // backward-compat
   runner = undefined,
   executeAction = executeNextIssue,
   sleep = sleepWithSignal
 } = {}) {
   let lastSignature = null;
 
+  // Probe runtime yang tersedia di sistem saat startup.
+  // Ini yang menentukan apakah task backend/docs bisa pakai claude-code atau fallback ke codex.
+  const availableRuntimes = await probeAvailableRuntimes(process.env);
+
   if (!once) {
     stdout.write(
       `[${timestamp()}] execute worker watching ${repo || "origin repo"} every ${Math.round(
         intervalMs / 1000
-      )}s\n`
+      )}s | runtimes: ${availableRuntimes.join(", ") || "none"}\n`
     );
   }
 
@@ -612,6 +654,7 @@ export async function runExecuteWorker({
       repo,
       signal,
       codexCommand,
+      availableRuntimes,
       runner,
       onStateChange: persistState
     });

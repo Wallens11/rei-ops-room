@@ -312,6 +312,17 @@ export function selectExecuteSkillProfile(issue = {}) {
   };
 }
 
+/**
+ * Expose RUNTIME_PREFERENCES dari runtimes/index.mjs lewat bridge
+ * supaya caller yang hanya import execute-bridge tidak perlu tahu soal runtimes/.
+ * Lazy import supaya tidak ada circular dep.
+ */
+export async function selectRuntimeForProfile(profileId) {
+  const { selectRuntime, probeAvailableRuntimes } = await import("./runtimes/index.mjs");
+  const available = await probeAvailableRuntimes(process.env);
+  return selectRuntime(profileId, available);
+}
+
 async function ghJsonWithRunner(runner, args) {
   const { stdout } = await runner("gh", args);
   const text = stdout.trim();
@@ -644,15 +655,16 @@ function buildExecutePreviewDetail(target, skillProfile, { roadmap = null } = {}
   return `Ready to run the next execute issue #${target.number}.${specialistLine}`;
 }
 
-export function buildExecuteStartComment({ issue, repoCwd }) {
+export function buildExecuteStartComment({ issue, repoCwd, runtimeLabel = "Codex" }) {
   return [
     `<!-- rei:execute issue=${issue.number} state=started -->`,
     `Rei execute service picked up #${issue.number}.`,
     "",
     `Target: [#${issue.number} ${issue.title}](${issue.url})`,
     `Workspace: \`${repoCwd}\``,
+    `Runtime: ${runtimeLabel}`,
     "",
-    "The local executor is launching Codex now and will post a follow-up summary after verification."
+    `The local executor is launching ${runtimeLabel} now and will post a follow-up summary after verification.`
   ].join("\n");
 }
 
