@@ -311,7 +311,7 @@ async function openViewer(url) {
   }
 
   if (process.platform === "win32") {
-    await execFileAsync("cmd", ["/c", "start", "", url]);
+    await execFileAsync("cmd", ["/c", "start", "", url], { windowsHide: true });
     return;
   }
 

@@ -218,6 +218,7 @@ async function startDetachedWorker({ repo = null, intervalMs = defaultIntervalMs
     cwd: projectRoot,
     env: process.env,
     detached: true,
+    windowsHide: true,
     stdio: ["ignore", logHandle.fd, logHandle.fd]
   });
 

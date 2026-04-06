@@ -334,6 +334,7 @@ async function runMission({
     const child = spawn(invocation.command, invocation.args, {
       cwd: invocation.cwd || projectRoot,
       env: process.env,
+      windowsHide: true,
       stdio: ["pipe", "pipe", "pipe"]
     });
     const stream = createWriteStream(eventsFile, { flags: "a" });
