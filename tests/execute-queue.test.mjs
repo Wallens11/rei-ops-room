@@ -390,3 +390,224 @@ describe("execute-bridge: buildDirectTaskPrompt", async () => {
     assert.ok(prompt.includes("do not push"));
   });
 });
+
+// ─── Retry logic ──────────────────────────────────────────────────────────────
+
+describe("execute-queue: retry + backoff", async () => {
+  let tmpDir2;
+
+  // Isolated queue helpers dengan retry fields
+  async function makeRetryQueue(dir) {
+    const qFile = path.join(dir, ".execute-queue.json");
+
+    async function readQ() {
+      try { return JSON.parse(await fs.readFile(qFile, "utf8")).tasks ?? []; }
+      catch (e) { if (e?.code === "ENOENT") return []; throw e; }
+    }
+    async function saveQ(tasks) {
+      await fs.writeFile(qFile, JSON.stringify({ tasks }, null, 2), "utf8");
+    }
+
+    async function enqueue(task) {
+      const tasks = await readQ();
+      const entry = {
+        id: crypto.randomUUID(), task, context: null, runtimeId: null,
+        submittedAt: new Date().toISOString(), status: "queued",
+        startedAt: null, finishedAt: null, result: null,
+        retryCount: 0, maxRetries: 2, retryAfter: null
+      };
+      tasks.push(entry);
+      await saveQ(tasks);
+      return entry;
+    }
+
+    async function requeueForRetry(id, { result = null } = {}) {
+      const tasks = await readQ();
+      const task = tasks.find((t) => t.id === id);
+      if (!task) return false;
+      const retryCount = (task.retryCount || 0) + 1;
+      const maxRetries = task.maxRetries ?? 2;
+      if (retryCount > maxRetries) {
+        task.status = "failed";
+        task.result = result ? String(result).trim() : null;
+        task.finishedAt = new Date().toISOString();
+        await saveQ(tasks);
+        return false;
+      }
+      const backoffMs = 30_000 * (2 ** (retryCount - 1));
+      task.status = "queued";
+      task.retryCount = retryCount;
+      task.startedAt = null;
+      task.retryAfter = new Date(Date.now() + backoffMs).toISOString();
+      await saveQ(tasks);
+      return true;
+    }
+
+    async function claimNext() {
+      const tasks = await readQ();
+      const now = Date.now();
+      const next = tasks.find(
+        (t) => t.status === "queued" && (!t.retryAfter || new Date(t.retryAfter).getTime() <= now)
+      );
+      if (!next) return null;
+      next.status = "in_progress";
+      next.startedAt = new Date().toISOString();
+      await saveQ(tasks);
+      return next;
+    }
+
+    return { readQ, enqueue, requeueForRetry, claimNext };
+  }
+
+  before(async () => {
+    tmpDir2 = await fs.mkdtemp(path.join(os.tmpdir(), "rei-retry-test-"));
+  });
+  after(async () => {
+    await fs.rm(tmpDir2, { recursive: true, force: true });
+  });
+
+  it("enqueueTask: retryCount=0 dan maxRetries=2 di entry baru", async () => {
+    const q = await makeRetryQueue(tmpDir2);
+    const entry = await q.enqueue("new task");
+    assert.equal(entry.retryCount, 0);
+    assert.equal(entry.maxRetries, 2);
+    assert.equal(entry.retryAfter, null);
+  });
+
+  it("requeueForRetry: retry pertama → status queued, retryCount=1, retryAfter set", async () => {
+    const q = await makeRetryQueue(tmpDir2);
+    const entry = await q.enqueue("failing task");
+    const willRetry = await q.requeueForRetry(entry.id);
+    assert.equal(willRetry, true);
+    const tasks = await q.readQ();
+    const t = tasks.find((x) => x.id === entry.id);
+    assert.equal(t.status, "queued");
+    assert.equal(t.retryCount, 1);
+    assert.ok(t.retryAfter, "retryAfter harus di-set");
+    // retryAfter harus di masa depan (~30s)
+    assert.ok(new Date(t.retryAfter).getTime() > Date.now());
+  });
+
+  it("requeueForRetry: retry kedua → retryCount=2", async () => {
+    const q = await makeRetryQueue(tmpDir2);
+    const entry = await q.enqueue("failing task 2");
+    await q.requeueForRetry(entry.id);
+    const willRetry = await q.requeueForRetry(entry.id);
+    assert.equal(willRetry, true);
+    const tasks = await q.readQ();
+    const t = tasks.find((x) => x.id === entry.id);
+    assert.equal(t.retryCount, 2);
+  });
+
+  it("requeueForRetry: setelah maxRetries → status failed, return false", async () => {
+    const q = await makeRetryQueue(tmpDir2);
+    const entry = await q.enqueue("permanently failing");
+    await q.requeueForRetry(entry.id); // retry 1
+    await q.requeueForRetry(entry.id); // retry 2
+    const willRetry = await q.requeueForRetry(entry.id, { result: "Exit code 1" }); // melebihi maxRetries
+    assert.equal(willRetry, false);
+    const tasks = await q.readQ();
+    const t = tasks.find((x) => x.id === entry.id);
+    assert.equal(t.status, "failed");
+    assert.equal(t.result, "Exit code 1");
+    assert.ok(t.finishedAt);
+  });
+
+  it("claimNextQueuedTask: skip task yang masih dalam retryAfter cooldown", async () => {
+    const q = await makeRetryQueue(tmpDir2);
+    const entry = await q.enqueue("cooldown task");
+    // Manually set retryAfter ke masa depan
+    const tasks = await q.readQ();
+    const t = tasks.find((x) => x.id === entry.id);
+    t.retryAfter = new Date(Date.now() + 60_000).toISOString();
+    await fs.writeFile(
+      path.join(tmpDir2, ".execute-queue.json"),
+      JSON.stringify({ tasks }, null, 2), "utf8"
+    );
+    const claimed = await q.claimNext();
+    // Task lain mungkin di-claim, tapi bukan yang cooldown
+    if (claimed) assert.notEqual(claimed.id, entry.id);
+  });
+
+  it("claimNextQueuedTask: claim task yang retryAfter sudah lewat", async () => {
+    const q = await makeRetryQueue(tmpDir2);
+    const entry = await q.enqueue("ready to retry");
+    // Set retryAfter ke masa lalu
+    const tasks = await q.readQ();
+    const t = tasks.find((x) => x.id === entry.id);
+    t.retryAfter = new Date(Date.now() - 1000).toISOString();
+    await fs.writeFile(
+      path.join(tmpDir2, ".execute-queue.json"),
+      JSON.stringify({ tasks }, null, 2), "utf8"
+    );
+    const claimed = await q.claimNext();
+    assert.ok(claimed);
+    assert.equal(claimed.id, entry.id);
+  });
+});
+
+// ─── buildTaskQueueViewModel ──────────────────────────────────────────────────
+
+describe("execute-queue-panel: buildTaskQueueViewModel", async () => {
+  const { buildTaskQueueViewModel } = await import("../public/execute-queue-panel.js");
+
+  const sampleTasks = [
+    { id: "1", task: "fix bug", status: "done", runtimeId: "claude-code", retryCount: 0, maxRetries: 2, result: "Fixed it.", retryAfter: null },
+    { id: "2", task: "write tests", status: "in_progress", runtimeId: null, retryCount: 1, maxRetries: 2, result: null, retryAfter: null },
+    { id: "3", task: "review docs", status: "queued", runtimeId: "codex", retryCount: 0, maxRetries: 2, result: null, retryAfter: null },
+    { id: "4", task: "deploy", status: "failed", runtimeId: null, retryCount: 3, maxRetries: 2, result: "Timeout.", retryAfter: null },
+  ];
+
+  it("return chip 'idle' kalau tidak ada task aktif", () => {
+    const { chip } = buildTaskQueueViewModel([sampleTasks[0], sampleTasks[3]]);
+    assert.equal(chip, "idle");
+  });
+
+  it("return chip dengan count kalau ada task queued/in_progress", () => {
+    const { chip } = buildTaskQueueViewModel(sampleTasks);
+    assert.ok(chip.includes("pending"), `Expected 'pending' in chip: ${chip}`);
+  });
+
+  it("rows dibalik (terbaru dulu)", () => {
+    const { rows } = buildTaskQueueViewModel(sampleTasks);
+    assert.equal(rows[0].id, "4"); // index terakhir muncul pertama
+  });
+
+  it("status label dan tone sesuai", () => {
+    const { rows } = buildTaskQueueViewModel([sampleTasks[0]]);
+    const row = rows.find((r) => r.id === "1");
+    assert.equal(row.statusLabel, "done");
+    assert.equal(row.tone, "done");
+  });
+
+  it("runtime ditampilkan atau 'auto' kalau null", () => {
+    const { rows } = buildTaskQueueViewModel(sampleTasks);
+    const done = rows.find((r) => r.id === "1");
+    const inProgress = rows.find((r) => r.id === "2");
+    assert.equal(done.runtime, "claude-code");
+    assert.equal(inProgress.runtime, "auto");
+  });
+
+  it("retryCount > 0 muncul di label", () => {
+    const { rows } = buildTaskQueueViewModel([sampleTasks[1]]);
+    const row = rows[0];
+    assert.ok(row.label.includes("retry"), `Expected 'retry' in label: ${row.label}`);
+  });
+
+  it("task panjang di-truncate", () => {
+    const longTask = { id: "x", task: "a".repeat(100), status: "queued", runtimeId: null, retryCount: 0, maxRetries: 2, result: null, retryAfter: null };
+    const { rows } = buildTaskQueueViewModel([longTask]);
+    assert.ok(rows[0].label.includes("…"));
+  });
+
+  it("input kosong return idle chip dan rows kosong", () => {
+    const { chip, rows } = buildTaskQueueViewModel([]);
+    assert.equal(chip, "idle");
+    assert.equal(rows.length, 0);
+  });
+
+  it("limit membatasi jumlah rows", () => {
+    const { rows } = buildTaskQueueViewModel(sampleTasks, { limit: 2 });
+    assert.equal(rows.length, 2);
+  });
+});

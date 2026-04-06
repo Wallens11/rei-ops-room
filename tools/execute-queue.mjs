@@ -24,6 +24,52 @@ import { executeWorkerPidFile, projectRoot } from "./execute-worker-state.mjs";
 export const executeQueueFile = path.join(projectRoot, ".execute-queue.json");
 export const executeWorkersFile = path.join(projectRoot, ".execute-workers.json");
 export const executeWakeTriggerFile = path.join(projectRoot, ".execute-wake.trigger");
+export const executeQueueLockFile = path.join(projectRoot, ".execute-queue.lock");
+
+// ─── Queue lock (multi-worker coordination) ───────────────────────────────────
+// Menggunakan atomic file create (O_EXCL) supaya hanya satu worker yang bisa
+// claim task di saat yang sama. Lock bersifat TTL — stale lock (> 5s) akan
+// di-steal supaya tidak block selamanya kalau worker crash saat pegang lock.
+
+const LOCK_TTL_MS = 5_000;
+const LOCK_WAIT_MS = 100;
+const LOCK_TIMEOUT_MS = 3_000;
+
+async function withQueueLock(fn) {
+  const deadline = Date.now() + LOCK_TIMEOUT_MS;
+
+  while (true) {
+    try {
+      // O_EXCL → atomic: berhasil hanya kalau file belum ada
+      const fd = await fs.open(executeQueueLockFile, "wx");
+      await fd.writeFile(String(process.pid), "utf8");
+      await fd.close();
+      break; // lock acquired
+    } catch (e) {
+      if (e.code !== "EEXIST") throw e;
+
+      // Lock ada — cek apakah stale
+      try {
+        const stat = await fs.stat(executeQueueLockFile);
+        if (Date.now() - stat.mtimeMs > LOCK_TTL_MS) {
+          await fs.rm(executeQueueLockFile, { force: true });
+          continue; // langsung retry
+        }
+      } catch { /* file mungkin sudah dihapus worker lain — retry */ }
+
+      if (Date.now() >= deadline) {
+        throw new Error("execute-queue: lock timeout after 3s");
+      }
+      await new Promise((r) => setTimeout(r, LOCK_WAIT_MS));
+    }
+  }
+
+  try {
+    return await fn();
+  } finally {
+    await fs.rm(executeQueueLockFile, { force: true }).catch(() => {});
+  }
+}
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -77,7 +123,10 @@ export async function enqueueTask({ task, context = null, runtimeId = null } = {
     status: "queued",
     startedAt: null,
     finishedAt: null,
-    result: null
+    result: null,
+    retryCount: 0,
+    maxRetries: 2,
+    retryAfter: null
   };
 
   tasks.push(entry);
@@ -87,19 +136,61 @@ export async function enqueueTask({ task, context = null, runtimeId = null } = {
 
 /**
  * Ambil task pertama yang status-nya "queued" dan tandai sebagai "in_progress".
- * Atomic dalam satu proses (file lock tidak dipakai — single-worker assumption).
- * Return: task entry atau null kalau queue kosong.
+ * Di-wrap dengan file lock supaya aman untuk multi-worker.
+ * Task dengan `retryAfter` di masa depan dilewati (masih dalam cooldown).
+ * Return: task entry atau null kalau queue kosong / semua masih cooldown.
  */
 export async function claimNextQueuedTask() {
+  return withQueueLock(async () => {
+    const tasks = await readQueue();
+    const now = Date.now();
+    const next = tasks.find(
+      (t) => t.status === "queued" &&
+        (!t.retryAfter || new Date(t.retryAfter).getTime() <= now)
+    );
+
+    if (!next) return null;
+
+    next.status = "in_progress";
+    next.startedAt = new Date().toISOString();
+    await saveQueue(tasks);
+    return next;
+  });
+}
+
+/**
+ * Jadwal ulang task yang gagal dengan exponential backoff.
+ * Kalau retryCount sudah melebihi maxRetries → tandai sebagai "failed".
+ *
+ * @param id     — task ID
+ * @param result — ringkasan hasil (disimpan kalau permanent failure)
+ * Return: true kalau di-retry, false kalau permanently failed.
+ */
+export async function requeueForRetry(id, { result = null } = {}) {
   const tasks = await readQueue();
-  const next = tasks.find((t) => t.status === "queued");
+  const task = tasks.find((t) => t.id === id);
+  if (!task) return false;
 
-  if (!next) return null;
+  const retryCount = (task.retryCount || 0) + 1;
+  const maxRetries = task.maxRetries ?? 2;
 
-  next.status = "in_progress";
-  next.startedAt = new Date().toISOString();
+  if (retryCount > maxRetries) {
+    // Sudah habis retry — mark permanent failure
+    task.status = "failed";
+    task.result = result ? String(result).trim() : null;
+    task.finishedAt = new Date().toISOString();
+    await saveQueue(tasks);
+    return false;
+  }
+
+  // Backoff: 30s → 60s (2^(n-1) * 30s)
+  const backoffMs = 30_000 * (2 ** (retryCount - 1));
+  task.status = "queued";
+  task.retryCount = retryCount;
+  task.startedAt = null;
+  task.retryAfter = new Date(Date.now() + backoffMs).toISOString();
   await saveQueue(tasks);
-  return next;
+  return true;
 }
 
 /**

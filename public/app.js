@@ -57,6 +57,7 @@ import {
   createEmptyExecutePreviewState,
   createEmptyExecuteServiceState
 } from "./execute-agent-view.js";
+import { buildTaskQueueViewModel } from "./execute-queue-panel.js";
 import {
   buildSceneHotspots,
   describeSceneSelection,
@@ -185,6 +186,12 @@ const elements = {
   githubExecuteNote: document.getElementById("github-execute-note"),
   githubExecuteButton: document.getElementById("github-execute-button"),
   githubInboxList: document.getElementById("github-inbox-list"),
+  taskQueueTitle: document.getElementById("task-queue-title"),
+  taskQueueChip: document.getElementById("task-queue-chip"),
+  taskQueueInput: document.getElementById("task-queue-input"),
+  taskQueueRuntime: document.getElementById("task-queue-runtime"),
+  taskQueueSubmit: document.getElementById("task-queue-submit"),
+  taskQueueList: document.getElementById("task-queue-list"),
   sceneDetailTitle: document.getElementById("scene-detail-title"),
   sceneDetailBody: document.getElementById("scene-detail-body"),
   recentList: document.getElementById("recent-list"),
@@ -232,6 +239,7 @@ const renderState = {
   reportOnlyService: createEmptyReportOnlyServiceState(),
   executePreview: createEmptyExecutePreviewState(),
   executeService: createEmptyExecuteServiceState(),
+  taskQueue: { tasks: [], submitting: false },
   autopilot: loadReportOnlyAutopilotState(),
   reducedMotion: false,
   editorActive: false,
@@ -1827,6 +1835,76 @@ function toggleReportOnlyAutopilot() {
   }
 }
 
+// ─── Task Queue Panel ─────────────────────────────────────────────────────────
+
+function renderTaskQueue() {
+  if (!elements.taskQueueList) return;
+
+  const { chip, rows } = buildTaskQueueViewModel(renderState.taskQueue.tasks);
+
+  if (elements.taskQueueChip) elements.taskQueueChip.textContent = chip;
+
+  if (rows.length === 0) {
+    elements.taskQueueList.innerHTML =
+      '<li style="font-size:12px;font-family:monospace;color:var(--muted);">No tasks yet.</li>';
+    return;
+  }
+
+  elements.taskQueueList.innerHTML = rows.map((row) => `
+    <li>
+      <div style="display:flex;align-items:flex-start;gap:8px;">
+        <span class="item-chip" data-tone="${row.tone}" style="flex-shrink:0;font-size:10px;padding:3px 7px;">${escapeHtml(row.statusLabel)}</span>
+        <span style="font-size:12px;font-family:monospace;word-break:break-word;flex:1;">${escapeHtml(row.label)}</span>
+        <span style="font-size:10px;font-family:monospace;color:var(--muted);flex-shrink:0;">${escapeHtml(row.runtime)}</span>
+      </div>${row.result ? `
+      <p style="font-size:11px;font-family:monospace;color:var(--muted);margin:4px 0 0 28px;">${escapeHtml(row.result.length > 100 ? row.result.slice(0, 100) + "…" : row.result)}</p>` : ""}
+    </li>
+  `).join("");
+}
+
+function updateTaskQueueSubmitButton() {
+  if (!elements.taskQueueSubmit) return;
+  const hasInput = (elements.taskQueueInput?.value || "").trim().length > 0;
+  elements.taskQueueSubmit.disabled = !hasInput || renderState.taskQueue.submitting;
+}
+
+async function refreshTaskQueue() {
+  if (typeof fetch !== "function") return;
+  try {
+    const response = await fetch("/api/execute/queue", { cache: "no-store" });
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    const data = await response.json();
+    renderState.taskQueue.tasks = Array.isArray(data?.tasks) ? data.tasks : [];
+  } catch {
+    // keep existing state on error
+  }
+  renderTaskQueue();
+}
+
+async function submitDirectTask() {
+  const task = (elements.taskQueueInput?.value || "").trim();
+  if (!task || renderState.taskQueue.submitting) return;
+
+  renderState.taskQueue.submitting = true;
+  updateTaskQueueSubmitButton();
+
+  try {
+    const runtimeId = elements.taskQueueRuntime?.value || null;
+    await fetch("/api/execute/submit", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ task, runtimeId: runtimeId || null })
+    });
+    if (elements.taskQueueInput) elements.taskQueueInput.value = "";
+    await refreshTaskQueue();
+  } catch {
+    // ignore submit errors — task list will reflect true state on next poll
+  } finally {
+    renderState.taskQueue.submitting = false;
+    updateTaskQueueSubmitButton();
+  }
+}
+
 function startGithubInboxPolling() {
   if (githubInboxPollHandle) {
     return;
@@ -1851,6 +1929,7 @@ function startGithubInboxPolling() {
   void refreshReportOnlyService();
   void refreshExecutePreview();
   void refreshExecuteService();
+  void refreshTaskQueue();
   githubInboxPollHandle = setInterval(() => {
     void refreshDailyHandoff();
     void refreshGithubInbox();
@@ -1858,6 +1937,7 @@ function startGithubInboxPolling() {
     void refreshReportOnlyService();
     void refreshExecutePreview();
     void refreshExecuteService();
+    void refreshTaskQueue();
   }, GITHUB_INBOX_POLL_MS);
 }
 
@@ -2810,6 +2890,17 @@ elements.githubServiceButton?.addEventListener("click", () => {
 });
 elements.githubExecuteButton?.addEventListener("click", () => {
   void controlExecuteService(elements.githubExecuteButton.dataset.action || "");
+});
+elements.taskQueueSubmit?.addEventListener("click", () => {
+  void submitDirectTask();
+});
+elements.taskQueueInput?.addEventListener("input", () => {
+  updateTaskQueueSubmitButton();
+});
+elements.taskQueueInput?.addEventListener("keydown", (e) => {
+  if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) {
+    void submitDirectTask();
+  }
 });
 window.addEventListener("beforeunload", () => {
   statusTransport.stop();

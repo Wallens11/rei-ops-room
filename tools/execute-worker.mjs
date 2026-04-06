@@ -30,6 +30,7 @@ import {
   checkAndClearWakeTrigger,
   claimNextQueuedTask,
   registerWorker,
+  requeueForRetry,
   resolveQueueTask,
   unregisterWorker,
   updateWorkerActivity
@@ -473,7 +474,13 @@ async function runDirectTask({
   const lastMessage = await readTextIfExists(mission.outputLastMessageFile);
   const status = mission.aborted ? "failed" : mission.exitCode === 0 ? "done" : "failed";
 
-  await resolveQueueTask(task.id, { status, result: lastMessage || null });
+  if (status === "failed") {
+    // Coba retry dengan backoff — kalau sudah habis maxRetries, requeueForRetry
+    // akan mark sebagai "failed" secara otomatis.
+    await requeueForRetry(task.id, { result: lastMessage || null });
+  } else {
+    await resolveQueueTask(task.id, { status: "done", result: lastMessage || null });
+  }
 
   // Catat ke learning log
   await recordRunInsight({

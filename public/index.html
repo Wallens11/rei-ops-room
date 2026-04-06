@@ -247,6 +247,32 @@
         </article>
 
         <article class="panel">
+          <p class="panel-label">Task Queue</p>
+          <div class="item-head">
+            <strong id="task-queue-title">Direct Tasks</strong>
+            <span id="task-queue-chip" class="item-chip">idle</span>
+          </div>
+          <textarea
+            id="task-queue-input"
+            placeholder="Deskripsikan task untuk Rei..."
+            rows="2"
+            style="width:100%;box-sizing:border-box;margin-top:8px;background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.12);border-radius:10px;padding:8px 10px;color:inherit;font-family:monospace;font-size:12px;resize:vertical;"
+          ></textarea>
+          <div style="display:flex;gap:8px;margin-top:8px;align-items:center;">
+            <select id="task-queue-runtime" style="flex:1;background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.12);border-radius:8px;padding:5px 8px;color:inherit;font-family:monospace;font-size:12px;">
+              <option value="">Auto</option>
+              <option value="claude-code">Claude Code</option>
+              <option value="codex">Codex</option>
+            </select>
+            <button id="task-queue-submit" class="report-only-button" type="button" style="margin-top:0;flex:1;" disabled>
+              Submit
+            </button>
+          </div>
+          <div class="mini-divider"></div>
+          <ul id="task-queue-list" class="stack-list"></ul>
+        </article>
+
+        <article class="panel">
           <p class="panel-label">Workstreams</p>
           <ul id="workstream-list" class="stack-list"></ul>
         </article>
