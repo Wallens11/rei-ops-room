@@ -5,7 +5,10 @@ import {
   buildExecutePrompt,
   selectExecuteSkillProfile,
   prepareExecuteAction,
-  selectExecuteTarget
+  selectExecuteTarget,
+  countExecuteAttempts,
+  getLastExecuteAttemptMs,
+  isBlockedIssueRetryEligible
 } from "../tools/execute-bridge.mjs";
 
 test("selectExecuteTarget prefers an active execute issue and ignores report-only work", () => {
@@ -339,4 +342,210 @@ test("prepareExecuteAction halts the roadmap queue when the next child is blocke
   assert.equal(preview.target.roadmap.number, 13);
   assert.match(preview.detail, /blocked/i);
   assert.equal(preview.prompt, null);
+});
+
+test("selectExecuteTarget skips an in_progress issue updated within the claim cooldown window", () => {
+  const recentMs = Date.now() - 5000; // 5 detik lalu — dalam cooldown
+  const recentIso = new Date(recentMs).toISOString();
+
+  const target = selectExecuteTarget(
+    {
+      issues: [
+        {
+          number: 20,
+          title: "Active execute issue just claimed by another process",
+          createdAt: "2026-04-02T01:00:00Z",
+          updatedAt: recentIso,
+          url: "https://github.com/Wallens11/rei-ops-room/issues/20",
+          labels: ["agent:rei", "status:in_progress", "mode:execute"]
+        },
+        {
+          number: 21,
+          title: "Next todo execute issue",
+          createdAt: "2026-04-02T02:00:00Z",
+          updatedAt: "2026-04-02T02:00:00Z",
+          url: "https://github.com/Wallens11/rei-ops-room/issues/21",
+          labels: ["agent:rei", "status:todo", "mode:execute"]
+        }
+      ]
+    },
+    { nowMs: Date.now() }
+  );
+
+  // issue 20 di-skip karena cooldown, fallback ke todo issue 21
+  assert.equal(target.status, "todo");
+  assert.equal(target.issue.number, 21);
+});
+
+test("selectExecuteTarget picks an in_progress issue that is outside the claim cooldown window", () => {
+  const oldMs = Date.now() - 120_000; // 2 menit lalu — aman
+  const oldIso = new Date(oldMs).toISOString();
+
+  const target = selectExecuteTarget(
+    {
+      issues: [
+        {
+          number: 22,
+          title: "Ongoing execute work, safe to resume",
+          createdAt: "2026-04-02T01:00:00Z",
+          updatedAt: oldIso,
+          url: "https://github.com/Wallens11/rei-ops-room/issues/22",
+          labels: ["agent:rei", "status:in_progress", "mode:execute"]
+        }
+      ]
+    },
+    { nowMs: Date.now() }
+  );
+
+  assert.equal(target.status, "in_progress");
+  assert.equal(target.issue.number, 22);
+});
+
+test("countExecuteAttempts counts rei:execute started markers in comments", () => {
+  const comments = [
+    { body: "<!-- rei:execute issue=10 state=started -->\nRei picked up issue.", createdAt: "2026-04-01T10:00:00Z" },
+    { body: "Some unrelated comment." },
+    { body: "<!-- rei:execute issue=10 state=started -->\nRetrying.", createdAt: "2026-04-01T11:00:00Z" }
+  ];
+  assert.equal(countExecuteAttempts(comments), 2);
+});
+
+test("countExecuteAttempts returns 0 if no started markers exist", () => {
+  const comments = [
+    { body: "<!-- rei:execute issue=10 state=completed -->\nDone." },
+    { body: "Planning notes" }
+  ];
+  assert.equal(countExecuteAttempts(comments), 0);
+});
+
+test("getLastExecuteAttemptMs returns the most recent started comment timestamp", () => {
+  const t1 = "2026-04-01T10:00:00Z";
+  const t2 = "2026-04-01T12:00:00Z";
+  const comments = [
+    { body: "<!-- rei:execute issue=10 state=started -->\nFirst try.", createdAt: t1 },
+    { body: "Some other comment.", createdAt: "2026-04-01T11:00:00Z" },
+    { body: "<!-- rei:execute issue=10 state=started -->\nSecond try.", createdAt: t2 }
+  ];
+  assert.equal(getLastExecuteAttemptMs(comments), Date.parse(t2));
+});
+
+test("isBlockedIssueRetryEligible returns true for a blocked issue with no prior attempts", () => {
+  const issue = {
+    number: 30,
+    labels: ["agent:rei", "mode:execute", "status:blocked"]
+  };
+  const eligible = isBlockedIssueRetryEligible(issue, []);
+  assert.equal(eligible, true);
+});
+
+test("isBlockedIssueRetryEligible returns false when max retries is reached", () => {
+  const issue = {
+    number: 31,
+    labels: ["agent:rei", "mode:execute", "status:blocked"]
+  };
+  const comments = [
+    { body: "<!-- rei:execute issue=31 state=started -->", createdAt: "2026-04-01T10:00:00Z" },
+    { body: "<!-- rei:execute issue=31 state=started -->", createdAt: "2026-04-01T11:00:00Z" }
+  ];
+  const eligible = isBlockedIssueRetryEligible(issue, comments, { maxRetries: 2 });
+  assert.equal(eligible, false);
+});
+
+test("isBlockedIssueRetryEligible returns false when backoff window has not passed", () => {
+  const issue = {
+    number: 32,
+    labels: ["agent:rei", "mode:execute", "status:blocked"]
+  };
+  const recentMs = Date.now() - 60_000; // 1 menit lalu
+  const comments = [
+    { body: "<!-- rei:execute issue=32 state=started -->", createdAt: new Date(recentMs).toISOString() }
+  ];
+  // backoff pertama = 5 menit, belum lewat
+  const eligible = isBlockedIssueRetryEligible(issue, comments, {
+    maxRetries: 2,
+    backoffMinutes: [5, 30],
+    nowMs: Date.now()
+  });
+  assert.equal(eligible, false);
+});
+
+test("isBlockedIssueRetryEligible returns true when backoff window has passed", () => {
+  const issue = {
+    number: 33,
+    labels: ["agent:rei", "mode:execute", "status:blocked"]
+  };
+  const oldMs = Date.now() - 10 * 60_000; // 10 menit lalu
+  const comments = [
+    { body: "<!-- rei:execute issue=33 state=started -->", createdAt: new Date(oldMs).toISOString() }
+  ];
+  // backoff pertama = 5 menit, sudah lewat
+  const eligible = isBlockedIssueRetryEligible(issue, comments, {
+    maxRetries: 2,
+    backoffMinutes: [5, 30],
+    nowMs: Date.now()
+  });
+  assert.equal(eligible, true);
+});
+
+test("selectExecuteSkillProfile weights title keywords more heavily than body keywords", () => {
+  // "api" dan "server" ada di body tapi bukan title — frontend ada di title
+  const profile = selectExecuteSkillProfile({
+    title: "Fix the frontend layout panel widget",
+    body: "There are some api and server calls involved but the main task is a UI fix."
+  });
+  assert.equal(profile.id, "frontend");
+});
+
+test("prepareExecuteAction retries a blocked execute issue after backoff has passed", async () => {
+  const oldMs = Date.now() - 10 * 60_000; // 10 menit lalu — lewat backoff 5m
+
+  const preview = await prepareExecuteAction({
+    repo: "Wallens11/rei-ops-room",
+    handoff: { date: "2026-04-06", sections: [] },
+    runner: async (file, args) => {
+      if (file === "gh" && args[0] === "issue" && args[1] === "list") {
+        return {
+          stdout: JSON.stringify([
+            {
+              number: 40,
+              title: "Blocked execute issue eligible for retry",
+              state: "OPEN",
+              createdAt: "2026-04-01T01:00:00Z",
+              updatedAt: "2026-04-01T02:00:00Z",
+              url: "https://github.com/Wallens11/rei-ops-room/issues/40",
+              labels: [{ name: "agent:rei" }, { name: "status:blocked" }, { name: "mode:execute" }],
+              assignees: [],
+              author: { login: "Wallens11" }
+            }
+          ])
+        };
+      }
+
+      if (file === "gh" && args[0] === "issue" && args[1] === "view") {
+        return {
+          stdout: JSON.stringify({
+            number: 40,
+            title: "Blocked execute issue eligible for retry",
+            body: "## Scope\n- Fix the broken worker flow",
+            url: "https://github.com/Wallens11/rei-ops-room/issues/40",
+            labels: [{ name: "agent:rei" }, { name: "status:blocked" }, { name: "mode:execute" }],
+            comments: [
+              {
+                body: "<!-- rei:execute issue=40 state=started -->\nFirst attempt.",
+                createdAt: new Date(oldMs).toISOString()
+              }
+            ]
+          })
+        };
+      }
+
+      throw new Error(`Unexpected call: ${file} ${args.join(" ")}`);
+    }
+  });
+
+  assert.equal(preview.status, "retry");
+  assert.equal(preview.target.number, 40);
+  assert.match(preview.detail, /retry/i);
+  assert.match(preview.detail, /40/);
+  assert.ok(preview.prompt);
 });

@@ -149,6 +149,18 @@ const EXECUTE_SKILL_PROFILES = [
   }
 ];
 
+// 2a: Claim cooldown — hindari double-claim kalau issue baru saja di-update proses lain
+const EXECUTE_CLAIM_COOLDOWN_SECONDS = 30;
+
+// 2b: Retry policy — blocked issue bisa dicoba ulang dengan backoff
+const EXECUTE_MAX_RETRIES = 2;
+const EXECUTE_RETRY_BACKOFF_MINUTES = [5, 30]; // backoff per attempt: 1st retry = 5m, 2nd = 30m
+
+// 2c: Weighted scoring — title sinyal paling kuat, label medium, body luas tapi noisy
+const SKILL_WEIGHT_TITLE = 3;
+const SKILL_WEIGHT_LABEL = 2;
+const SKILL_WEIGHT_BODY = 1;
+
 function normalizeLabelNames(labels = []) {
   return labels.map((label) => (typeof label === "string" ? label : label?.name)).filter(Boolean);
 }
@@ -228,14 +240,23 @@ function resolveSkillBundle(skillIds = []) {
 }
 
 export function selectExecuteSkillProfile(issue = {}) {
-  const text = `${issue?.title || ""}\n${issue?.body || ""}\n${normalizeLabelNames(issue?.labels || []).join(" ")}`
-    .toLowerCase();
+  // 2c: weighted multi-source scoring — title paling kuat, label medium, body luas tapi noisy
+  const titleText = String(issue?.title || "").toLowerCase();
+  const labelText = normalizeLabelNames(issue?.labels || []).join(" ").toLowerCase();
+  const bodyText = String(issue?.body || "").toLowerCase();
+
   let bestProfile = null;
   let bestScore = 0;
 
   for (const profile of EXECUTE_SKILL_PROFILES) {
-    const score = profile.keywords.reduce((total, keyword) => total + (text.includes(keyword) ? 1 : 0), 0);
+    let score = 0;
+    for (const keyword of profile.keywords) {
+      if (titleText.includes(keyword)) score += SKILL_WEIGHT_TITLE;
+      if (labelText.includes(keyword)) score += SKILL_WEIGHT_LABEL;
+      if (bodyText.includes(keyword)) score += SKILL_WEIGHT_BODY;
+    }
 
+    // Tie-break: prefer earlier profile in EXECUTE_SKILL_PROFILES (scraping > frontend > backend > docs)
     if (score > bestScore) {
       bestProfile = profile;
       bestScore = score;
@@ -328,6 +349,63 @@ function formatTarget(target) {
     url: target.url || null,
     status: target.status || issueStatus(target)
   };
+}
+
+// 2b: Retry helpers — cek apakah blocked issue layak dicoba ulang
+const EXECUTE_MARKER_STARTED_RE = /<!--\s*rei:execute\s+issue=\d+\s+state=started\s*-->/g;
+
+export function countExecuteAttempts(comments = []) {
+  let count = 0;
+  for (const comment of comments) {
+    const body = String(comment?.body || "");
+    const matches = body.match(EXECUTE_MARKER_STARTED_RE);
+    if (matches) {
+      count += matches.length;
+    }
+  }
+  return count;
+}
+
+export function getLastExecuteAttemptMs(comments = []) {
+  let latestMs = null;
+  for (const comment of comments) {
+    const body = String(comment?.body || "");
+    if (!EXECUTE_MARKER_STARTED_RE.test(body)) {
+      continue;
+    }
+    // reset lastIndex karena global regex stateful
+    EXECUTE_MARKER_STARTED_RE.lastIndex = 0;
+    const createdAt = comment?.createdAt ? Date.parse(String(comment.createdAt)) : NaN;
+    if (Number.isFinite(createdAt) && (latestMs === null || createdAt > latestMs)) {
+      latestMs = createdAt;
+    }
+  }
+  // reset setelah pemakaian
+  EXECUTE_MARKER_STARTED_RE.lastIndex = 0;
+  return latestMs;
+}
+
+export function isBlockedIssueRetryEligible(issue, comments = [], { nowMs = Date.now(), maxRetries = EXECUTE_MAX_RETRIES, backoffMinutes = EXECUTE_RETRY_BACKOFF_MINUTES } = {}) {
+  if (issueStatus(issue) !== "blocked") {
+    return false;
+  }
+
+  const attemptCount = countExecuteAttempts(comments);
+  if (attemptCount >= maxRetries) {
+    return false; // sudah habis jatah retry
+  }
+
+  const lastAttemptMs = getLastExecuteAttemptMs(comments);
+  if (lastAttemptMs === null) {
+    return true; // belum pernah ada marker started, boleh retry
+  }
+
+  // backoff: cek apakah sudah cukup lama sejak last attempt
+  // attemptCount=1 → retry pertama → pakai backoffMinutes[0]; jadi index = attemptCount-1
+  const backoffIndex = Math.min(Math.max(0, attemptCount - 1), backoffMinutes.length - 1);
+  const requiredBackoffMs = backoffMinutes[backoffIndex] * 60 * 1000;
+  const elapsedMs = nowMs - lastAttemptMs;
+  return elapsedMs >= requiredBackoffMs;
 }
 
 function extractIssueNumbers(text = "") {
@@ -430,10 +508,24 @@ async function selectRoadmapTarget({ payload = {}, repo, runner }) {
   return null;
 }
 
-export function selectExecuteTarget(payload = {}) {
+// 2a: claim guard — cek apakah issue baru saja di-update (mungkin sedang diklaim proses lain)
+function isWithinClaimCooldown(issue, nowMs = Date.now()) {
+  const updatedAt = issue?.updatedAt ? Date.parse(String(issue.updatedAt)) : NaN;
+  if (!Number.isFinite(updatedAt)) {
+    return false;
+  }
+  const ageSeconds = (nowMs - updatedAt) / 1000;
+  return ageSeconds < EXECUTE_CLAIM_COOLDOWN_SECONDS;
+}
+
+export function selectExecuteTarget(payload = {}, { nowMs = Date.now() } = {}) {
   const executeIssues = (payload.issues || []).filter((issue) => isExecuteIssue(issue));
+
+  // in_progress: ambil yang sudah berjalan, tapi skip yang baru saja di-update
+  // (mungkin executor lain baru saja claim-nya)
   const activeIssue = executeIssues
     .filter((issue) => issueStatus(issue) === "in_progress")
+    .filter((issue) => !isWithinClaimCooldown(issue, nowMs))
     .sort(byUpdatedAtDesc)[0];
 
   if (activeIssue) {
@@ -629,6 +721,39 @@ export async function prepareExecuteAction({
   }
 
   if (!target?.issue) {
+    // 2b: fallback — cek blocked issues yang eligible untuk retry
+    const blockedExecuteIssues = (payload.issues || [])
+      .filter((issue) => isExecuteIssue(issue) && issueStatus(issue) === "blocked")
+      .sort(byUpdatedAtDesc);
+
+    for (const blockedCandidate of blockedExecuteIssues) {
+      const fullIssue = await viewIssueWithRunner(runner, {
+        repo: resolvedRepo,
+        issueNumber: blockedCandidate.number
+      });
+      if (isBlockedIssueRetryEligible(fullIssue, fullIssue.comments || [])) {
+        const skillProfile = selectExecuteSkillProfile(fullIssue);
+        const resolvedHandoff = handoff || (await readDailyDeviceHandoff());
+        const prompt = buildExecutePrompt({
+          repo: resolvedRepo,
+          repoCwd: cwd,
+          issue: fullIssue,
+          handoff: resolvedHandoff
+        });
+
+        return {
+          repo: resolvedRepo,
+          status: "retry",
+          target: formatTarget({ ...fullIssue, status: "blocked" }),
+          issue: fullIssue,
+          skillProfile,
+          prompt,
+          handoff: resolvedHandoff,
+          detail: `Retrying blocked issue #${fullIssue.number} — attempt ${countExecuteAttempts(fullIssue.comments || []) + 1}/${EXECUTE_MAX_RETRIES}.`
+        };
+      }
+    }
+
     return {
       repo: resolvedRepo,
       status: "no_target",
