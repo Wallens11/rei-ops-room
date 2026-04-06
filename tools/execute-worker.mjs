@@ -27,6 +27,7 @@ import {
   selectRuntime
 } from "./runtimes/index.mjs";
 import {
+  checkAndClearWakeTrigger,
   claimNextQueuedTask,
   registerWorker,
   resolveQueueTask,
@@ -111,47 +112,76 @@ async function readTextIfExists(filePath) {
   }
 }
 
-async function sleepWithSignal(ms, signal) {
-  if (ms <= 0) {
-    return;
+// ─── Wake-up state (SIGUSR1 fast-path, Unix only) ────────────────────────────
+// wakeResolve di-set oleh sleepWithSignal dan di-call oleh handler SIGUSR1.
+// Di Windows, SIGUSR1 tidak tersedia — trigger file dipakai sebagai gantinya.
+
+let wakeResolve = null;
+
+process.on("SIGUSR1", () => {
+  if (wakeResolve) {
+    wakeResolve();
+    wakeResolve = null;
   }
+});
 
-  await new Promise((resolve, reject) => {
-    const timeout = setTimeout(() => {
-      cleanup();
-      resolve();
-    }, ms);
+/**
+ * Sleep selama `ms` milidetik, tapi bisa di-interrupt lebih awal via:
+ *   1. Trigger file (.execute-wake.trigger) — cross-platform, di-poll tiap 2s.
+ *   2. SIGUSR1 — fast-path di Unix (Mac/Linux). Di Windows diabaikan.
+ *   3. AbortSignal — untuk graceful shutdown.
+ */
+async function sleepWithSignal(ms, signal) {
+  if (ms <= 0) return;
 
-    function onAbort() {
-      cleanup();
-      const error = new Error("Worker aborted");
-      error.name = "AbortError";
-      reject(error);
-    }
+  const POLL_MS = 2_000;
+  let remaining = ms;
 
-    function onWake() {
-      cleanup();
-      resolve();
-    }
-
-    function cleanup() {
-      clearTimeout(timeout);
-      signal?.removeEventListener?.("abort", onAbort);
-      if (wakeResolve === onWake) wakeResolve = null;
-    }
-
+  while (remaining > 0) {
     if (signal?.aborted) {
-      onAbort();
-      return;
+      const err = new Error("Worker aborted");
+      err.name = "AbortError";
+      throw err;
     }
 
-    // Register wake resolver — SIGUSR1 akan panggil ini untuk skip sleep
-    wakeResolve = onWake;
+    // Cross-platform: cek trigger file dulu sebelum tunggu chunk berikutnya
+    const triggered = await checkAndClearWakeTrigger().catch(() => false);
+    if (triggered) return;
 
-    signal?.addEventListener?.("abort", onAbort, {
-      once: true
+    const chunk = Math.min(POLL_MS, remaining);
+    let woken = false;
+
+    await new Promise((resolve, reject) => {
+      const timer = setTimeout(() => {
+        if (wakeResolve === resolver) wakeResolve = null;
+        resolve();
+      }, chunk);
+
+      function resolver() {
+        clearTimeout(timer);
+        if (wakeResolve === resolver) wakeResolve = null;
+        signal?.removeEventListener?.("abort", onAbort);
+        woken = true;
+        resolve();
+      }
+
+      function onAbort() {
+        clearTimeout(timer);
+        if (wakeResolve === resolver) wakeResolve = null;
+        signal?.removeEventListener?.("abort", onAbort);
+        const err = new Error("Worker aborted");
+        err.name = "AbortError";
+        reject(err);
+      }
+
+      // SIGUSR1 fast-path (Unix) — panggil resolver untuk skip chunk ini
+      wakeResolve = resolver;
+      signal?.addEventListener?.("abort", onAbort, { once: true });
     });
-  });
+
+    if (woken) return;
+    remaining -= chunk;
+  }
 }
 
 async function fileExists(candidate) {
@@ -374,19 +404,6 @@ async function runMission({
 async function runCodexMission({ codexCommand = null, repoCwd, prompt, runDir, signal = null, onChildPid = () => {} } = {}) {
   return runMission({ runtimeId: "codex", repoCwd, prompt, runDir, signal, onChildPid });
 }
-
-// ─── SIGUSR1 wake-up ─────────────────────────────────────────────────────────
-// Server kirim SIGUSR1 saat task baru di-submit via /api/execute/submit
-// atau webhook GitHub masuk. Worker langsung skip sleep dan proses.
-
-let wakeResolve = null;
-
-process.on("SIGUSR1", () => {
-  if (wakeResolve) {
-    wakeResolve();
-    wakeResolve = null;
-  }
-});
 
 // ─── Direct task runner ──────────────────────────────────────────────────────
 

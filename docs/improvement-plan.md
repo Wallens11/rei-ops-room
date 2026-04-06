@@ -250,7 +250,7 @@ node --test tests/execute-worker.test.mjs
 
 ## Item 5 — Taiou: Direct Task Queue + Webhook + Multi-Worker
 
-**Status**: ✅ Done — commit berikut setelah ini
+**Status**: ✅ Done (+ cross-platform patch — see Item 5a below)
 
 **Motivasi**: Rei sebelumnya pure pull-based (polling GitHub 60s).
 Item ini menambah kemampuan Rei untuk di-"taiou" — menerima task dari luar tanpa perlu buat GitHub issue,
@@ -279,7 +279,7 @@ Response:
 { "status": "queued", "task": { "id": "...", "status": "queued" }, "workerWoken": true }
 ```
 
-Worker langsung terbangun via SIGUSR1 dan proses task tanpa tunggu 60s interval.
+Worker langsung terbangun dan proses task tanpa tunggu 60s interval.
 
 ### GitHub Webhook
 
@@ -289,7 +289,7 @@ Header: X-Hub-Signature-256: sha256=<hmac>  (optional, set GITHUB_WEBHOOK_SECRET
 Header: X-GitHub-Event: issues
 ```
 
-Saat issue di-label `agent:rei` atau `mode:execute` → worker di-wake via SIGUSR1.
+Saat issue di-label `agent:rei` atau `mode:execute` → worker di-wake.
 
 ### Multi-worker registry
 
@@ -371,4 +371,40 @@ Kalau mau lanjut, cek bagian "What's missing" di overview untuk ide berikutnya.
 
 ---
 
-*Last updated: 2026-04-07 — Item 1–6 selesai semua ✅*
+## Item 5a — Cross-platform Wake-up Fix (Windows support)
+
+**Status**: ✅ Done
+
+**Motivasi**: SIGUSR1 tidak tersedia di Windows (`process.kill(pid, 'SIGUSR1')` throw).
+Mekanisme wake-up sebelumnya hanya pakai SIGUSR1 → worker tidak bisa di-wake di Windows.
+
+### Solusi: Dual-mechanism
+
+```
+signalWorkerWake():
+  1. Tulis .execute-wake.trigger (cross-platform, SELALU jalan)
+  2. Kirim SIGUSR1 ke worker PID (fast-path Unix — error diabaikan di Windows)
+
+sleepWithSignal(ms, signal):
+  Loop tiap 2s:
+    a. Cek AbortSignal → throw AbortError
+    b. Cek .execute-wake.trigger → kalau ada, hapus dan return (bangun)
+    c. await Promise dengan timer 2s, bisa di-interrupt SIGUSR1 (Unix fast-path)
+```
+
+### File yang diubah
+
+| File | Perubahan |
+|---|---|
+| `tools/execute-queue.mjs` | `signalWorkerWake()` → tulis trigger file dulu; `checkAndClearWakeTrigger()` NEW |
+| `tools/execute-worker.mjs` | `sleepWithSignal()` → polling loop 2s + cek trigger file; `wakeResolve` dipindah ke sebelum fungsi |
+| `.gitignore` | tambah `.execute-wake.trigger` |
+| `tests/execute-queue.test.mjs` | +5 tests: trigger file create/check/clear/idempotent |
+
+### Trigger file path
+
+`.execute-wake.trigger` — di project root, excluded dari git.
+
+---
+
+*Last updated: 2026-04-06 — Item 1–6 + 5a (cross-platform fix) ✅*

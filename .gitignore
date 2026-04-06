@@ -10,4 +10,5 @@ node_modules/
 .execute-queue.json
 .execute-workers.json
 .execute-learning.json
+.execute-wake.trigger
 .DS_Store

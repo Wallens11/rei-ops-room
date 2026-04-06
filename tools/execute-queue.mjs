@@ -23,6 +23,7 @@ import { executeWorkerPidFile, projectRoot } from "./execute-worker-state.mjs";
 
 export const executeQueueFile = path.join(projectRoot, ".execute-queue.json");
 export const executeWorkersFile = path.join(projectRoot, ".execute-workers.json");
+export const executeWakeTriggerFile = path.join(projectRoot, ".execute-wake.trigger");
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -199,23 +200,50 @@ export async function unregisterWorker(workerId) {
   await saveWorkers(workers.filter((w) => w.workerId !== workerId));
 }
 
-// ─── Wake signal ─────────────────────────────────────────────────────────────
+// ─── Wake signal (cross-platform) ────────────────────────────────────────────
 
 /**
- * Kirim SIGUSR1 ke execute worker yang sedang running supaya skip sleep
- * dan langsung proses task baru di queue.
+ * Bangunkan execute worker supaya langsung proses task tanpa tunggu interval.
  *
- * Dibaca dari .execute-worker.pid — kalau file tidak ada atau PID tidak valid,
- * tidak ada efek (worker akan pick up di poll berikutnya).
+ * Dua mekanisme dipakai sekaligus:
+ *   1. Trigger file (.execute-wake.trigger) — bekerja di semua platform.
+ *      Worker cek file ini tiap 2s selama sleep, langsung skip kalau ada.
+ *   2. SIGUSR1 — fast-path untuk Mac/Linux. Di Windows diabaikan (tidak crash).
+ *
+ * Kalau worker tidak jalan, trigger file tetap tersimpan dan akan dibaca
+ * saat worker start di iterasi berikutnya.
  */
 export async function signalWorkerWake() {
+  // 1. Tulis trigger file — cross-platform, selalu jalan
+  try {
+    await fs.writeFile(executeWakeTriggerFile, new Date().toISOString(), "utf8");
+  } catch {
+    // ignore — trigger file bersifat best-effort
+  }
+
+  // 2. SIGUSR1 sebagai fast-path di Unix (abaikan error di Windows)
   try {
     const pidText = await fs.readFile(executeWorkerPidFile, "utf8");
     const pid = Number(pidText.trim());
+    if (Number.isFinite(pid) && pid > 0) {
+      process.kill(pid, "SIGUSR1");
+    }
+  } catch {
+    // Windows: SIGUSR1 tidak tersedia — trigger file sudah cukup
+  }
 
-    if (!Number.isFinite(pid) || pid <= 0) return false;
+  return true;
+}
 
-    process.kill(pid, "SIGUSR1");
+/**
+ * Cek apakah trigger file ada dan hapus setelah dibaca.
+ * Dipanggil oleh worker di tiap poll chunk saat sleep.
+ * Return: true kalau trigger ada (worker harus langsung bangun).
+ */
+export async function checkAndClearWakeTrigger() {
+  try {
+    await fs.access(executeWakeTriggerFile);
+    await fs.rm(executeWakeTriggerFile, { force: true });
     return true;
   } catch {
     return false;

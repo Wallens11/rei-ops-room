@@ -302,6 +302,63 @@ describe("execute-queue: workers registry", async () => {
   });
 });
 
+// ─── checkAndClearWakeTrigger + signalWorkerWake (trigger file) ───────────────
+
+describe("execute-queue: wake trigger file (cross-platform)", async () => {
+  const {
+    checkAndClearWakeTrigger,
+    signalWorkerWake,
+    executeWakeTriggerFile
+  } = await import("../tools/execute-queue.mjs");
+
+  // Cleanup sebelum dan sesudah supaya state bersih
+  async function removeTrigger() {
+    await fs.rm(executeWakeTriggerFile, { force: true }).catch(() => {});
+  }
+
+  before(removeTrigger);
+  after(removeTrigger);
+
+  it("checkAndClearWakeTrigger: return false kalau file tidak ada", async () => {
+    await removeTrigger();
+    const result = await checkAndClearWakeTrigger();
+    assert.equal(result, false);
+  });
+
+  it("signalWorkerWake: membuat trigger file", async () => {
+    await removeTrigger();
+    await signalWorkerWake();
+    // Cek file ada (tanpa fs.access supaya tidak consume trigger)
+    let exists = false;
+    try {
+      await fs.access(executeWakeTriggerFile);
+      exists = true;
+    } catch {}
+    assert.ok(exists, "trigger file harus ada setelah signalWorkerWake");
+  });
+
+  it("checkAndClearWakeTrigger: return true kalau file ada", async () => {
+    // File masih ada dari test sebelumnya
+    const result = await checkAndClearWakeTrigger();
+    assert.equal(result, true);
+  });
+
+  it("checkAndClearWakeTrigger: hapus file setelah dibaca", async () => {
+    // Buat trigger file manual
+    await fs.writeFile(executeWakeTriggerFile, "test", "utf8");
+    await checkAndClearWakeTrigger(); // consume
+    // Sekarang file harus sudah tidak ada
+    const result = await checkAndClearWakeTrigger();
+    assert.equal(result, false);
+  });
+
+  it("signalWorkerWake: idempotent, tidak crash kalau worker tidak jalan", async () => {
+    await removeTrigger();
+    // SIGUSR1 ke PID yang tidak ada — harus di-ignore, tidak throw
+    await assert.doesNotReject(signalWorkerWake());
+  });
+});
+
 describe("execute-bridge: buildDirectTaskPrompt", async () => {
   const { buildDirectTaskPrompt } = await import("../tools/execute-bridge.mjs");
 
