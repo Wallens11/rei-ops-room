@@ -312,7 +312,13 @@ async function waitForPortRelease(port, attempts = 20) {
 
 async function startDetachedServer(port) {
   await fs.mkdir(projectRoot, { recursive: true });
-  const logHandle = await fs.open(logFile, "a");
+
+  // Windows: fd inheritance tidak bekerja untuk arbitrary file handles.
+  // Pakai stdio:"ignore" supaya server bisa spawn dengan benar.
+  // Unix: redirect ke log file seperti biasa.
+  const isWin = process.platform === "win32";
+  const logHandle = isWin ? null : await fs.open(logFile, "a");
+
   const child = spawn(process.execPath, ["server.mjs"], {
     cwd: projectRoot,
     env: {
@@ -321,12 +327,12 @@ async function startDetachedServer(port) {
     },
     detached: true,
     windowsHide: true,
-    stdio: ["ignore", logHandle.fd, logHandle.fd]
+    stdio: isWin ? "ignore" : ["ignore", logHandle.fd, logHandle.fd]
   });
 
   child.unref();
   await fs.writeFile(pidFile, `${child.pid}\n`, "utf8");
-  await logHandle.close();
+  if (logHandle) await logHandle.close();
 
   const ready = await waitForServer(port);
   if (!ready) {

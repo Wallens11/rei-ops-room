@@ -205,7 +205,8 @@ async function startDetachedWorker({ repo = null, intervalMs = defaultIntervalMs
   await fs.mkdir(projectRoot, {
     recursive: true
   });
-  const logHandle = await fs.open(executeWorkerLogFile, "a");
+  const isWin = process.platform === "win32";
+  const logHandle = isWin ? null : await fs.open(executeWorkerLogFile, "a");
   const args = ["tools/execute-worker.mjs"];
 
   if (repo) {
@@ -219,12 +220,12 @@ async function startDetachedWorker({ repo = null, intervalMs = defaultIntervalMs
     env: process.env,
     detached: true,
     windowsHide: true,
-    stdio: ["ignore", logHandle.fd, logHandle.fd]
+    stdio: isWin ? "ignore" : ["ignore", logHandle.fd, logHandle.fd]
   });
 
   child.unref();
   await fs.writeFile(executeWorkerPidFile, `${child.pid}\n`, "utf8");
-  await logHandle.close();
+  if (logHandle) await logHandle.close();
 
   const alive = await waitForWorkerStart(child.pid);
   if (!alive) {
