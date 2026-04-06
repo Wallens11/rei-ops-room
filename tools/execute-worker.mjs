@@ -1,3 +1,4 @@
+import crypto from "node:crypto";
 import { execFile, spawn } from "node:child_process";
 import fs from "node:fs/promises";
 import { createWriteStream } from "node:fs";
@@ -25,6 +26,13 @@ import {
   probeAvailableRuntimes,
   selectRuntime
 } from "./runtimes/index.mjs";
+import {
+  claimNextQueuedTask,
+  registerWorker,
+  resolveQueueTask,
+  unregisterWorker,
+  updateWorkerActivity
+} from "./execute-queue.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const DEFAULT_INTERVAL_SECONDS = 60;
@@ -120,15 +128,24 @@ async function sleepWithSignal(ms, signal) {
       reject(error);
     }
 
+    function onWake() {
+      cleanup();
+      resolve();
+    }
+
     function cleanup() {
       clearTimeout(timeout);
       signal?.removeEventListener?.("abort", onAbort);
+      if (wakeResolve === onWake) wakeResolve = null;
     }
 
     if (signal?.aborted) {
       onAbort();
       return;
     }
+
+    // Register wake resolver — SIGUSR1 akan panggil ini untuk skip sleep
+    wakeResolve = onWake;
 
     signal?.addEventListener?.("abort", onAbort, {
       once: true
@@ -355,6 +372,98 @@ async function runMission({
 // Semua call baru pakai runMission({ runtimeId, ... }) langsung.
 async function runCodexMission({ codexCommand = null, repoCwd, prompt, runDir, signal = null, onChildPid = () => {} } = {}) {
   return runMission({ runtimeId: "codex", repoCwd, prompt, runDir, signal, onChildPid });
+}
+
+// ─── SIGUSR1 wake-up ─────────────────────────────────────────────────────────
+// Server kirim SIGUSR1 saat task baru di-submit via /api/execute/submit
+// atau webhook GitHub masuk. Worker langsung skip sleep dan proses.
+
+let wakeResolve = null;
+
+process.on("SIGUSR1", () => {
+  if (wakeResolve) {
+    wakeResolve();
+    wakeResolve = null;
+  }
+});
+
+// ─── Direct task runner ──────────────────────────────────────────────────────
+
+/**
+ * Jalankan satu direct task dari execute-queue.
+ * Berbeda dengan GitHub issue — tidak ada transition label, tidak ada comment.
+ * Hasilnya disimpan langsung di queue entry.
+ */
+async function runDirectTask({
+  task,
+  availableRuntimes = ["codex"],
+  signal = null,
+  onStateChange = async () => {},
+  workerId = null
+} = {}) {
+  const { buildDirectTaskPrompt } = await import("./execute-bridge.mjs");
+  const { readDailyDeviceHandoff } = await import("../server.mjs");
+
+  const handoff = await readDailyDeviceHandoff().catch(() => null);
+  const prompt = buildDirectTaskPrompt({
+    task: task.task,
+    context: task.context,
+    repoCwd: projectRoot,
+    handoff
+  });
+
+  const runtimeId = task.runtimeId
+    ? task.runtimeId
+    : selectRuntime("general", availableRuntimes);
+  const runtimeLabel = getRuntime(runtimeId).RUNTIME_LABEL;
+
+  await fs.mkdir(executeRunsDir, { recursive: true });
+  const runDir = path.join(executeRunsDir, `direct-${task.id.slice(0, 8)}-${Date.now()}`);
+
+  await onStateChange({
+    status: "launching",
+    currentTarget: { number: null, title: task.task },
+    currentChildPid: null,
+    currentRunDir: runDir,
+    detail: `Launching ${runtimeLabel} for direct task: ${task.task.slice(0, 60)}`
+  });
+
+  if (workerId) {
+    await updateWorkerActivity(workerId, { taskId: task.id, runtimeId });
+  }
+
+  const mission = await runMission({
+    runtimeId,
+    repoCwd: projectRoot,
+    prompt,
+    runDir,
+    signal,
+    onChildPid: async (childPid) => {
+      await onStateChange({
+        status: "running",
+        currentTarget: { number: null, title: task.task },
+        currentChildPid: childPid,
+        currentRunDir: runDir,
+        detail: `${runtimeLabel} is running direct task.`
+      });
+    }
+  });
+
+  const lastMessage = await readTextIfExists(mission.outputLastMessageFile);
+  const status = mission.aborted ? "failed" : mission.exitCode === 0 ? "done" : "failed";
+
+  await resolveQueueTask(task.id, { status, result: lastMessage || null });
+
+  if (workerId) {
+    await updateWorkerActivity(workerId, { taskId: null, runtimeId: null });
+  }
+
+  return {
+    status,
+    target: { number: null, title: task.task },
+    detail: `Direct task ${status}: ${task.task.slice(0, 60)}`,
+    runDir
+  };
 }
 
 export function createExecuteWorkerResultSignature(result = {}) {
@@ -628,13 +737,18 @@ export async function runExecuteWorker({
 } = {}) {
   let lastSignature = null;
 
+  // ID unik per worker instance — untuk multi-worker registry
+  const workerId = crypto.randomUUID().slice(0, 8);
+
   // Probe runtime yang tersedia di sistem saat startup.
-  // Ini yang menentukan apakah task backend/docs bisa pakai claude-code atau fallback ke codex.
   const availableRuntimes = await probeAvailableRuntimes(process.env);
+
+  // Register ke workers registry
+  await registerWorker({ workerId, pid: process.pid, runtimeId: availableRuntimes[0] ?? "codex" }).catch(() => {});
 
   if (!once) {
     stdout.write(
-      `[${timestamp()}] execute worker watching ${repo || "origin repo"} every ${Math.round(
+      `[${timestamp()}] execute worker ${workerId} watching ${repo || "origin repo"} every ${Math.round(
         intervalMs / 1000
       )}s | runtimes: ${availableRuntimes.join(", ") || "none"}\n`
     );
@@ -644,11 +758,36 @@ export async function runExecuteWorker({
     await writeExecuteWorkerState(nextState);
   };
 
+  try {
   while (true) {
     if (signal?.aborted) {
       return 0;
     }
 
+    // Priority 1: cek direct task queue terlebih dahulu.
+    // Direct task = dikirim via /api/execute/submit tanpa GitHub issue.
+    const directTask = await claimNextQueuedTask().catch(() => null);
+    if (directTask) {
+      const result = await runDirectTask({
+        task: directTask,
+        availableRuntimes,
+        signal,
+        onStateChange: persistState,
+        workerId
+      });
+
+      const signature = createExecuteWorkerResultSignature(result);
+      if (signature !== lastSignature) {
+        stdout.write(`${formatExecuteWorkerResultLine(result)}\n`);
+        lastSignature = signature;
+      }
+
+      if (once) return 0;
+      // Langsung loop lagi — mungkin ada task lain di queue
+      continue;
+    }
+
+    // Priority 2: GitHub issue queue (existing behavior)
     const result = await executeAction({
       cwd,
       repo,
@@ -678,6 +817,10 @@ export async function runExecuteWorker({
 
       throw error;
     }
+  }
+  } finally {
+    // Unregister dari workers registry saat keluar (normal atau error)
+    await unregisterWorker(workerId).catch(() => {});
   }
 }
 

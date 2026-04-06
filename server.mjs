@@ -1,3 +1,4 @@
+import crypto from "node:crypto";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import fs from "node:fs/promises";
@@ -7,6 +8,12 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { buildRoomState } from "./public/room-state.js";
+import {
+  enqueueTask,
+  readQueue,
+  readWorkers,
+  signalWorkerWake
+} from "./tools/execute-queue.mjs";
 
 const execFileAsync = promisify(execFile);
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -189,6 +196,7 @@ const NOISE_TARGET_PREFIXES = [
   "codex_core::models_manager::",
   "codex_otel."
 ];
+const GITHUB_WEBHOOK_SECRET = process.env.GITHUB_WEBHOOK_SECRET || "";
 const statusStreamClients = new Set();
 let statusStreamTimer = null;
 let statusStreamSequence = 0;
@@ -1693,6 +1701,118 @@ export function createServer({
       } catch (error) {
         writeJson(response, error?.statusCode || 500, {
           error: "Failed to run report-only bridge",
+          detail: error instanceof Error ? error.message : String(error)
+        });
+      }
+      return;
+    }
+
+    // ─── Direct Task Submit ──────────────────────────────────────────────────
+    // POST /api/execute/submit  { task, context?, runtimeId? }
+    // GET  /api/execute/queue   — baca status queue
+    // GET  /api/execute/workers — baca registry worker aktif
+
+    if (url.pathname === "/api/execute/submit" && request.method === "POST") {
+      try {
+        const body = await readJsonRequestBody(request);
+        const task = String(body?.task || "").trim();
+
+        if (!task) {
+          writeJson(response, 400, { error: "Field `task` wajib diisi." });
+          return;
+        }
+
+        const entry = await enqueueTask({
+          task,
+          context: body?.context || null,
+          runtimeId: body?.runtimeId || null
+        });
+
+        // Bangunkan worker kalau sedang sleep — supaya task langsung diproses,
+        // tidak perlu tunggu interval berikutnya (biasanya 60s).
+        const woke = await signalWorkerWake();
+
+        writeJson(response, 202, { status: "queued", task: entry, workerWoken: woke });
+      } catch (error) {
+        writeJson(response, error?.statusCode || 500, {
+          error: "Gagal enqueue task",
+          detail: error instanceof Error ? error.message : String(error)
+        });
+      }
+      return;
+    }
+
+    if (url.pathname === "/api/execute/queue") {
+      try {
+        const tasks = await readQueue();
+        writeJson(response, 200, { tasks });
+      } catch (error) {
+        writeJson(response, 500, {
+          error: "Gagal baca execute queue",
+          detail: error instanceof Error ? error.message : String(error)
+        });
+      }
+      return;
+    }
+
+    if (url.pathname === "/api/execute/workers") {
+      try {
+        const workers = await readWorkers();
+        writeJson(response, 200, { workers });
+      } catch (error) {
+        writeJson(response, 500, {
+          error: "Gagal baca workers registry",
+          detail: error instanceof Error ? error.message : String(error)
+        });
+      }
+      return;
+    }
+
+    // ─── GitHub Webhook ──────────────────────────────────────────────────────
+    // POST /api/github/webhook
+    // Set GITHUB_WEBHOOK_SECRET env kalau mau signature verification.
+    // Event yang di-handle:
+    //   issues + labeled → kalau label "agent:rei" ditambah → wake worker
+
+    if (url.pathname === "/api/github/webhook" && request.method === "POST") {
+      try {
+        const rawChunks = [];
+        for await (const chunk of request) rawChunks.push(chunk);
+        const rawBody = Buffer.concat(rawChunks);
+
+        // Verify HMAC signature kalau secret di-set
+        if (GITHUB_WEBHOOK_SECRET) {
+          const signature = request.headers["x-hub-signature-256"] || "";
+          const expected = `sha256=${crypto
+            .createHmac("sha256", GITHUB_WEBHOOK_SECRET)
+            .update(rawBody)
+            .digest("hex")}`;
+
+          if (!crypto.timingSafeEqual(Buffer.from(signature), Buffer.from(expected))) {
+            writeJson(response, 401, { error: "Webhook signature tidak valid." });
+            return;
+          }
+        }
+
+        const event = request.headers["x-github-event"] || "";
+        const payload = rawBody.length ? JSON.parse(rawBody.toString("utf8")) : {};
+        const action = String(payload?.action || "");
+
+        // issues.labeled → cek apakah label "agent:rei" atau "mode:execute" yang ditambah
+        if (event === "issues" && action === "labeled") {
+          const addedLabel = String(payload?.label?.name || "");
+          const isReiLabel = addedLabel === "agent:rei" || addedLabel.startsWith("mode:");
+
+          if (isReiLabel) {
+            // Bangunkan worker supaya langsung cek GitHub queue tanpa tunggu interval
+            await signalWorkerWake();
+          }
+        }
+
+        writeJson(response, 200, { received: true, event, action });
+      } catch (error) {
+        writeJson(response, error?.statusCode || 500, {
+          error: "Gagal proses webhook",
           detail: error instanceof Error ? error.message : String(error)
         });
       }

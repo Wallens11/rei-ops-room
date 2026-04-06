@@ -248,15 +248,73 @@ node --test tests/execute-worker.test.mjs
 
 ---
 
-## Item 5 — Multi-Worker Coordinator (planned)
+## Item 5 — Taiou: Direct Task Queue + Webhook + Multi-Worker
 
-Memungkinkan beberapa `execute-worker` instance jalan paralel tanpa double-claim.
+**Status**: ✅ Done — commit berikut setelah ini
 
-Gambaran:
-- Shared state file `.execute-workers.json` berisi array worker aktif
-- Tiap worker register `{ workerId, issueNumber, runtimeId, startedAt }`
-- Room visualization baca file ini → tampilkan berapa Rei aktif
-- Atomic claim pakai file lock atau staggered startup
+**Motivasi**: Rei sebelumnya pure pull-based (polling GitHub 60s).
+Item ini menambah kemampuan Rei untuk di-"taiou" — menerima task dari luar tanpa perlu buat GitHub issue,
+dan bereaksi secara real-time via webhook.
+
+### File yang dibuat/diubah
+
+| File | Perubahan |
+|---|---|
+| `tools/execute-queue.mjs` | NEW — task queue + workers registry (file-persisted) |
+| `server.mjs` | NEW routes: POST /api/execute/submit, GET /api/execute/queue, GET /api/execute/workers, POST /api/github/webhook |
+| `tools/execute-worker.mjs` | Poll direct queue sebelum GitHub, register worker, SIGUSR1 wake-up |
+| `tools/execute-bridge.mjs` | `buildDirectTaskPrompt()` untuk non-GitHub tasks |
+| `tests/execute-queue.test.mjs` | NEW — 21 tests |
+
+### Cara kirim task langsung ke Rei
+
+```bash
+curl -X POST http://localhost:4317/api/execute/submit \
+  -H "Content-Type: application/json" \
+  -d '{"task": "review auth.js dan cari potensi bug", "runtimeId": "claude-code"}'
+```
+
+Response:
+```json
+{ "status": "queued", "task": { "id": "...", "status": "queued" }, "workerWoken": true }
+```
+
+Worker langsung terbangun via SIGUSR1 dan proses task tanpa tunggu 60s interval.
+
+### GitHub Webhook
+
+```
+POST /api/github/webhook
+Header: X-Hub-Signature-256: sha256=<hmac>  (optional, set GITHUB_WEBHOOK_SECRET)
+Header: X-GitHub-Event: issues
+```
+
+Saat issue di-label `agent:rei` atau `mode:execute` → worker di-wake via SIGUSR1.
+
+### Multi-worker registry
+
+Tiap worker instance register ke `.execute-workers.json`:
+```json
+{ "workers": [{ "workerId": "a1b2c3d4", "pid": 12345, "runtimeId": "codex", "currentTaskId": null }] }
+```
+
+`GET /api/execute/workers` — baca dari UI atau tools lain.
+
+### Queue priority
+
+```
+Loop tiap 60s (atau langsung kalau di-wake):
+  1. Cek .execute-queue.json (direct tasks) — priority tinggi
+  2. Cek GitHub issues (mode:execute) — priority normal
+```
+
+### Prompt untuk lanjut di session baru
+
+```
+Lanjut dari docs/improvement-plan.md di repo rei-ops-room.
+Item 1–5 sudah selesai. Yang belum: Item 6 (post-run learning loop).
+Jalankan test dulu: node --test tests/*.test.mjs
+```
 
 ---
 
@@ -271,4 +329,4 @@ Ini yang bikin Rei makin pinter tiap sesi — bukan reset dari nol.
 
 ---
 
-*Last updated: 2026-04-07 — Item 4 selesai ✅, Item 5 & 6 planned*
+*Last updated: 2026-04-07 — Item 4 & 5 selesai ✅, Item 6 planned*

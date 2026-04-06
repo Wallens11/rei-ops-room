@@ -8,15 +8,27 @@
       "port": 4317
     },
     {
-      "name": "Report-Only Worker",
+      "name": "Execute Worker (single loop)",
+      "runtimeExecutable": "node",
+      "runtimeArgs": ["tools/execute-worker.mjs", "--once"],
+      "port": 0
+    },
+    {
+      "name": "Execute Service (daemon)",
+      "runtimeExecutable": "node",
+      "runtimeArgs": ["tools/execute-worker-cli.mjs", "start"],
+      "port": 0
+    },
+    {
+      "name": "Report-Only Worker (single loop)",
       "runtimeExecutable": "node",
       "runtimeArgs": ["tools/report-only-worker.mjs"],
       "port": 0
     },
     {
-      "name": "Execute Worker",
+      "name": "Report-Only Service (daemon)",
       "runtimeExecutable": "node",
-      "runtimeArgs": ["tools/execute-worker.mjs"],
+      "runtimeArgs": ["tools/report-only-worker-cli.mjs", "start"],
       "port": 0
     }
   ]

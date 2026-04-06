@@ -317,6 +317,41 @@ export function selectExecuteSkillProfile(issue = {}) {
  * supaya caller yang hanya import execute-bridge tidak perlu tahu soal runtimes/.
  * Lazy import supaya tidak ada circular dep.
  */
+/**
+ * Bangun prompt untuk direct task (submit via /api/execute/submit).
+ * Lebih simpel dari buildExecutePrompt — tidak ada GitHub issue context,
+ * tidak ada skill profile. Cukup task, context opsional, dan handoff.
+ */
+export function buildDirectTaskPrompt({ task, context = null, repoCwd, handoff = null } = {}) {
+  const repoLabel = stripWorkspacePrefix(repoCwd) || repoCwd;
+
+  return [
+    `You are Rei, an autonomous agent working inside ${repoCwd} (${repoLabel}).`,
+    "",
+    "Task:",
+    String(task || "").trim() || "No task description provided.",
+    context ? `\nAdditional context:\n${String(context).trim()}` : null,
+    "",
+    `Latest handoff (${handoff?.date || "no date"}):`,
+    summarizeHandoff(handoff || {}),
+    handoff?.next_focus_zone
+      ? `\nOperator-specified next focus zone: ${handoff.next_focus_zone}`
+      : null,
+    handoff?.blockers?.length > 0
+      ? `Known blockers:\n${handoff.blockers.map((b) => `- ${b}`).join("\n")}`
+      : null,
+    "",
+    "Execution rules:",
+    "- Inspect the repo before changing anything.",
+    "- Implement the smallest safe slice that satisfies the task.",
+    "- Run verification before finishing.",
+    "- Leave changes locally — do not push or create a PR unless explicitly asked.",
+    "- End with a concise summary of what was done."
+  ]
+    .filter(Boolean)
+    .join("\n");
+}
+
 export async function selectRuntimeForProfile(profileId) {
   const { selectRuntime, probeAvailableRuntimes } = await import("./runtimes/index.mjs");
   const available = await probeAvailableRuntimes(process.env);
