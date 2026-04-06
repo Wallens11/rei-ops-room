@@ -21,6 +21,7 @@ import {
   listGithubIssuesWithRunner,
   normalizeGithubRepoSlug,
   parseDailyDeviceHandoffMarkdown,
+  extractStructuredHandoffFields,
   selectActivityLogs,
   readDailyDeviceHandoff,
   stripWorkspacePrefix,
@@ -1040,4 +1041,76 @@ test("createServer can start and stop the local execute service", async (t) => {
   assert.equal(startBody.running, true);
   assert.equal(stopResponse.status, 200);
   assert.equal(stopBody.running, false);
+});
+
+test("parseDailyDeviceHandoffMarkdown extracts next_focus_zone, active_issues, and blockers from structured sections", () => {
+  const parsed = parseDailyDeviceHandoffMarkdown(`
+# Daily Device Handoff
+
+## 2026-04-06
+### Today At A Glance
+- rei-ops-room inference upgrade selesai
+
+### Next Focus Zone
+- backend — execute-bridge dan room-state baru di-upgrade
+
+### Active Issues
+- #13 Roadmap queue source
+- #14 Next auto-pick dari roadmap
+- #15 Unresolved, blocked
+
+### Blockers
+- Scrapling MCP butuh Codex restart
+- Kintone URL bulk update masih pending
+  `);
+
+  assert.equal(parsed.date, "2026-04-06");
+  assert.equal(parsed.next_focus_zone, "backend");
+  assert.equal(parsed.active_issues.length, 3);
+  assert.equal(parsed.active_issues[0].number, 13);
+  assert.equal(parsed.active_issues[1].number, 14);
+  assert.equal(parsed.active_issues[2].number, 15);
+  assert.equal(parsed.blockers.length, 2);
+  assert.match(parsed.blockers[0], /scrapling/i);
+});
+
+test("extractStructuredHandoffFields returns nulls and empty arrays when no special sections exist", () => {
+  const result = extractStructuredHandoffFields([
+    { title: "Today At A Glance", items: ["Some work done"] },
+    { title: "Carry-Over Context", items: ["Some context"] }
+  ]);
+
+  assert.equal(result.next_focus_zone, null);
+  assert.deepEqual(result.blockers, []);
+  assert.deepEqual(result.active_issues, []);
+});
+
+test("extractStructuredHandoffFields is case-insensitive for section titles", () => {
+  const result = extractStructuredHandoffFields([
+    { title: "NEXT FOCUS ZONE", items: ["frontend — UI work"] },
+    { title: "Blockers", items: ["Blocker A", "Blocker B"] },
+    { title: "Active Issues", items: ["#10 Some issue", "#11 Another issue"] }
+  ]);
+
+  assert.equal(result.next_focus_zone, "frontend");
+  assert.equal(result.blockers.length, 2);
+  assert.equal(result.active_issues.length, 2);
+  assert.equal(result.active_issues[0].number, 10);
+});
+
+test("parseDailyDeviceHandoffMarkdown remains backward-compatible with old format (no structured sections)", () => {
+  const parsed = parseDailyDeviceHandoffMarkdown(`
+## 2026-03-30
+### Today At A Glance
+- Old entry with no structured sections
+
+### Carry-Over Context
+- Just plain context
+  `);
+
+  assert.equal(parsed.date, "2026-03-30");
+  assert.equal(parsed.next_focus_zone, null);
+  assert.deepEqual(parsed.blockers, []);
+  assert.deepEqual(parsed.active_issues, []);
+  assert.equal(parsed.sections.length, 2);
 });

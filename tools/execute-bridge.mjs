@@ -220,16 +220,44 @@ function byTodoPriority(left, right) {
 }
 
 function summarizeHandoff(handoff = {}) {
-  const sections = Array.isArray(handoff.sections) ? handoff.sections : [];
   const lines = [];
 
-  for (const section of sections.slice(0, 3)) {
+  // 3: structured fields didahulukan — info paling penting buat agent
+  if (handoff.next_focus_zone) {
+    lines.push(`- Next Focus Zone: ${handoff.next_focus_zone}`);
+  }
+
+  if (Array.isArray(handoff.active_issues) && handoff.active_issues.length > 0) {
+    const refs = handoff.active_issues.map((i) => `#${i.number}`).join(", ");
+    lines.push(`- Active Issues: ${refs}`);
+  }
+
+  if (Array.isArray(handoff.blockers) && handoff.blockers.length > 0) {
+    lines.push(`- Blockers: ${handoff.blockers.slice(0, 2).join(" | ")}`);
+  }
+
+  // Fallback ke sections umum — skip yang sudah dihandle di atas
+  const HANDLED_SECTION_PATTERNS = ["next focus zone", "focus zone", "blocker", "active issue"];
+  const sections = Array.isArray(handoff.sections) ? handoff.sections : [];
+  let sectionCount = 0;
+
+  for (const section of sections) {
+    if (sectionCount >= 2) {
+      break;
+    }
+
+    const titleLc = String(section.title || "").toLowerCase();
+    if (HANDLED_SECTION_PATTERNS.some((p) => titleLc.includes(p))) {
+      continue;
+    }
+
     const items = Array.isArray(section.items) ? section.items.filter(Boolean) : [];
     if (!section.title || items.length === 0) {
       continue;
     }
 
     lines.push(`- ${section.title}: ${items.slice(0, 2).join(" | ")}`);
+    sectionCount++;
   }
 
   return lines.length > 0 ? lines.join("\n") : "- No current handoff recap was available.";
@@ -581,6 +609,13 @@ export function buildExecutePrompt({ repo, repoCwd, issue, handoff }) {
     "",
     `Latest handoff (${handoff?.date || "no date"}):`,
     summarizeHandoff(handoff),
+    // 3: surface next_focus_zone dan blockers secara eksplisit kalau ada
+    handoff?.next_focus_zone
+      ? `\nOperator-specified next focus zone: ${handoff.next_focus_zone} — lean toward this area unless the issue clearly overrides it.`
+      : null,
+    handoff?.blockers?.length > 0
+      ? `Known blockers from handoff:\n${handoff.blockers.map((b) => `- ${b}`).join("\n")}\nAvoid re-attempting these without a plan to resolve them.`
+      : null,
     "",
     "Execution rules:",
     "- Inspect the repository and issue history before changing code.",

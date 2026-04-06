@@ -1419,13 +1419,50 @@ export function parseDailyDeviceHandoffMarkdown(markdown = "") {
     };
   }
 
+  const filteredSections = latestDay.sections.filter(
+    (section) => section.title && Array.isArray(section.items) && section.items.length > 0
+  );
+
   return {
-    status: latestDay.sections.some((section) => section.items.length > 0) ? "ready" : "empty",
+    status: filteredSections.some((section) => section.items.length > 0) ? "ready" : "empty",
     date: latestDay.date,
-    sections: latestDay.sections.filter(
-      (section) => section.title && Array.isArray(section.items) && section.items.length > 0
-    )
+    sections: filteredSections,
+    ...extractStructuredHandoffFields(filteredSections)
   };
+}
+
+// 3: Ekstrak structured fields dari section handoff khusus — backward-compatible
+// Section yang dikenali (case-insensitive): "Next Focus Zone", "Blockers", "Active Issues"
+export function extractStructuredHandoffFields(sections = []) {
+  const result = {
+    next_focus_zone: null,
+    blockers: [],
+    active_issues: []
+  };
+
+  for (const section of sections) {
+    const titleLc = String(section.title || "").toLowerCase();
+    const items = Array.isArray(section.items) ? section.items.filter(Boolean) : [];
+
+    if (titleLc.includes("next focus zone") || titleLc.includes("focus zone")) {
+      // Ambil zone dari item pertama — bisa "backend", "frontend", dll
+      const raw = String(items[0] || "").toLowerCase().trim();
+      const knownZones = ["frontend", "backend", "database", "review", "lab"];
+      result.next_focus_zone = knownZones.find((z) => raw.includes(z)) || raw || null;
+    } else if (titleLc.includes("blocker")) {
+      result.blockers = items;
+    } else if (titleLc.includes("active issue")) {
+      // Parse "#N title" atau free text dengan #N di dalamnya
+      result.active_issues = items
+        .map((item) => {
+          const match = String(item).match(/#(\d+)/);
+          return match ? { number: Number(match[1]), text: item } : null;
+        })
+        .filter(Boolean);
+    }
+  }
+
+  return result;
 }
 
 export async function readDailyDeviceHandoff(filePath = dailyDeviceHandoffPaths) {
