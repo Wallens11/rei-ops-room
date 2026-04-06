@@ -290,6 +290,7 @@ async function startDetachedServer(port) {
       PORT: String(port)
     },
     detached: true,
+    windowsHide: true,
     stdio: ["ignore", logHandle.fd, logHandle.fd]
   });
 
