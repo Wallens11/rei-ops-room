@@ -102,6 +102,87 @@ const REVIEW_STAGE_REGROUP_MAX = 60;
 const REVIEW_STAGE_COOLDOWN_MIN = 90;
 const LIVE_RUNTIME_MAX_SECONDS = 10;
 const RECENT_RUNTIME_MAX_SECONDS = 60;
+
+// 1c: Named thresholds — menggantikan magic numbers di baseSignals & inferOrchestration
+const ZONE_FOCUS_MIN_SCORE = 1.2;          // skor minimum agar zona dianggap fokus (bukan "lab")
+const SECONDARY_LANE_MIN_SCORE = 2.5;      // skor minimum secondary zone agar eligible jadi lane paralel
+const SECONDARY_LANE_SCORE_RATIO = 0.45;   // secondary harus >= ratio ini dari top untuk multi-lane
+const MULTI_CANDIDATE_THRESHOLD = 1.9;     // threshold multiCandidate untuk mode "multi"
+const PHASE_PLANNING_SCORE_MIN = 1.4;      // skor planning minimum untuk trigger planning_huddle
+const PHASE_PLANNING_CONFIDENCE_MAX = 0.82; // kalau confidence < ini, planning_huddle bisa trigger
+const PHASE_NEW_REQUEST_CONFIDENCE_MAX = 0.72; // kalau new_request + confidence < ini, huddle juga
+const PHASE_DELEGATION_SCORE_MIN = 1.25;   // skor delegation minimum untuk trigger squad_split
+const PHASE_REVIEW_SCORE_MIN = 2.4;        // skor review minimum untuk trigger review_wrap
+const PHASE_REVIEW_EVIDENCE_MIN = 1.25;    // skor review evidence tambahan yang harus terpenuhi
+const ACTIVE_DESK_EVIDENCE_MIN = 1.65;     // minimum activeDeskEvidence untuk lock execution
+
+// 1d: Named weights untuk runtimeZoneHints — menggantikan magic numbers
+const HINT_WEIGHTS = {
+  RUNTIME_COMMAND: 6.0,   // "npm start", "node server.mjs" — sinyal backend paling kuat
+  SESSION_LOOP: 4.8,      // internal codex loop log — backend signal kuat
+  VERIFICATION: 4.5,      // test runner — backend/review area
+  UI_FILE: 4.2,           // public/ path, canvas, widget — sinyal frontend
+  DB_COMMAND: 5.2,        // sqlite3, .sqlite, select — sinyal database
+  OPS_HANDOFF: 4.4,       // gh issue, review request — sinyal review/ops
+  CWD_PATH_STRONG: 5.5,   // 1b: cwd path cocok persis dengan zona — sinyal sangat kuat
+  CWD_PATH_WEAK: 3.0      // 1b: cwd path partial match — sinyal lemah
+};
+
+// 1a: Data-driven rules untuk humanizeSummary — menggantikan if/else chain
+// Evaluasi semua rules, ambil yang priority tertinggi; tie-break by matchCount
+const SUMMARY_RULES = [
+  {
+    terms: ["wait_agent", "result returned", "results returned", "worker results"],
+    label: "result return",
+    priority: 10
+  },
+  {
+    terms: ["spawn_agent", "spawn agent", "subagent", "multi-agent", "send_input"],
+    label: "squad split",
+    priority: 9
+  },
+  {
+    terms: ["review", "wrap", "summary", "summarize", "handoff", "label"],
+    label: "review wrap",
+    priority: 8
+  },
+  {
+    terms: ["npm test", "node --test", "playwright", "browser_snapshot", "browser_take_screenshot", "verification", "verify", "test"],
+    label: "verification pass",
+    priority: 7
+  },
+  {
+    terms: ["agent pixel", "pixel room", "ops room"],
+    label: "pixel ops room",
+    priority: 6,
+    exact: true   // semua term harus dicek apa adanya (tidak di-split per kata)
+  },
+  {
+    terms: ["ipconfig", "getifaddr", "networksetup", "lan", "ipad", "wifi"],
+    label: "network check",
+    priority: 6
+  },
+  {
+    terms: ["layout", "css", "style", "responsive", "widget", "canvas", "overflow", "clipping"],
+    label: "layout check",
+    priority: 5
+  },
+  {
+    terms: ["runtime", "orchestration", "server", "api", "state", "mapping", "session"],
+    label: "runtime mapping",
+    priority: 4
+  },
+  {
+    terms: ["sqlite", "logs", "trace", "parse", "query"],
+    label: "trace reading",
+    priority: 3
+  },
+  {
+    terms: ["debug", "fix", "error", "fail", "failing"],
+    label: "debug pass",
+    priority: 2
+  }
+];
 const RUNTIME_NOISE_SNIPPETS = [
   "registering event source with poller",
   "token usage",
@@ -257,102 +338,40 @@ function humanizeSummary(summary, { zoneId = "lab", kind = "task" } = {}) {
     return fallbackLabelForZone(zoneId, kind);
   }
 
-  if (
-    normalized.includes("wait_agent") ||
-    normalized.includes("result returned") ||
-    normalized.includes("results returned") ||
-    normalized.includes("worker results")
-  ) {
-    return "result return";
+  // 1a: data-driven rule evaluation — pilih rule dengan priority tertinggi + matchCount terbanyak
+  let bestRule = null;
+  let bestPriority = -1;
+  let bestMatchCount = 0;
+
+  for (const rule of SUMMARY_RULES) {
+    let matchCount = 0;
+    for (const term of rule.terms) {
+      if (normalized.includes(term)) {
+        matchCount++;
+      }
+    }
+    if (matchCount === 0) {
+      continue;
+    }
+    if (
+      rule.priority > bestPriority ||
+      (rule.priority === bestPriority && matchCount > bestMatchCount)
+    ) {
+      bestRule = rule;
+      bestPriority = rule.priority;
+      bestMatchCount = matchCount;
+    }
   }
 
-  if (
-    normalized.includes("review") ||
-    normalized.includes("wrap") ||
-    normalized.includes("summary") ||
-    normalized.includes("summarize") ||
-    normalized.includes("handoff") ||
-    normalized.includes("label")
-  ) {
-    return "review wrap";
+  if (bestRule) {
+    // "trace reading" punya variasi berdasarkan zone
+    if (bestRule.label === "trace reading" && zoneId !== "database") {
+      return "runtime trace";
+    }
+    return bestRule.label;
   }
 
-  if (
-    normalized.includes("npm test") ||
-    normalized.includes("node --test") ||
-    normalized.includes("verification") ||
-    normalized.includes("verify") ||
-    normalized.includes("playwright") ||
-    normalized.includes("browser_snapshot") ||
-    normalized.includes("browser_take_screenshot") ||
-    normalized.includes("test")
-  ) {
-    return "verification pass";
-  }
-
-  if (
-    normalized.includes("agent pixel") ||
-    normalized.includes("pixel room") ||
-    normalized.includes("ops room")
-  ) {
-    return "pixel ops room";
-  }
-
-  if (
-    normalized.includes("ipconfig") ||
-    normalized.includes("getifaddr") ||
-    normalized.includes("networksetup") ||
-    normalized.includes("lan") ||
-    normalized.includes("ipad") ||
-    normalized.includes("wifi")
-  ) {
-    return "network check";
-  }
-
-  if (
-    normalized.includes("layout") ||
-    normalized.includes("css") ||
-    normalized.includes("style") ||
-    normalized.includes("responsive") ||
-    normalized.includes("widget") ||
-    normalized.includes("canvas") ||
-    normalized.includes("overflow") ||
-    normalized.includes("clipping")
-  ) {
-    return "layout check";
-  }
-
-  if (
-    normalized.includes("runtime") ||
-    normalized.includes("orchestration") ||
-    normalized.includes("server") ||
-    normalized.includes("api") ||
-    normalized.includes("state") ||
-    normalized.includes("mapping") ||
-    normalized.includes("session")
-  ) {
-    return "runtime mapping";
-  }
-
-  if (
-    normalized.includes("sqlite") ||
-    normalized.includes("logs") ||
-    normalized.includes("trace") ||
-    normalized.includes("parse") ||
-    normalized.includes("query")
-  ) {
-    return zoneId === "database" ? "trace reading" : "runtime trace";
-  }
-
-  if (
-    normalized.includes("debug") ||
-    normalized.includes("fix") ||
-    normalized.includes("error") ||
-    normalized.includes("fail")
-  ) {
-    return "debug pass";
-  }
-
+  // Fallback: tool noise / system commands yang tidak perlu label
   if (
     normalized.includes("spawn_child_async") ||
     normalized.includes("spawn child") ||
@@ -393,6 +412,61 @@ function sourceScore(text, keywords, weight) {
   return countMatches(text.toLowerCase(), keywords, weight);
 }
 
+// 1b: CWD path-based zone hint — mapping path aktif ke zone
+// Lebih akurat dari keyword matching karena CWD adalah sinyal eksplisit "lagi ngerjain apa"
+function cwdPathZoneHint(cwd) {
+  const path = normalizeText(cwd);
+  if (!path) {
+    return { zoneId: null, score: 0, hit: null };
+  }
+
+  // Strong matches — path segment yang sangat spesifik ke satu zone
+  const strongPatterns = [
+    { pattern: "public/", zoneId: "frontend", hit: "cwd:public/" },
+    { pattern: "styles.css", zoneId: "frontend", hit: "cwd:styles.css" },
+    { pattern: "index.html", zoneId: "frontend", hit: "cwd:index.html" },
+    { pattern: "app.js", zoneId: "frontend", hit: "cwd:app.js" },
+    { pattern: "room-engine", zoneId: "frontend", hit: "cwd:room-engine" },
+    { pattern: "room-state", zoneId: "frontend", hit: "cwd:room-state" },
+    { pattern: "room-schema", zoneId: "frontend", hit: "cwd:room-schema" },
+    { pattern: "server.mjs", zoneId: "backend", hit: "cwd:server.mjs" },
+    { pattern: "tools/", zoneId: "backend", hit: "cwd:tools/" },
+    { pattern: "execute-bridge", zoneId: "backend", hit: "cwd:execute-bridge" },
+    { pattern: "execute-worker", zoneId: "backend", hit: "cwd:execute-worker" },
+    { pattern: "report-only", zoneId: "backend", hit: "cwd:report-only" },
+    { pattern: "agent-pixel", zoneId: "backend", hit: "cwd:agent-pixel" },
+    { pattern: ".sqlite", zoneId: "database", hit: "cwd:.sqlite" },
+    { pattern: "state_5", zoneId: "database", hit: "cwd:state_5" },
+    { pattern: "logs_1", zoneId: "database", hit: "cwd:logs_1" },
+    { pattern: "docs/", zoneId: "review", hit: "cwd:docs/" },
+    { pattern: "readme", zoneId: "review", hit: "cwd:readme" },
+    { pattern: "handoff", zoneId: "review", hit: "cwd:handoff" },
+    { pattern: "improvement-plan", zoneId: "review", hit: "cwd:improvement-plan" }
+  ];
+
+  // Weak matches — path segment yang sedikit ambigu
+  const weakPatterns = [
+    { pattern: "tests/", zoneId: "backend", hit: "cwd:tests/" },
+    { pattern: ".test.", zoneId: "backend", hit: "cwd:test-file" },
+    { pattern: "progress.md", zoneId: "review", hit: "cwd:progress.md" },
+    { pattern: ".md", zoneId: "review", hit: "cwd:.md" }
+  ];
+
+  for (const { pattern, zoneId, hit } of strongPatterns) {
+    if (path.includes(pattern)) {
+      return { zoneId, score: HINT_WEIGHTS.CWD_PATH_STRONG, hit };
+    }
+  }
+
+  for (const { pattern, zoneId, hit } of weakPatterns) {
+    if (path.includes(pattern)) {
+      return { zoneId, score: HINT_WEIGHTS.CWD_PATH_WEAK, hit };
+    }
+  }
+
+  return { zoneId: null, score: 0, hit: null };
+}
+
 function runtimeZoneHints(text) {
   const normalized = normalizeText(text);
   const scores = {
@@ -409,13 +483,14 @@ function runtimeZoneHints(text) {
     }
   };
 
+  // 1d: gunakan HINT_WEIGHTS — tidak ada magic number di sini
   if (
     normalized.includes("npm start") ||
     normalized.includes("node server.mjs") ||
     normalized.includes("node server.js") ||
     normalized.includes("server.mjs")
   ) {
-    add("backend", "runtime command", 6);
+    add("backend", "runtime command", HINT_WEIGHTS.RUNTIME_COMMAND);
   }
 
   if (
@@ -423,7 +498,7 @@ function runtimeZoneHints(text) {
     normalized.includes("submission_dispatch") ||
     normalized.includes("stream_events_utils")
   ) {
-    add("backend", "runtime loop", 4.8);
+    add("backend", "runtime loop", HINT_WEIGHTS.SESSION_LOOP);
   }
 
   if (
@@ -431,7 +506,7 @@ function runtimeZoneHints(text) {
     normalized.includes("node --test") ||
     normalized.includes("verification")
   ) {
-    add("backend", "verification command", 4.5);
+    add("backend", "verification command", HINT_WEIGHTS.VERIFICATION);
   }
 
   if (
@@ -441,7 +516,7 @@ function runtimeZoneHints(text) {
     normalized.includes("canvas") ||
     normalized.includes("widget")
   ) {
-    add("frontend", "ui file", 4.2);
+    add("frontend", "ui file", HINT_WEIGHTS.UI_FILE);
   }
 
   if (
@@ -450,7 +525,7 @@ function runtimeZoneHints(text) {
     normalized.includes("select ") ||
     normalized.includes("query")
   ) {
-    add("database", "db command", 5.2);
+    add("database", "db command", HINT_WEIGHTS.DB_COMMAND);
   }
 
   if (
@@ -459,7 +534,7 @@ function runtimeZoneHints(text) {
     normalized.includes("review request") ||
     normalized.includes("prepare concise labels")
   ) {
-    add("review", "ops handoff", 4.4);
+    add("review", "ops handoff", HINT_WEIGHTS.OPS_HANDOFF);
   }
 
   return scores;
@@ -603,6 +678,8 @@ function baseSignals({ thread, repoContext, activity, logs, status, agentJobs = 
     repoContext?.cwd
   );
   const runtimeHints = runtimeZoneHints([activityText, logText]);
+  // 1b: CWD path hint — sinyal eksplisit dari path file yang sedang dikerjakan
+  const cwdHint = cwdPathZoneHint(thread?.cwd);
   const threadWeight = runtimeActive ? 1.75 : 4;
   const activityWeight = runtimeActive ? 5 : 4;
   const logWeight = runtimeActive ? 3.4 : 2.5;
@@ -616,18 +693,23 @@ function baseSignals({ thread, repoContext, activity, logs, status, agentJobs = 
     const secondary = sourceScore(secondaryText, zone.keywords, 2);
     const log = sourceScore(logText, zone.keywords, logWeight);
     const runtimeHint = runtimeHints[zone.id] || { score: 0, hits: [] };
+    // 1b: tambahkan cwd path hint kalau cocok dengan zone ini
+    const cwdScore = cwdHint.zoneId === zone.id ? cwdHint.score : 0;
+    const cwdHits = cwdHint.zoneId === zone.id && cwdHint.hit ? [cwdHint.hit] : [];
     zoneScores[zone.id] =
       threadSource.score +
       activitySource.score +
       secondary.score +
       log.score +
-      runtimeHint.score;
+      runtimeHint.score +
+      cwdScore;
     zoneHits[zone.id] = unique([
       ...threadSource.hits,
       ...activitySource.hits,
       ...secondary.hits,
       ...log.hits,
-      ...runtimeHint.hits
+      ...runtimeHint.hits,
+      ...cwdHits
     ]);
   }
 
@@ -675,19 +757,22 @@ function baseSignals({ thread, repoContext, activity, logs, status, agentJobs = 
     normalizedAgentJobs,
     rawAgentJobs: agentJobs
   });
+  // 1c: gunakan named constants — tidak ada magic number di sini
   const secondaryLaneEligible =
-    second.score >= Math.max(2.5, top.score * 0.45) &&
-    (delegation.score >= 1.25 || toolBurst >= 1.5 || activeAgentJobs.length > 0);
+    second.score >= Math.max(SECONDARY_LANE_MIN_SCORE, top.score * SECONDARY_LANE_SCORE_RATIO) &&
+    (delegation.score >= PHASE_DELEGATION_SCORE_MIN || toolBurst >= 1.5 || activeAgentJobs.length > 0);
   const multiCandidate =
     delegation.score +
     (secondaryLaneEligible ? 1.6 : 0) +
     (toolBurst >= 1.5 ? 0.4 : 0);
   const multiFromAgentJobs = activeAgentJobs.length > 0 || normalizedAgentJobs.length >= 2;
-  const focusZone = passiveMode && status !== "busy" ? "lab" : top.score >= 1.2 ? top.zoneId : "lab";
+  const focusZone =
+    passiveMode && status !== "busy" ? "lab" : top.score >= ZONE_FOCUS_MIN_SCORE ? top.zoneId : "lab";
+  // 1c: formula confidence yang lebih linear — clamp(top / (top + second + damping), 0.2, 0.99)
   const focusConfidence =
     focusZone === "lab"
       ? roundConfidence(newRequest ? 0.52 : 0.46)
-      : roundConfidence((top.score + 1.5) / (top.score + second.score + 3));
+      : roundConfidence(top.score / (top.score + second.score + 0.5));
 
   return {
     request: thread?.title || activity?.summary || "Standby di room",
@@ -785,9 +870,10 @@ function inferOrchestration(taskIntelligence, { status, thread, activity }) {
     (signals.reading.score > 0 ? 0.45 : 0) +
     (signals.summarizing.score > 0 && dominantZone === "review" ? 0.45 : 0) +
     (dominantZone !== "lab" ? 0.35 : 0);
+  // 1c + 1e: gunakan named constants
   const executionLocked =
     dominantZone !== "lab" &&
-    activeDeskEvidence >= 1.65;
+    activeDeskEvidence >= ACTIVE_DESK_EVIDENCE_MIN;
   let reviewStage = null;
 
   let roomPhase = "execution";
@@ -813,7 +899,7 @@ function inferOrchestration(taskIntelligence, { status, thread, activity }) {
   } else if (signals.agent_jobs?.active_count > 0) {
     roomPhase = "squad_split";
     reason = "Ada worker thread aktif yang benar-benar assigned, jadi squad split pakai runtime orchestration.";
-  } else if (signals.review.score >= 2.4 && signals.review_evidence.score >= 1.25) {
+  } else if (signals.review.score >= PHASE_REVIEW_SCORE_MIN && signals.review_evidence.score >= PHASE_REVIEW_EVIDENCE_MIN) {
     roomPhase = "review_wrap";
     reviewStage = inferReviewStage(signals, status);
     reason =
@@ -824,15 +910,16 @@ function inferOrchestration(taskIntelligence, { status, thread, activity }) {
           : reviewStage === "cooldown"
             ? "Review wrap sudah lewat, jadi room bisa masuk cooldown dengan tenang."
             : "Ada pola review / result return, jadi hasil dipindah ke review lane.";
-  } else if (signals.delegation.score >= 1.25 && mode === "multi") {
+  } else if (signals.delegation.score >= PHASE_DELEGATION_SCORE_MIN && mode === "multi") {
     roomPhase = "squad_split";
     reason = "Delegation kebaca cukup jelas, jadi squad dipecah ke workstream yang relevan.";
   } else if (
     !executionLocked &&
     (
-      (signals.planning.score >= 1.4 &&
-        (signals.new_request || confidence < 0.82 || dominantZone === "lab")) ||
-      (signals.new_request && (confidence < 0.72 || dominantZone === "lab"))
+      // 1e: phase scoring — planning_huddle hanya kalau ada cukup signal, bukan hanya satu keyword
+      (signals.planning.score >= PHASE_PLANNING_SCORE_MIN &&
+        (signals.new_request || confidence < PHASE_PLANNING_CONFIDENCE_MAX || dominantZone === "lab")) ||
+      (signals.new_request && (confidence < PHASE_NEW_REQUEST_CONFIDENCE_MAX || dominantZone === "lab"))
     )
   ) {
     roomPhase = "planning_huddle";

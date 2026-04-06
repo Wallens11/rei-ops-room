@@ -9,7 +9,7 @@ Dokumen ini menyimpan rencana peningkatan bertahap supaya bisa dilanjut lintas s
 | # | Area | Status | Notes |
 |---|---|---|---|
 | 0 | Brush up: security, perf, bug fixes | ✅ Done | commit `846fde5` |
-| 1 | `room-state.js` inference upgrade | 🔄 In Progress | lihat detail di bawah |
+| 1 | `room-state.js` inference upgrade | ✅ Done | commit berikut setelah ini |
 | 2 | `execute-bridge.mjs` logic upgrade | ⏳ Pending | |
 | 3 | Skill & handoff docs upgrade | ⏳ Pending | |
 
@@ -171,4 +171,4 @@ Gambaran awal:
 
 ---
 
-*Last updated: 2026-04-06 — session brush up selesai, mulai item 1*
+*Last updated: 2026-04-06 — item 1 selesai, lanjut ke item 2 di session berikutnya*
