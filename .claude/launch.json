@@ -1,0 +1,23 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "Rei Ops Room (Main Server)",
+      "runtimeExecutable": "node",
+      "runtimeArgs": ["server.mjs"],
+      "port": 4317
+    },
+    {
+      "name": "Report-Only Worker",
+      "runtimeExecutable": "node",
+      "runtimeArgs": ["tools/report-only-worker.mjs"],
+      "port": 0
+    },
+    {
+      "name": "Execute Worker",
+      "runtimeExecutable": "node",
+      "runtimeArgs": ["tools/execute-worker.mjs"],
+      "port": 0
+    }
+  ]
+}

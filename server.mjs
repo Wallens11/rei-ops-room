@@ -502,14 +502,12 @@ export function buildGithubIssueSummary(issues = []) {
 
   for (const issue of issues) {
     const labels = new Set((issue.labels || []).map((label) => String(label)));
-    if (labels.has("status:todo")) {
-      summary.todo += 1;
-    }
     if (labels.has("status:in_progress")) {
       summary.inProgress += 1;
-    }
-    if (labels.has("status:blocked")) {
+    } else if (labels.has("status:blocked")) {
       summary.blocked += 1;
+    } else if (labels.has("status:todo")) {
+      summary.todo += 1;
     }
   }
 
@@ -672,10 +670,19 @@ async function controlExecuteService({ action }) {
   });
 }
 
+const REQUEST_BODY_MAX_BYTES = 1 * 1024 * 1024; // 1 MB
+
 async function readJsonRequestBody(request) {
   const chunks = [];
+  let totalBytes = 0;
 
   for await (const chunk of request) {
+    totalBytes += chunk.length;
+    if (totalBytes > REQUEST_BODY_MAX_BYTES) {
+      const error = new Error("Request body too large");
+      error.statusCode = 413;
+      throw error;
+    }
     chunks.push(chunk);
   }
 
@@ -1128,9 +1135,13 @@ async function getStatus() {
     LIMIT 5;
   `;
 
-  const [latestThreadRow] = await sqliteJson(stateDb, latestThreadSql);
-  const [latestRepoRow] = await sqliteJson(stateDb, latestRepoSql);
-  const recentRows = await sqliteJson(stateDb, recentThreadsSql);
+  const [latestThreadRows, latestRepoRows, recentRows] = await Promise.all([
+    sqliteJson(stateDb, latestThreadSql),
+    sqliteJson(stateDb, latestRepoSql),
+    sqliteJson(stateDb, recentThreadsSql)
+  ]);
+  const [latestThreadRow] = latestThreadRows;
+  const [latestRepoRow] = latestRepoRows;
   const latestThread = mapThread(latestThreadRow, nowSeconds);
   const latestRepo = mapThread(latestRepoRow, nowSeconds);
 
@@ -1146,8 +1157,11 @@ async function getStatus() {
   if (latestThread?.id) {
     const logSql = buildThreadLogsSql(latestThread.id, 500, 320, logsMessageColumn);
 
-    threadLogs = await sqliteJson(logsDb, logSql);
-    const globalLogs = await sqliteJson(logsDb, buildGlobalRuntimeLogsSql(120, 320, logsMessageColumn));
+    let globalLogs;
+    [threadLogs, globalLogs] = await Promise.all([
+      sqliteJson(logsDb, logSql),
+      sqliteJson(logsDb, buildGlobalRuntimeLogsSql(120, 320, logsMessageColumn))
+    ]);
     const meaningfulLogs = selectActivityLogs(threadLogs, globalLogs, { nowSeconds });
     if (meaningfulLogs.length > 0) {
       lastLogAt = Number(meaningfulLogs[0].ts || lastLogAt);
@@ -1233,11 +1247,19 @@ async function broadcastStatusSnapshot() {
     try {
       const payload = await getStatus();
       for (const client of statusStreamClients) {
-        writeStatusStreamFrame(client, payload);
+        try {
+          writeStatusStreamFrame(client, payload);
+        } catch {
+          statusStreamClients.delete(client);
+        }
       }
     } catch (error) {
       for (const client of statusStreamClients) {
-        writeStatusStreamError(client, error);
+        try {
+          writeStatusStreamError(client, error);
+        } catch {
+          statusStreamClients.delete(client);
+        }
       }
     } finally {
       statusStreamInflight = null;
@@ -1657,14 +1679,14 @@ export function createServer({
   });
 }
 
-const server = createServer();
-
 export function startServer(listenPort = port) {
+  const server = createServer();
   server.listen(listenPort, () => {
     console.log(`Pixel agent viewer ready at http://localhost:${listenPort}`);
   });
+  return server;
 }
 
-if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+if (process.argv[1] && fileURLToPath(import.meta.url) === path.resolve(process.argv[1])) {
   startServer();
 }

@@ -108,6 +108,16 @@ const EVENT_LABELS = {
   result_returned: "Result Returned"
 };
 
+function escapeHtml(str) {
+  if (!str && str !== 0) return "";
+  return String(str)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
 const INITIAL_LAYOUT = createEditableLayout(ROOM_LAYOUT);
 const INITIAL_ZONES = createDefaultZones(INITIAL_LAYOUT);
 const CANVAS_WIDTH = ROOM_LAYOUT.canvas.width;
@@ -495,7 +505,28 @@ function eventBadgeHotspot(badge) {
   };
 }
 
+let _hotspotsCache = null;
+let _hotspotsCacheDataRef = null;
+let _hotspotsCacheActorsRef = null;
+let _hotspotsCacheZonesRef = null;
+let _hotspotsCacheVersion = 0;
+
+function invalidateHotspotsCache() {
+  _hotspotsCacheVersion += 1;
+}
+
 function buildInteractiveHotspots() {
+  const dataRef = renderState.data;
+  const actorsRef = renderState.actors;
+  const zonesRef = renderState.zones;
+  if (
+    _hotspotsCache !== null &&
+    dataRef === _hotspotsCacheDataRef &&
+    actorsRef === _hotspotsCacheActorsRef &&
+    zonesRef === _hotspotsCacheZonesRef
+  ) {
+    return _hotspotsCache;
+  }
   const zones = renderState.zones || [];
   const agents = renderState.actors.map((actor) => {
     const agent = agentById(actor.id);
@@ -546,7 +577,12 @@ function buildInteractiveHotspots() {
     .filter(Boolean);
 
   const events = renderState.runtimeEvent.badge ? [eventBadgeHotspot(renderState.runtimeEvent.badge)] : [];
-  return buildSceneHotspots({ agents, desks, events, props });
+  const result = buildSceneHotspots({ agents, desks, events, props });
+  _hotspotsCache = result;
+  _hotspotsCacheDataRef = dataRef;
+  _hotspotsCacheActorsRef = actorsRef;
+  _hotspotsCacheZonesRef = zonesRef;
+  return result;
 }
 
 function statusLabel(status, resting = false) {
@@ -961,11 +997,11 @@ function renderRecentThreads(threads) {
     item.className = "trail-item";
     item.innerHTML = `
       <div class="item-head">
-        <strong>${thread.repoName}</strong>
-        <span class="item-chip">${thread.updatedAgo}</span>
+        <strong>${escapeHtml(thread.repoName)}</strong>
+        <span class="item-chip">${escapeHtml(thread.updatedAgo)}</span>
       </div>
-      <p class="mono dim">${thread.cwdDisplay}</p>
-      <p>${truncate(thread.title, 86)}</p>
+      <p class="mono dim">${escapeHtml(thread.cwdDisplay)}</p>
+      <p>${escapeHtml(truncate(thread.title, 86))}</p>
     `;
     elements.recentList.appendChild(item);
   });
@@ -1007,9 +1043,9 @@ function renderWorkspaceDock(workspace) {
     item.dataset.status = room.status;
     item.innerHTML = `
       <p class="panel-label">Sleeping Room</p>
-      <h4>${room.repo}</h4>
-      <p class="dim mono">${room.recent_thread_count} recent thread${room.recent_thread_count > 1 ? "s" : ""} | ${room.status} | ${room.updated_ago}</p>
-      <p class="dim">${truncate(room.latest_title, 72)}</p>
+      <h4>${escapeHtml(room.repo)}</h4>
+      <p class="dim mono">${escapeHtml(room.recent_thread_count)} recent thread${room.recent_thread_count > 1 ? "s" : ""} | ${escapeHtml(room.status)} | ${escapeHtml(room.updated_ago)}</p>
+      <p class="dim">${escapeHtml(truncate(room.latest_title, 72))}</p>
     `;
     elements.sleepingRoomList.appendChild(item);
   });
@@ -1200,11 +1236,11 @@ function renderWorkstreams(workstreams) {
     item.className = `stream-item ${workstream.status}`;
     item.innerHTML = `
       <div class="item-head">
-        <strong>${workstream.owner.toUpperCase()}</strong>
-        <span class="item-chip">${workstreamStatusLabel(workstream.status)}</span>
+        <strong>${escapeHtml(workstream.owner.toUpperCase())}</strong>
+        <span class="item-chip">${escapeHtml(workstreamStatusLabel(workstream.status))}</span>
       </div>
-      <p>${truncate(workstream.task, 92)}</p>
-      <p class="dim mono">${workstream.zone}</p>
+      <p>${escapeHtml(truncate(workstream.task, 92))}</p>
+      <p class="dim mono">${escapeHtml(workstream.zone)}</p>
     `;
     elements.workstreamList.appendChild(item);
   });
@@ -1266,9 +1302,9 @@ function renderEvents(events) {
     item.className = "event-item";
     item.innerHTML = `
       <div class="item-head">
-        <strong>${EVENT_LABELS[event.type] || event.type}</strong>
+        <strong>${escapeHtml(EVENT_LABELS[event.type] || event.type)}</strong>
       </div>
-      <p>${describeEvent(event)}</p>
+      <p>${escapeHtml(describeEvent(event))}</p>
     `;
     elements.eventList.appendChild(item);
   });
@@ -1309,11 +1345,11 @@ function renderCrewList(agents, workstreams) {
     item.innerHTML = `
       <div class="crew-head">
         <span class="crew-dot"></span>
-        <strong class="crew-name">${agent.display_name}</strong>
-        <span class="crew-state">${ACTIVITY_LABELS[agent.activity] || agent.activity}</span>
+        <strong class="crew-name">${escapeHtml(agent.display_name)}</strong>
+        <span class="crew-state">${escapeHtml(ACTIVITY_LABELS[agent.activity] || agent.activity)}</span>
       </div>
-      <p class="crew-note">${crewNote(agent, workstreams)}</p>
-      <p class="dim mono">${agent.assigned_zone}</p>
+      <p class="crew-note">${escapeHtml(crewNote(agent, workstreams))}</p>
+      <p class="dim mono">${escapeHtml(agent.assigned_zone)}</p>
     `;
     elements.crewList.appendChild(item);
   });
@@ -1839,27 +1875,37 @@ function drawPixelRect(x, y, w, h, color) {
   context.fillRect(Math.round(x), Math.round(y), w, h);
 }
 
+const _withAlphaCache = new Map();
+const _WITH_ALPHA_CACHE_MAX = 200;
+
 function withAlpha(color, alpha) {
-  if (!color) {
-    return `rgba(255, 255, 255, ${alpha})`;
+  const key = `${color}\0${alpha}`;
+  const cached = _withAlphaCache.get(key);
+  if (cached !== undefined) {
+    return cached;
   }
 
-  if (color.startsWith("#") && color.length === 7) {
+  let result;
+  if (!color) {
+    result = `rgba(255, 255, 255, ${alpha})`;
+  } else if (color.startsWith("#") && color.length === 7) {
     const red = Number.parseInt(color.slice(1, 3), 16);
     const green = Number.parseInt(color.slice(3, 5), 16);
     const blue = Number.parseInt(color.slice(5, 7), 16);
-    return `rgba(${red}, ${green}, ${blue}, ${alpha})`;
+    result = `rgba(${red}, ${green}, ${blue}, ${alpha})`;
+  } else if (color.startsWith("rgb(")) {
+    result = color.replace("rgb(", "rgba(").replace(")", `, ${alpha})`);
+  } else if (color.startsWith("rgba(")) {
+    result = color.replace(/rgba\(([^)]+),\s*[\d.]+\)/, `rgba($1, ${alpha})`);
+  } else {
+    result = color;
   }
 
-  if (color.startsWith("rgb(")) {
-    return color.replace("rgb(", "rgba(").replace(")", `, ${alpha})`);
+  if (_withAlphaCache.size >= _WITH_ALPHA_CACHE_MAX) {
+    _withAlphaCache.clear();
   }
-
-  if (color.startsWith("rgba(")) {
-    return color.replace(/rgba\(([^)]+),\s*[\d.]+\)/, `rgba($1, ${alpha})`);
-  }
-
-  return color;
+  _withAlphaCache.set(key, result);
+  return result;
 }
 
 function resolveLayoutColor(fill, palette = {}) {
@@ -2727,7 +2773,16 @@ renderReportOnlyAutopilot();
 renderReportOnlyService(renderState.reportOnlyService);
 renderExecuteAgent();
 drawScene();
-setInterval(animate, 160);
+let lastAnimateTime = 0;
+const ANIMATE_INTERVAL = 160;
+
+function animationLoop(timestamp) {
+  requestAnimationFrame(animationLoop);
+  if (timestamp - lastAnimateTime < ANIMATE_INTERVAL) return;
+  lastAnimateTime = timestamp;
+  animate();
+}
+requestAnimationFrame(animationLoop);
 
 const statusTransport = createStatusTransport({
   onStatus(data) {
