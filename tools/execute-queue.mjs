@@ -89,6 +89,30 @@ async function writeJson(filePath, data) {
 
 // ─── Task Queue ───────────────────────────────────────────────────────────────
 
+/** Berapa banyak task done/failed yang disimpan setelah prune. */
+export const QUEUE_KEEP_COMPLETED = 20;
+
+/**
+ * Hapus entry done/failed lama supaya queue file tidak tumbuh selamanya.
+ * Pertahankan semua queued/in_progress + QUEUE_KEEP_COMPLETED terbaru dari
+ * done/failed (diurutkan berdasarkan finishedAt descending).
+ */
+async function pruneQueue() {
+  const tasks = await readQueue();
+  const active = tasks.filter(
+    (t) => t.status === "queued" || t.status === "in_progress"
+  );
+  const finished = tasks
+    .filter((t) => t.status === "done" || t.status === "failed")
+    .sort((a, b) => new Date(b.finishedAt || 0) - new Date(a.finishedAt || 0))
+    .slice(0, QUEUE_KEEP_COMPLETED);
+
+  const pruned = [...active, ...finished];
+  if (pruned.length < tasks.length) {
+    await saveQueue(pruned);
+  }
+}
+
 /**
  * Baca semua tasks dari queue.
  * Return: array of task objects.
@@ -180,6 +204,7 @@ export async function requeueForRetry(id, { result = null } = {}) {
     task.result = result ? String(result).trim() : null;
     task.finishedAt = new Date().toISOString();
     await saveQueue(tasks);
+    await pruneQueue();
     return false;
   }
 
@@ -210,6 +235,26 @@ export async function resolveQueueTask(id, { status, result = null } = {}) {
   task.result = result ? String(result).trim() : null;
   task.finishedAt = new Date().toISOString();
   await saveQueue(tasks);
+  await pruneQueue();
+}
+
+/**
+ * Hapus task dari queue berdasarkan ID.
+ * Hanya bisa menghapus task yang status-nya "queued" atau "failed".
+ * Task "in_progress" tidak bisa dihapus (butuh kill child process dulu).
+ *
+ * Return: { removed: true } atau { removed: false, reason: "not_found"|"in_progress" }
+ */
+export async function removeQueueTask(id) {
+  const tasks = await readQueue();
+  const task = tasks.find((t) => t.id === id);
+
+  if (!task) return { removed: false, reason: "not_found" };
+  if (task.status === "in_progress") return { removed: false, reason: "in_progress" };
+
+  const filtered = tasks.filter((t) => t.id !== id);
+  await saveQueue(filtered);
+  return { removed: true };
 }
 
 /**

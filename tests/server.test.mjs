@@ -1114,3 +1114,129 @@ test("parseDailyDeviceHandoffMarkdown remains backward-compatible with old forma
   assert.deepEqual(parsed.active_issues, []);
   assert.equal(parsed.sections.length, 2);
 });
+
+// ─── DELETE /api/execute/queue/:id ───────────────────────────────────────────
+
+test("createServer DELETE /api/execute/queue/:id removes queued task", async (t) => {
+  const tasks = [
+    { id: "task-001", task: "fix bug", status: "queued", submittedAt: new Date().toISOString() },
+    { id: "task-002", task: "write docs", status: "done", submittedAt: new Date().toISOString() }
+  ];
+
+  const server = createServer({
+    getStatus: async () => ({ ok: true }),
+    removeQueueTask: async (id) => {
+      const task = tasks.find((t) => t.id === id);
+      if (!task) return { removed: false, reason: "not_found" };
+      if (task.status === "in_progress") return { removed: false, reason: "in_progress" };
+      return { removed: true };
+    }
+  });
+
+  server.listen(0);
+  await once(server, "listening");
+  t.after(() => server.close());
+
+  const { port } = server.address();
+  const response = await fetch(`http://127.0.0.1:${port}/api/execute/queue/task-001`, {
+    method: "DELETE"
+  });
+  const body = await response.json();
+
+  assert.equal(response.status, 200);
+  assert.equal(body.removed, true);
+  assert.equal(body.id, "task-001");
+});
+
+test("createServer DELETE /api/execute/queue/:id returns 404 for unknown task", async (t) => {
+  const server = createServer({
+    getStatus: async () => ({ ok: true }),
+    removeQueueTask: async () => ({ removed: false, reason: "not_found" })
+  });
+
+  server.listen(0);
+  await once(server, "listening");
+  t.after(() => server.close());
+
+  const { port } = server.address();
+  const response = await fetch(`http://127.0.0.1:${port}/api/execute/queue/no-such-id`, {
+    method: "DELETE"
+  });
+
+  assert.equal(response.status, 404);
+});
+
+test("createServer DELETE /api/execute/queue/:id returns 409 for in_progress task", async (t) => {
+  const server = createServer({
+    getStatus: async () => ({ ok: true }),
+    removeQueueTask: async () => ({ removed: false, reason: "in_progress" })
+  });
+
+  server.listen(0);
+  await once(server, "listening");
+  t.after(() => server.close());
+
+  const { port } = server.address();
+  const response = await fetch(`http://127.0.0.1:${port}/api/execute/queue/running-task`, {
+    method: "DELETE"
+  });
+
+  assert.equal(response.status, 409);
+});
+
+// ─── GET /api/execute/runtimes ───────────────────────────────────────────────
+
+test("createServer GET /api/execute/runtimes returns runtime list", async (t) => {
+  const server = createServer({
+    getStatus: async () => ({ ok: true }),
+    listRuntimes: async () => ({
+      runtimes: [
+        { id: "codex", label: "Codex", available: true },
+        { id: "claude-code", label: "Claude Code", available: false }
+      ],
+      available: ["codex"],
+      preferences: { general: ["codex"] }
+    })
+  });
+
+  server.listen(0);
+  await once(server, "listening");
+  t.after(() => server.close());
+
+  const { port } = server.address();
+  const response = await fetch(`http://127.0.0.1:${port}/api/execute/runtimes`);
+  const body = await response.json();
+
+  assert.equal(response.status, 200);
+  assert.ok(Array.isArray(body.runtimes));
+  assert.ok(Array.isArray(body.available));
+});
+
+// ─── GET /api/execute/ledger ─────────────────────────────────────────────────
+
+test("createServer GET /api/execute/ledger returns run summary", async (t) => {
+  const server = createServer({
+    getStatus: async () => ({ ok: true }),
+    getRunLedger: async () => ({
+      totalRuns: 3,
+      byDate: { "2026-04-07": { completed: 2, failed: 1, total: 3 } },
+      byRuntime: { codex: { completed: 2, failed: 1, total: 3 } },
+      costNote: "Token/cost data not available for subscription-based runtimes.",
+      recent: []
+    })
+  });
+
+  server.listen(0);
+  await once(server, "listening");
+  t.after(() => server.close());
+
+  const { port } = server.address();
+  const response = await fetch(`http://127.0.0.1:${port}/api/execute/ledger`);
+  const body = await response.json();
+
+  assert.equal(response.status, 200);
+  assert.equal(body.totalRuns, 3);
+  assert.ok(body.byDate);
+  assert.ok(body.byRuntime);
+  assert.ok(typeof body.costNote === "string");
+});

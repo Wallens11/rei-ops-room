@@ -408,3 +408,40 @@ sleepWithSignal(ms, signal):
 ---
 
 *Last updated: 2026-04-06 — Item 1–6 + 5a (cross-platform fix) ✅*
+
+---
+
+## Issue Batch 2026-04-07 — GitHub Issues #14, #16–#24
+
+Semua issue open di `Wallens11/rei-ops-room` diselesaikan sekaligus.
+
+| Issue | Title | Status |
+|---|---|---|
+| #19 | Stuck task recovery: requeue in_progress tasks on worker startup | ✅ Done |
+| #20 | Cancel and delete task from queue UI | ✅ Done |
+| #21 | Worker status badge in Direct Tasks panel | ✅ Done |
+| #22 | Auto-prune old done/failed tasks from queue | ✅ Done |
+| #23 | Full run log viewer: click task to see last-message and events | ✅ Done |
+| #24 | Auto-generate daily handoff from run history + learning log | ✅ Done |
+| #16 | Runtime registry for Codex and Claude workers | ✅ Done |
+| #17 | Usage and cost ledger for agent runs | ✅ Done |
+| #18 | External inquiry bridge into Rei GitHub issues | ✅ Done |
+| #14 | Realtime GitHub intake and queue refresh bridge | ✅ Done (webhook extended) |
+
+### Summary of changes
+
+| File | Change |
+|---|---|
+| `tools/execute-queue.mjs` | `pruneQueue()` + `QUEUE_KEEP_COMPLETED=20`; `removeQueueTask(id)`; called after `resolveQueueTask` & permanent `requeueForRetry` |
+| `tools/execute-worker.mjs` | `recoverStuckTasks()` — scans stale in_progress on startup; exported for testability |
+| `tools/generate-handoff.mjs` | NEW — reads `.execute-runs/`, `.execute-learning.json`, `.execute-queue.json` → writes Markdown to handoff file |
+| `server.mjs` | `DELETE /api/execute/queue/:id`; `GET /api/execute/runs/:taskId`; `POST /api/handoff/generate`; `GET /api/execute/runtimes`; `GET /api/execute/ledger`; `POST /api/inquiry/intake`; webhook extended with `issues.opened`; injectable deps in `createServer` |
+| `public/execute-queue-panel.js` | `buildWorkerStatusBadge(workers)`; `canCancel` + `taskIdShort` on rows |
+| `public/app.js` | cancel button + run log viewer (`<details>` lazy-load) in task queue; `refreshWorkerStatus()`; handoff generate button handler |
+| `public/index.html` | `#worker-status-badge`; `#handoff-generate-button` + `#handoff-generate-status` |
+| `tests/execute-queue.test.mjs` | +pruneQueue tests (25→20 done); +removeQueueTask tests; +buildWorkerStatusBadge tests; +canCancel/taskIdShort view model tests |
+| `tests/execute-worker.test.mjs` | +recoverStuckTasks tests |
+| `tests/server.test.mjs` | +DELETE queue/:id (200/404/409); +GET runtimes; +GET ledger |
+| `tests/generate-handoff.test.mjs` | NEW — formatHandoffSection; writeHandoffSection (create/append/replace/fallback); buildHandoffPayload |
+
+Test count: 278 → 308 (all passing).

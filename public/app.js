@@ -57,7 +57,7 @@ import {
   createEmptyExecutePreviewState,
   createEmptyExecuteServiceState
 } from "./execute-agent-view.js";
-import { buildTaskQueueViewModel } from "./execute-queue-panel.js";
+import { buildTaskQueueViewModel, buildWorkerStatusBadge } from "./execute-queue-panel.js";
 import {
   buildSceneHotspots,
   describeSceneSelection,
@@ -188,10 +188,13 @@ const elements = {
   githubInboxList: document.getElementById("github-inbox-list"),
   taskQueueTitle: document.getElementById("task-queue-title"),
   taskQueueChip: document.getElementById("task-queue-chip"),
+  workerStatusBadge: document.getElementById("worker-status-badge"),
   taskQueueInput: document.getElementById("task-queue-input"),
   taskQueueRuntime: document.getElementById("task-queue-runtime"),
   taskQueueSubmit: document.getElementById("task-queue-submit"),
   taskQueueList: document.getElementById("task-queue-list"),
+  handoffGenerateButton: document.getElementById("handoff-generate-button"),
+  handoffGenerateStatus: document.getElementById("handoff-generate-status"),
   sceneDetailTitle: document.getElementById("scene-detail-title"),
   sceneDetailBody: document.getElementById("scene-detail-body"),
   recentList: document.getElementById("recent-list"),
@@ -1850,16 +1853,62 @@ function renderTaskQueue() {
     return;
   }
 
-  elements.taskQueueList.innerHTML = rows.map((row) => `
-    <li>
+  elements.taskQueueList.innerHTML = rows.map((row) => {
+    const cancelBtn = row.canCancel
+      ? `<button class="task-cancel-btn" data-task-id="${escapeHtml(row.id)}" title="Delete task" style="flex-shrink:0;background:none;border:none;cursor:pointer;color:var(--muted);font-size:12px;padding:2px 4px;line-height:1;opacity:0.5;" onmouseover="this.style.opacity='1'" onmouseout="this.style.opacity='0.5'">✕</button>`
+      : "";
+    const logLink = (row.taskIdShort && (row.statusLabel === "done" || row.statusLabel === "failed"))
+      ? `<details style="margin:4px 0 0 28px;">
+          <summary style="font-size:11px;font-family:monospace;color:var(--muted);cursor:pointer;user-select:none;">view run log</summary>
+          <div class="task-run-log" data-task-id="${escapeHtml(row.id)}" style="font-size:11px;font-family:monospace;color:var(--muted);margin-top:4px;white-space:pre-wrap;word-break:break-word;">Loading...</div>
+          <a href="/api/execute/runs/${escapeHtml(row.taskIdShort)}" target="_blank" style="font-size:10px;font-family:monospace;color:var(--muted);">view full log →</a>
+        </details>`
+      : "";
+    return `<li>
       <div style="display:flex;align-items:flex-start;gap:8px;">
         <span class="item-chip" data-tone="${row.tone}" style="flex-shrink:0;font-size:10px;padding:3px 7px;">${escapeHtml(row.statusLabel)}</span>
         <span style="font-size:12px;font-family:monospace;word-break:break-word;flex:1;">${escapeHtml(row.label)}</span>
         <span style="font-size:10px;font-family:monospace;color:var(--muted);flex-shrink:0;">${escapeHtml(row.runtime)}</span>
+        ${cancelBtn}
       </div>${row.result ? `
       <p style="font-size:11px;font-family:monospace;color:var(--muted);margin:4px 0 0 28px;">${escapeHtml(row.result.length > 100 ? row.result.slice(0, 100) + "…" : row.result)}</p>` : ""}
-    </li>
-  `).join("");
+      ${logLink}
+    </li>`;
+  }).join("");
+
+  // Attach cancel button handlers
+  elements.taskQueueList.querySelectorAll(".task-cancel-btn").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const taskId = btn.dataset.taskId;
+      if (!taskId) return;
+      try {
+        const res = await fetch(`/api/execute/queue/${encodeURIComponent(taskId)}`, { method: "DELETE" });
+        if (res.ok || res.status === 404) {
+          await refreshTaskQueue();
+        }
+      } catch { /* ignore */ }
+    });
+  });
+
+  // Attach run log lazy-load handlers
+  elements.taskQueueList.querySelectorAll("details").forEach((det) => {
+    det.addEventListener("toggle", async () => {
+      if (!det.open) return;
+      const logDiv = det.querySelector(".task-run-log");
+      if (!logDiv || logDiv.dataset.loaded) return;
+      const taskId = logDiv.dataset.taskId;
+      try {
+        const res = await fetch(`/api/execute/runs/${encodeURIComponent(taskId.slice(0, 8))}`, { cache: "no-store" });
+        if (!res.ok) { logDiv.textContent = "Run log not found."; return; }
+        const data = await res.json();
+        const msg = data.lastMessage || "(empty)";
+        logDiv.textContent = msg.length > 600 ? msg.slice(0, 600) + "…" : msg;
+        logDiv.dataset.loaded = "1";
+      } catch {
+        logDiv.textContent = "Failed to load run log.";
+      }
+    });
+  });
 }
 
 function updateTaskQueueSubmitButton() {
@@ -1879,6 +1928,21 @@ async function refreshTaskQueue() {
     // keep existing state on error
   }
   renderTaskQueue();
+}
+
+async function refreshWorkerStatus() {
+  if (typeof fetch !== "function") return;
+  if (!elements.workerStatusBadge) return;
+  try {
+    const response = await fetch("/api/execute/workers", { cache: "no-store" });
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    const data = await response.json();
+    const badge = buildWorkerStatusBadge(Array.isArray(data?.workers) ? data.workers : []);
+    elements.workerStatusBadge.textContent = `worker ${badge}`;
+    elements.workerStatusBadge.style.color = badge === "running" ? "var(--mint, #7cffba)" : "";
+  } catch {
+    elements.workerStatusBadge.textContent = "worker stopped";
+  }
 }
 
 async function submitDirectTask() {
@@ -1930,6 +1994,7 @@ function startGithubInboxPolling() {
   void refreshExecutePreview();
   void refreshExecuteService();
   void refreshTaskQueue();
+  void refreshWorkerStatus();
   githubInboxPollHandle = setInterval(() => {
     void refreshDailyHandoff();
     void refreshGithubInbox();
@@ -1938,6 +2003,7 @@ function startGithubInboxPolling() {
     void refreshExecutePreview();
     void refreshExecuteService();
     void refreshTaskQueue();
+    void refreshWorkerStatus();
   }, GITHUB_INBOX_POLL_MS);
 }
 
@@ -2893,6 +2959,25 @@ elements.githubExecuteButton?.addEventListener("click", () => {
 });
 elements.taskQueueSubmit?.addEventListener("click", () => {
   void submitDirectTask();
+});
+elements.handoffGenerateButton?.addEventListener("click", async () => {
+  if (!elements.handoffGenerateButton) return;
+  elements.handoffGenerateButton.disabled = true;
+  if (elements.handoffGenerateStatus) elements.handoffGenerateStatus.textContent = "Generating…";
+  try {
+    const res = await fetch("/api/handoff/generate", { method: "POST" });
+    const data = await res.json();
+    if (res.ok && data.written) {
+      if (elements.handoffGenerateStatus) elements.handoffGenerateStatus.textContent = `✓ Written: ${data.date}`;
+      await refreshDailyHandoff();
+    } else {
+      if (elements.handoffGenerateStatus) elements.handoffGenerateStatus.textContent = data.reason || data.error || "Could not write.";
+    }
+  } catch {
+    if (elements.handoffGenerateStatus) elements.handoffGenerateStatus.textContent = "Failed.";
+  } finally {
+    elements.handoffGenerateButton.disabled = false;
+  }
 });
 elements.taskQueueInput?.addEventListener("input", () => {
   updateTaskQueueSubmitButton();

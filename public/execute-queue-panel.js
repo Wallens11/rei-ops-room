@@ -3,6 +3,9 @@
  *
  * Membangun data siap-render dari raw task array yang datang dari
  * GET /api/execute/queue, tanpa menyentuh DOM secara langsung.
+ *
+ * Export tambahan:
+ *   buildWorkerStatusBadge(workers) → "running" | "stopped"
  */
 
 const STATUS_CONFIG = {
@@ -12,6 +15,25 @@ const STATUS_CONFIG = {
   failed:      { label: "failed",  tone: "error" },
 };
 
+/** Worker dianggap aktif kalau updatedAt / registeredAt < 3 menit yang lalu. */
+const WORKER_ACTIVE_THRESHOLD_MS = 3 * 60 * 1000;
+
+/**
+ * Tentukan status badge worker berdasarkan registry dari GET /api/execute/workers.
+ *
+ * @param workers — array dari /api/execute/workers
+ * Return: "running" | "stopped"
+ */
+export function buildWorkerStatusBadge(workers) {
+  if (!Array.isArray(workers) || workers.length === 0) return "stopped";
+  const now = Date.now();
+  const hasActive = workers.some((w) => {
+    const ts = w.updatedAt || w.registeredAt;
+    return ts && now - new Date(ts).getTime() < WORKER_ACTIVE_THRESHOLD_MS;
+  });
+  return hasActive ? "running" : "stopped";
+}
+
 /**
  * Bangun view model task queue.
  *
@@ -20,6 +42,8 @@ const STATUS_CONFIG = {
  * Return: { chip, rows }
  *   chip — string untuk item-chip (misal "2 pending", "idle")
  *   rows — array task row objects
+ *     .canCancel   — true kalau task bisa dihapus (queued atau failed)
+ *     .taskIdShort — 8 char pertama dari id, untuk link ke run log
  */
 export function buildTaskQueueViewModel(tasks, { limit = 10 } = {}) {
   if (!Array.isArray(tasks)) return { chip: "idle", rows: [] };
@@ -43,12 +67,14 @@ export function buildTaskQueueViewModel(tasks, { limit = 10 } = {}) {
 
       return {
         id: t.id,
+        taskIdShort: String(t.id || "").slice(0, 8),
         label: taskLabel + retryBadge,
         statusLabel: label,
         tone,
         runtime: t.runtimeId || "auto",
         result: t.result || null,
         retryAfter: t.retryAfter || null,
+        canCancel: t.status === "queued" || t.status === "failed",
       };
     });
 

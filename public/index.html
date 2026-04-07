@@ -190,6 +190,10 @@
           </div>
           <p id="handoff-meta" class="dim mono">checking latest recap</p>
           <ul id="handoff-list" class="stack-list"></ul>
+          <button id="handoff-generate-button" class="report-only-button" type="button" style="margin-top:8px;">
+            Generate Handoff
+          </button>
+          <p id="handoff-generate-status" class="dim mono" style="margin-top:4px;font-size:11px;"></p>
         </article>
 
         <article class="panel github-inbox-panel">
@@ -251,6 +255,7 @@
           <div class="item-head">
             <strong id="task-queue-title">Direct Tasks</strong>
             <span id="task-queue-chip" class="item-chip">idle</span>
+            <span id="worker-status-badge" class="item-chip" title="Execute worker status">worker stopped</span>
           </div>
           <textarea
             id="task-queue-input"

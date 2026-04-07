@@ -12,6 +12,7 @@ import {
   enqueueTask,
   readQueue,
   readWorkers,
+  removeQueueTask,
   signalWorkerWake
 } from "./tools/execute-queue.mjs";
 
@@ -1503,6 +1504,51 @@ export async function readDailyDeviceHandoff(filePath = dailyDeviceHandoffPaths)
   };
 }
 
+// ─── Default implementations for injected deps ───────────────────────────────
+
+async function defaultRemoveQueueTask(id) {
+  return removeQueueTask(id);
+}
+
+async function defaultListRuntimes() {
+  const { RUNTIME_MAP, probeAvailableRuntimes, RUNTIME_PREFERENCES } = await import("./tools/runtimes/index.mjs");
+  const available = await probeAvailableRuntimes(process.env);
+  const runtimes = [...RUNTIME_MAP.entries()].map(([id, rt]) => ({
+    id,
+    label: rt.RUNTIME_LABEL,
+    available: available.includes(id)
+  }));
+  return { runtimes, available, preferences: RUNTIME_PREFERENCES };
+}
+
+async function defaultGetRunLedger() {
+  const { readLearningLog } = await import("./tools/execute-learning.mjs");
+  const entries = await readLearningLog();
+  const byDate = {};
+  const byRuntime = {};
+  let totalRuns = 0;
+  for (const entry of entries) {
+    totalRuns++;
+    const day = entry.date || entry.recordedAt?.slice(0, 10) || "unknown";
+    const runtime = entry.runtimeId || "unknown";
+    if (!byDate[day]) byDate[day] = { completed: 0, failed: 0, total: 0 };
+    byDate[day].total++;
+    if (entry.outcome === "completed") byDate[day].completed++;
+    else if (entry.outcome === "failed" || entry.outcome === "review_needed") byDate[day].failed++;
+    if (!byRuntime[runtime]) byRuntime[runtime] = { completed: 0, failed: 0, total: 0 };
+    byRuntime[runtime].total++;
+    if (entry.outcome === "completed") byRuntime[runtime].completed++;
+    else if (entry.outcome === "failed" || entry.outcome === "review_needed") byRuntime[runtime].failed++;
+  }
+  return {
+    totalRuns,
+    byDate,
+    byRuntime,
+    costNote: "Token/cost data not available for subscription-based runtimes (Codex, Claude Code).",
+    recent: entries.slice(-10).reverse()
+  };
+}
+
 export function createServer({
   getStatus: getStatusImpl = getStatus,
   getDailyDeviceHandoff: getDailyDeviceHandoffImpl = readDailyDeviceHandoff,
@@ -1515,6 +1561,9 @@ export function createServer({
   previewExecuteAction: previewExecuteActionImpl = previewExecuteAction,
   getExecuteServiceStatus: getExecuteServiceStatusImpl = getExecuteServiceStatus,
   controlExecuteService: controlExecuteServiceImpl = controlExecuteService,
+  removeQueueTask: removeQueueTaskImpl = defaultRemoveQueueTask,
+  listRuntimes: listRuntimesImpl = defaultListRuntimes,
+  getRunLedger: getRunLedgerImpl = defaultGetRunLedger,
   serveStatic: serveStaticImpl = serveStatic
 } = {}) {
   return http.createServer(async (request, response) => {
@@ -1540,6 +1589,28 @@ export function createServer({
       } catch (error) {
         writeJson(response, 500, {
           error: "Failed to read daily handoff",
+          detail: error instanceof Error ? error.message : String(error)
+        });
+      }
+      return;
+    }
+
+    // ─── Generate Handoff ────────────────────────────────────────────────────
+    // POST /api/handoff/generate — buat daily handoff dari run history + learning
+
+    if (url.pathname === "/api/handoff/generate" && request.method === "POST") {
+      try {
+        const { generateHandoff } = await import("./tools/generate-handoff.mjs");
+        const result = await generateHandoff();
+        writeJson(response, 200, {
+          written: result.written,
+          path: result.path || null,
+          date: result.date,
+          todayAtAGlance: result.todayAtAGlance
+        });
+      } catch (error) {
+        writeJson(response, 500, {
+          error: "Gagal generate handoff",
           detail: error instanceof Error ? error.message : String(error)
         });
       }
@@ -1768,6 +1839,206 @@ export function createServer({
       return;
     }
 
+    // ─── Delete Queue Task ───────────────────────────────────────────────────
+    // DELETE /api/execute/queue/:id — hapus task kalau status queued atau failed.
+    // 409 kalau in_progress, 404 kalau tidak ditemukan.
+
+    const deleteQueueMatch = request.method === "DELETE" &&
+      url.pathname.match(/^\/api\/execute\/queue\/([^/]+)$/);
+    if (deleteQueueMatch) {
+      try {
+        const taskId = deleteQueueMatch[1];
+        const outcome = await removeQueueTaskImpl(taskId);
+        if (!outcome.removed && outcome.reason === "not_found") {
+          writeJson(response, 404, { error: "Task tidak ditemukan.", id: taskId });
+        } else if (!outcome.removed && outcome.reason === "in_progress") {
+          writeJson(response, 409, { error: "Task sedang berjalan dan tidak bisa dihapus.", id: taskId });
+        } else {
+          writeJson(response, 200, { removed: true, id: taskId });
+        }
+      } catch (error) {
+        writeJson(response, 500, {
+          error: "Gagal hapus task",
+          detail: error instanceof Error ? error.message : String(error)
+        });
+      }
+      return;
+    }
+
+    // ─── Run Log Viewer ──────────────────────────────────────────────────────
+    // GET /api/execute/runs/:taskId — baca last-message.md dan tail events.jsonl
+    // dari run dir yang namanya mengandung 8 char pertama dari taskId.
+
+    const runsMatch = request.method === "GET" &&
+      url.pathname.match(/^\/api\/execute\/runs\/([^/]+)$/);
+    if (runsMatch) {
+      try {
+        const { executeRunsDir } = await import("./tools/execute-worker-state.mjs");
+        const taskIdPrefix = runsMatch[1].slice(0, 8);
+
+        let entries = [];
+        try {
+          entries = await fs.readdir(executeRunsDir);
+        } catch {
+          // Direktori belum ada — return empty
+        }
+
+        // Cari run dir yang namanya mengandung taskIdPrefix
+        const matchingDir = entries
+          .filter((e) => e.includes(taskIdPrefix))
+          .sort()
+          .pop(); // ambil yang paling baru
+
+        if (!matchingDir) {
+          writeJson(response, 404, { error: "Run log tidak ditemukan untuk task ini.", taskId: runsMatch[1] });
+          return;
+        }
+
+        const runDir = path.join(executeRunsDir, matchingDir);
+        const lastMessageFile = path.join(runDir, "last-message.md");
+        const eventsFile = path.join(runDir, "events.jsonl");
+
+        const lastMessage = await fs.readFile(lastMessageFile, "utf8").catch(() => "");
+
+        // Ambil 30 baris terakhir dari events.jsonl
+        let eventsPreview = [];
+        try {
+          const eventsText = await fs.readFile(eventsFile, "utf8");
+          eventsPreview = eventsText.split("\n").filter(Boolean).slice(-30);
+        } catch { /* file mungkin belum ada */ }
+
+        writeJson(response, 200, {
+          taskId: runsMatch[1],
+          runDir: matchingDir,
+          lastMessage,
+          eventsPreview
+        });
+      } catch (error) {
+        writeJson(response, 500, {
+          error: "Gagal baca run log",
+          detail: error instanceof Error ? error.message : String(error)
+        });
+      }
+      return;
+    }
+
+    // ─── Runtime Registry ────────────────────────────────────────────────────
+    // GET /api/execute/runtimes — daftar runtime yang dikenal + yang tersedia
+    // Ini adalah ekspos dari issue #16: runtime registry.
+
+    if (url.pathname === "/api/execute/runtimes" && request.method === "GET") {
+      try {
+        const result = await listRuntimesImpl();
+        writeJson(response, 200, result);
+      } catch (error) {
+        writeJson(response, 500, {
+          error: "Gagal baca runtime registry",
+          detail: error instanceof Error ? error.message : String(error)
+        });
+      }
+      return;
+    }
+
+    // ─── Run Usage Ledger ─────────────────────────────────────────────────────
+    // GET /api/execute/ledger — ringkasan usage dari learning log (issue #17)
+
+    if (url.pathname === "/api/execute/ledger" && request.method === "GET") {
+      try {
+        const result = await getRunLedgerImpl();
+        writeJson(response, 200, result);
+      } catch (error) {
+        writeJson(response, 500, {
+          error: "Gagal baca run ledger",
+          detail: error instanceof Error ? error.message : String(error)
+        });
+      }
+      return;
+    }
+
+    // ─── External Inquiry Bridge ──────────────────────────────────────────────
+    // POST /api/inquiry/intake — terima inquiry dari webhook/form/chat bridge
+    // dan buat GitHub issue dengan label agent:rei.
+    // Issue #18: external inquiry bridge.
+    //
+    // Request body: { title, body, source?, labels? }
+    // Optional env: GITHUB_REPO (default: inferred from git remote)
+
+    if (url.pathname === "/api/inquiry/intake" && request.method === "POST") {
+      try {
+        const body = await readJsonRequestBody(request);
+        const title = String(body?.title || "").trim();
+        const issueBody = String(body?.body || "").trim();
+        const source = String(body?.source || "external").trim();
+
+        if (!title) {
+          writeJson(response, 400, { error: "Field `title` wajib diisi." });
+          return;
+        }
+
+        // Buat body issue yang terstruktur
+        const formattedBody = [
+          `## Inquiry`,
+          "",
+          issueBody || "(no body provided)",
+          "",
+          `---`,
+          `**Source**: ${source}`,
+          `**Received**: ${new Date().toISOString()}`,
+          "",
+          `> Auto-generated via /api/inquiry/intake`
+        ].join("\n");
+
+        const extraLabels = Array.isArray(body?.labels)
+          ? body.labels.map((l) => String(l).trim()).filter(Boolean)
+          : [];
+
+        const allLabels = ["agent:rei", "status:todo", "mode:report_only", ...extraLabels];
+
+        // Buat GitHub issue via gh CLI
+        const ghArgs = [
+          "issue", "create",
+          "--title", title,
+          "--body", formattedBody,
+          ...allLabels.flatMap((l) => ["--label", l])
+        ];
+
+        const repo = process.env.GITHUB_REPO || null;
+        if (repo) ghArgs.push("--repo", repo);
+
+        let issueUrl = null;
+        try {
+          const { stdout } = await execFileAsync("gh", ghArgs, { cwd: __dirname });
+          issueUrl = stdout.trim();
+        } catch (ghError) {
+          // gh CLI tidak tersedia atau credentials tidak setup
+          writeJson(response, 503, {
+            error: "Gagal buat GitHub issue — pastikan gh CLI tersedia dan terautentikasi.",
+            detail: ghError instanceof Error ? ghError.message : String(ghError),
+            title,
+            labels: allLabels
+          });
+          return;
+        }
+
+        // Bangunkan worker supaya langsung cek queue baru
+        await signalWorkerWake().catch(() => {});
+
+        writeJson(response, 201, {
+          created: true,
+          issueUrl,
+          title,
+          labels: allLabels,
+          source
+        });
+      } catch (error) {
+        writeJson(response, error?.statusCode || 500, {
+          error: "Gagal proses inquiry intake",
+          detail: error instanceof Error ? error.message : String(error)
+        });
+      }
+      return;
+    }
+
     // ─── GitHub Webhook ──────────────────────────────────────────────────────
     // POST /api/github/webhook
     // Set GITHUB_WEBHOOK_SECRET env kalau mau signature verification.
@@ -1805,6 +2076,18 @@ export function createServer({
 
           if (isReiLabel) {
             // Bangunkan worker supaya langsung cek GitHub queue tanpa tunggu interval
+            await signalWorkerWake();
+          }
+        }
+
+        // issues.opened → kalau issue baru dibuka dengan label agent:rei, bangunkan worker
+        // Ini bagian dari issue #14: realtime GitHub intake bridge.
+        if (event === "issues" && action === "opened") {
+          const labels = Array.isArray(payload?.issue?.labels)
+            ? payload.issue.labels.map((l) => String(l?.name || ""))
+            : [];
+          const hasReiLabel = labels.some((l) => l === "agent:rei" || l.startsWith("mode:"));
+          if (hasReiLabel) {
             await signalWorkerWake();
           }
         }

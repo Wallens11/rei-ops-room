@@ -29,8 +29,10 @@ import {
 import {
   checkAndClearWakeTrigger,
   claimNextQueuedTask,
+  readQueue,
   registerWorker,
   requeueForRetry,
+  requeueStuckTask,
   resolveQueueTask,
   unregisterWorker,
   updateWorkerActivity
@@ -40,6 +42,7 @@ import { recordRunInsight } from "./execute-learning.mjs";
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const DEFAULT_INTERVAL_SECONDS = 60;
 const MIN_INTERVAL_SECONDS = 30;
+const STUCK_TASK_THRESHOLD_MS = 10 * 60 * 1000; // 10 menit
 const DEFAULT_CODEX_CANDIDATES = ["/Applications/Codex.app/Contents/Resources/codex"];
 const execFileAsync = promisify(execFile);
 const EXECUTE_RUNTIME_PATH_PREFIXES = [
@@ -772,6 +775,31 @@ async function executeNextIssue({
   return result;
 }
 
+/**
+ * Saat startup, scan queue untuk task in_progress yang stale (startedAt >
+ * STUCK_TASK_THRESHOLD_MS yang lalu) dan kembalikan ke queued.
+ * Ini terjadi kalau worker crash saat task sedang berjalan.
+ *
+ * @param stdout — stream untuk warn log
+ */
+export async function recoverStuckTasks({ stdout = process.stdout } = {}) {
+  const tasks = await readQueue().catch(() => []);
+  const staleThreshold = Date.now() - STUCK_TASK_THRESHOLD_MS;
+
+  for (const task of tasks) {
+    if (
+      task.status === "in_progress" &&
+      task.startedAt &&
+      new Date(task.startedAt).getTime() < staleThreshold
+    ) {
+      await requeueStuckTask(task.id).catch(() => {});
+      stdout.write(
+        `[warn] requeued stuck task ${task.id} (${String(task.task || "").slice(0, 40)})\n`
+      );
+    }
+  }
+}
+
 export async function runExecuteWorker({
   cwd = projectRoot,
   repo = null,
@@ -794,6 +822,9 @@ export async function runExecuteWorker({
 
   // Register ke workers registry
   await registerWorker({ workerId, pid: process.pid, runtimeId: availableRuntimes[0] ?? "codex" }).catch(() => {});
+
+  // Saat startup, requeue task in_progress yang stale (crash recovery)
+  await recoverStuckTasks({ stdout }).catch(() => {});
 
   if (!once) {
     stdout.write(

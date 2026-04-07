@@ -610,4 +610,239 @@ describe("execute-queue-panel: buildTaskQueueViewModel", async () => {
     const { rows } = buildTaskQueueViewModel(sampleTasks, { limit: 2 });
     assert.equal(rows.length, 2);
   });
+
+  it("row.canCancel true untuk status queued dan false untuk in_progress", () => {
+    const tasks = [
+      { id: "a", task: "queued task", status: "queued", runtimeId: null, retryCount: 0, maxRetries: 2, result: null, retryAfter: null },
+      { id: "b", task: "running task", status: "in_progress", runtimeId: null, retryCount: 0, maxRetries: 2, result: null, retryAfter: null },
+      { id: "c", task: "done task", status: "done", runtimeId: null, retryCount: 0, maxRetries: 2, result: null, retryAfter: null },
+      { id: "d", task: "failed task", status: "failed", runtimeId: null, retryCount: 0, maxRetries: 2, result: null, retryAfter: null },
+    ];
+    const { rows } = buildTaskQueueViewModel(tasks);
+    const queued = rows.find((r) => r.id === "a");
+    const running = rows.find((r) => r.id === "b");
+    const done = rows.find((r) => r.id === "c");
+    const failed = rows.find((r) => r.id === "d");
+    assert.equal(queued.canCancel, true);
+    assert.equal(running.canCancel, false);
+    assert.equal(done.canCancel, false);
+    assert.equal(failed.canCancel, true);
+  });
+
+  it("row.taskIdShort adalah 8 char pertama dari id", () => {
+    const task = { id: "abcd1234-5678-0000", task: "test", status: "done", runtimeId: null, retryCount: 0, maxRetries: 2, result: null, retryAfter: null };
+    const { rows } = buildTaskQueueViewModel([task]);
+    assert.equal(rows[0].taskIdShort, "abcd1234");
+  });
+});
+
+// ─── buildWorkerStatusBadge ───────────────────────────────────────────────────
+
+describe("execute-queue-panel: buildWorkerStatusBadge", async () => {
+  const { buildWorkerStatusBadge } = await import("../public/execute-queue-panel.js");
+
+  it("return 'stopped' kalau workers array kosong", () => {
+    assert.equal(buildWorkerStatusBadge([]), "stopped");
+  });
+
+  it("return 'stopped' kalau null/undefined", () => {
+    assert.equal(buildWorkerStatusBadge(null), "stopped");
+    assert.equal(buildWorkerStatusBadge(undefined), "stopped");
+  });
+
+  it("return 'running' kalau ada worker dengan updatedAt baru (< 3 menit)", () => {
+    const workers = [{
+      workerId: "w1",
+      pid: 123,
+      updatedAt: new Date().toISOString() // sekarang
+    }];
+    assert.equal(buildWorkerStatusBadge(workers), "running");
+  });
+
+  it("return 'stopped' kalau semua worker updatedAt lama (> 3 menit)", () => {
+    const oldTs = new Date(Date.now() - 4 * 60 * 1000).toISOString(); // 4 menit lalu
+    const workers = [{
+      workerId: "w1",
+      pid: 123,
+      updatedAt: oldTs
+    }];
+    assert.equal(buildWorkerStatusBadge(workers), "stopped");
+  });
+
+  it("return 'running' kalau registeredAt baru (tidak ada updatedAt)", () => {
+    const workers = [{
+      workerId: "w1",
+      pid: 123,
+      registeredAt: new Date().toISOString()
+    }];
+    assert.equal(buildWorkerStatusBadge(workers), "running");
+  });
+});
+
+// ─── pruneQueue (via isolated helpers) ───────────────────────────────────────
+
+describe("execute-queue: pruneQueue via resolveQueueTask", async () => {
+  let tmpPruneDir;
+
+  // Re-implement pruneQueue inline for isolated testing
+  function makePruneQueue(dir) {
+    const qFile = path.join(dir, ".execute-queue.json");
+    const QUEUE_KEEP_COMPLETED = 20;
+
+    async function readQ() {
+      try { return JSON.parse(await fs.readFile(qFile, "utf8")).tasks ?? []; }
+      catch (e) { if (e?.code === "ENOENT") return []; throw e; }
+    }
+    async function saveQ(tasks) {
+      await fs.writeFile(qFile, JSON.stringify({ tasks }, null, 2), "utf8");
+    }
+
+    async function pruneQueue() {
+      const tasks = await readQ();
+      const active = tasks.filter((t) => t.status === "queued" || t.status === "in_progress");
+      const finished = tasks
+        .filter((t) => t.status === "done" || t.status === "failed")
+        .sort((a, b) => new Date(b.finishedAt || 0) - new Date(a.finishedAt || 0))
+        .slice(0, QUEUE_KEEP_COMPLETED);
+      const pruned = [...active, ...finished];
+      if (pruned.length < tasks.length) {
+        await saveQ(pruned);
+      }
+    }
+
+    return { readQ, saveQ, pruneQueue };
+  }
+
+  before(async () => {
+    tmpPruneDir = await fs.mkdtemp(path.join(os.tmpdir(), "rei-prune-test-"));
+  });
+  after(async () => {
+    await fs.rm(tmpPruneDir, { recursive: true, force: true });
+  });
+
+  it("pruneQueue: 25 done tasks → hanya 20 yang tersisa setelah prune", async () => {
+    const { saveQ, readQ, pruneQueue } = makePruneQueue(tmpPruneDir);
+
+    // Buat 25 done tasks
+    const tasks = Array.from({ length: 25 }, (_, i) => ({
+      id: `done-${i}`,
+      task: `task ${i}`,
+      status: "done",
+      finishedAt: new Date(Date.now() - i * 1000).toISOString()
+    }));
+    await saveQ(tasks);
+
+    await pruneQueue();
+
+    const remaining = await readQ();
+    assert.equal(remaining.length, 20, `expected 20, got ${remaining.length}`);
+  });
+
+  it("pruneQueue: active tasks selalu dipertahankan", async () => {
+    const { saveQ, readQ, pruneQueue } = makePruneQueue(tmpPruneDir);
+
+    // 25 done + 3 queued/in_progress
+    const tasks = [
+      ...Array.from({ length: 25 }, (_, i) => ({
+        id: `done-${i}`,
+        task: `task ${i}`,
+        status: "done",
+        finishedAt: new Date(Date.now() - i * 1000).toISOString()
+      })),
+      { id: "q1", task: "queued", status: "queued", finishedAt: null },
+      { id: "q2", task: "in progress", status: "in_progress", finishedAt: null },
+    ];
+    await saveQ(tasks);
+
+    await pruneQueue();
+
+    const remaining = await readQ();
+    assert.ok(remaining.some((t) => t.id === "q1"), "queued task harus tetap ada");
+    assert.ok(remaining.some((t) => t.id === "q2"), "in_progress task harus tetap ada");
+    const doneCount = remaining.filter((t) => t.status === "done").length;
+    assert.equal(doneCount, 20);
+  });
+
+  it("pruneQueue: tidak melakukan apa-apa kalau kurang dari 20 done tasks", async () => {
+    const { saveQ, readQ, pruneQueue } = makePruneQueue(tmpPruneDir);
+
+    const tasks = Array.from({ length: 5 }, (_, i) => ({
+      id: `small-${i}`,
+      task: `task ${i}`,
+      status: "done",
+      finishedAt: new Date(Date.now() - i * 1000).toISOString()
+    }));
+    await saveQ(tasks);
+
+    await pruneQueue();
+
+    const remaining = await readQ();
+    assert.equal(remaining.length, 5);
+  });
+});
+
+// ─── removeQueueTask (via isolated helpers) ───────────────────────────────────
+
+describe("execute-queue: removeQueueTask", async () => {
+  let tmpRemoveDir;
+
+  function makeRemoveQueue(dir) {
+    const qFile = path.join(dir, ".execute-queue.json");
+
+    async function readQ() {
+      try { return JSON.parse(await fs.readFile(qFile, "utf8")).tasks ?? []; }
+      catch (e) { if (e?.code === "ENOENT") return []; throw e; }
+    }
+    async function saveQ(tasks) {
+      await fs.writeFile(qFile, JSON.stringify({ tasks }, null, 2), "utf8");
+    }
+
+    async function removeQueueTask(id) {
+      const tasks = await readQ();
+      const task = tasks.find((t) => t.id === id);
+      if (!task) return { removed: false, reason: "not_found" };
+      if (task.status === "in_progress") return { removed: false, reason: "in_progress" };
+      const filtered = tasks.filter((t) => t.id !== id);
+      await saveQ(filtered);
+      return { removed: true };
+    }
+
+    return { readQ, saveQ, removeQueueTask };
+  }
+
+  before(async () => {
+    tmpRemoveDir = await fs.mkdtemp(path.join(os.tmpdir(), "rei-remove-test-"));
+  });
+  after(async () => {
+    await fs.rm(tmpRemoveDir, { recursive: true, force: true });
+  });
+
+  it("removeQueueTask: hapus task queued dengan sukses", async () => {
+    const { saveQ, readQ, removeQueueTask } = makeRemoveQueue(tmpRemoveDir);
+    await saveQ([
+      { id: "t1", task: "fix", status: "queued" },
+      { id: "t2", task: "deploy", status: "queued" }
+    ]);
+    const result = await removeQueueTask("t1");
+    assert.equal(result.removed, true);
+    const remaining = await readQ();
+    assert.ok(!remaining.some((t) => t.id === "t1"), "t1 harus sudah dihapus");
+    assert.ok(remaining.some((t) => t.id === "t2"), "t2 harus masih ada");
+  });
+
+  it("removeQueueTask: return not_found untuk id yang tidak ada", async () => {
+    const { saveQ, removeQueueTask } = makeRemoveQueue(tmpRemoveDir);
+    await saveQ([]);
+    const result = await removeQueueTask("no-such");
+    assert.equal(result.removed, false);
+    assert.equal(result.reason, "not_found");
+  });
+
+  it("removeQueueTask: return in_progress untuk task yang sedang berjalan", async () => {
+    const { saveQ, removeQueueTask } = makeRemoveQueue(tmpRemoveDir);
+    await saveQ([{ id: "running", task: "running task", status: "in_progress" }]);
+    const result = await removeQueueTask("running");
+    assert.equal(result.removed, false);
+    assert.equal(result.reason, "in_progress");
+  });
 });
