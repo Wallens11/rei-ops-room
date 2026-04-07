@@ -178,7 +178,8 @@ Perilaku default:
 - kalau tidak ada `mode:execute` yang siap, executor akan cek roadmap parent `agent:rei` tanpa mode label lalu auto-pick child issue open berikutnya dari daftar child issue di body/comment roadmap
 - saat service hidup, issue `status:todo` berikutnya akan diklaim ke `status:in_progress`
 - child issue roadmap yang masih `mode:report_only` akan dipromote ke `mode:execute` saat benar-benar diklaim untuk run
-- worker akan launch `codex exec` dari repo ini, pakai issue body + daily handoff sebagai context awal
+- worker akan pilih runtime sesuai task type, lalu launch `Claude Code` atau `codex exec` dari repo ini dengan issue body + daily handoff sebagai context awal
+- kalau runtime utama kena rate limit / overload, worker akan fallback otomatis ke runtime berikutnya di routing yang aktif
 - worker hanya akan auto-close issue kalau run meninggalkan perubahan repo yang benar-benar baru dan bermakna
 - kalau run selesai bersih tapi hasilnya cuma analisis / tidak meninggalkan perubahan repo, issue akan tetap open dan dipindahkan ke `status:blocked` untuk review manual
 - saat gagal, worker akan comment hasil terakhir lalu pindahkan issue ke `status:blocked`
@@ -208,6 +209,34 @@ Catatan:
 - log append ke `.execute-worker.log`
 - state aktif disimpan di `.execute-worker-state.json`
 - artifact per run ditulis ke `.execute-runs/`
+- saat worker boot, log akan menulis runtime yang tersedia, routing aktif per task type, dan status rate-limit fallback
+
+### Runtime Routing
+
+Default routing:
+
+- `frontend`: `claude-code -> codex`
+- `backend`: `codex -> claude-code`
+- `scraping`: `codex`
+- `docs`: `claude-code -> codex`
+- `general`: `codex -> claude-code`
+
+Kalau perlu override per repo, tambahkan file `.rei-runtimes.json` di root:
+
+```json
+{
+  "preferences": {
+    "frontend": ["claude-code", "codex"],
+    "backend": ["codex", "claude-code"],
+    "scraping": ["codex"],
+    "docs": ["claude-code", "codex"],
+    "general": ["codex", "claude-code"]
+  },
+  "rateLimitFallback": true
+}
+```
+
+Kalau file tidak ada, worker pakai default di atas.
 
 ## Jalan Di Laptop Lain
 
@@ -221,10 +250,13 @@ npm install
 ./agent-pixel room
 ```
 
-Kalau file Codex kamu ada di lokasi lain, set env sebelum jalan:
+Kalau file Codex atau Claude ada di lokasi lain, set env sebelum jalan:
 
 ```bash
-CODEX_HOME=/path/to/.codex ./agent-pixel room
+CODEX_HOME=/path/to/.codex \
+CODEX_BIN=/path/to/codex \
+CLAUDE_BIN=/path/to/claude \
+./agent-pixel room
 ```
 
 ## Catatan

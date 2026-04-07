@@ -1,94 +1,172 @@
-/**
- * Runtime registry untuk execute-worker.mjs.
- *
- * Tiap runtime adalah module yang export:
- *   RUNTIME_ID     — string identifier ("codex", "claude-code", ...)
- *   RUNTIME_LABEL  — human-readable label
- *   resolveCommand({ env, fallback }) — async, return path ke binary
- *   buildInvocation({ command, repoCwd, outputLastMessageFile }) — return invocation object
- *
- * Nambah runtime baru: import di sini, masukkan ke RUNTIME_LIST,
- * dan set preferensinya di RUNTIME_PREFERENCES.
- *
- * Cross-session note (buat LLM lain yang lanjut):
- *   - Item 4 di docs/improvement-plan.md punya detail lengkap.
- *   - Untuk tambah runtime baru (misalnya Gemini): buat tools/runtimes/gemini.mjs
- *     dengan interface yang sama, lalu register di sini.
- */
-
 import fs from "node:fs/promises";
 import path from "node:path";
 
 import * as codex from "./codex.mjs";
 import * as claudeCode from "./claude-code.mjs";
 
-// ─── Registry ────────────────────────────────────────────────────────────────
-
 const RUNTIME_LIST = [codex, claudeCode];
 
-export const RUNTIME_MAP = new Map(RUNTIME_LIST.map((r) => [r.RUNTIME_ID, r]));
+export const RUNTIME_MAP = new Map(RUNTIME_LIST.map((runtime) => [runtime.RUNTIME_ID, runtime]));
 
-// ─── Routing: specialist profile → runtime preference ────────────────────────
-//
-// List diurutkan dari yang paling diinginkan.
-// selectRuntime() akan ambil runtime pertama yang tersedia di sistem.
-//
-// Reasoning:
-//   scraping / frontend — butuh ~/.codex/skills (Playwright, frontend-design)
-//   backend / docs      — reasoning-heavy → Claude Code lebih tepat
-//   general             — default ke Codex
+export const DEFAULT_RUNTIME_PREFERENCES = Object.freeze({
+  frontend: Object.freeze(["claude-code", "codex"]),
+  backend: Object.freeze(["codex", "claude-code"]),
+  scraping: Object.freeze(["codex"]),
+  docs: Object.freeze(["claude-code", "codex"]),
+  general: Object.freeze(["codex", "claude-code"])
+});
 
-export const RUNTIME_PREFERENCES = {
-  scraping:  ["codex"],
-  frontend:  ["codex"],
-  backend:   ["claude-code", "codex"],
-  docs:      ["claude-code", "codex"],
-  general:   ["codex"]
-};
+export const RUNTIME_PREFERENCES = DEFAULT_RUNTIME_PREFERENCES;
 
-// ─── Probe ───────────────────────────────────────────────────────────────────
+export const DEFAULT_RUNTIME_CONFIG = Object.freeze({
+  preferences: DEFAULT_RUNTIME_PREFERENCES,
+  rateLimitFallback: true
+});
 
-/**
- * Cek runtime mana yang tersedia di sistem.
- * - Jika resolveCommand() return absolute path → verify file exists.
- * - Jika return relative name ("codex", "claude") → trust PATH, anggap available.
- *
- * Return: array of RUNTIME_ID string yang available.
- */
+const KNOWN_RUNTIME_IDS = new Set(RUNTIME_LIST.map((runtime) => runtime.RUNTIME_ID));
+
+function uniqueRuntimeIds(runtimeIds = []) {
+  const seen = new Set();
+  const normalized = [];
+
+  for (const runtimeId of runtimeIds) {
+    const value = String(runtimeId || "").trim();
+    if (!value || seen.has(value) || !KNOWN_RUNTIME_IDS.has(value)) {
+      continue;
+    }
+
+    seen.add(value);
+    normalized.push(value);
+  }
+
+  return normalized;
+}
+
+function sanitizePreferenceOverride(override, fallback) {
+  const normalized = uniqueRuntimeIds(Array.isArray(override) ? override : []);
+  return normalized.length > 0 ? normalized : [...fallback];
+}
+
+export function mergeRuntimePreferences(preferences = {}, defaults = DEFAULT_RUNTIME_PREFERENCES) {
+  return Object.fromEntries(
+    Object.entries(defaults).map(([taskType, fallback]) => [
+      taskType,
+      sanitizePreferenceOverride(preferences?.[taskType], fallback)
+    ])
+  );
+}
+
+export async function loadRuntimePreferences({
+  cwd = process.cwd(),
+  configPath = path.join(cwd, ".rei-runtimes.json"),
+  readFile = fs.readFile
+} = {}) {
+  try {
+    const text = await readFile(configPath, "utf8");
+    const parsed = JSON.parse(text);
+
+    return {
+      sourcePath: configPath,
+      exists: true,
+      preferences: mergeRuntimePreferences(parsed?.preferences || {}),
+      rateLimitFallback:
+        typeof parsed?.rateLimitFallback === "boolean"
+          ? parsed.rateLimitFallback
+          : DEFAULT_RUNTIME_CONFIG.rateLimitFallback
+    };
+  } catch (error) {
+    if (error?.code === "ENOENT") {
+      return {
+        sourcePath: configPath,
+        exists: false,
+        preferences: mergeRuntimePreferences(),
+        rateLimitFallback: DEFAULT_RUNTIME_CONFIG.rateLimitFallback
+      };
+    }
+
+    throw error;
+  }
+}
+
 export async function probeAvailableRuntimes(env = process.env) {
   const available = [];
 
   for (const runtime of RUNTIME_LIST) {
     try {
-      const cmd = await runtime.resolveCommand({ env });
-      if (path.isAbsolute(cmd)) {
-        await fs.access(cmd); // throws jika tidak ada
+      const command = await runtime.resolveCommand({ env });
+      if (path.isAbsolute(command)) {
+        await fs.access(command);
       }
       available.push(runtime.RUNTIME_ID);
     } catch {
-      // binary tidak ditemukan — skip
+      // binary tidak ditemukan
     }
   }
 
   return available;
 }
 
-// ─── Selection ───────────────────────────────────────────────────────────────
+export function resolveRuntimeOrder({
+  taskType = "general",
+  preferences = DEFAULT_RUNTIME_PREFERENCES,
+  availableRuntimeIds = []
+} = {}) {
+  const available = uniqueRuntimeIds(availableRuntimeIds);
+  const preferenceMap = mergeRuntimePreferences(preferences, DEFAULT_RUNTIME_PREFERENCES);
+  const requestedOrder = preferenceMap[taskType] || preferenceMap.general || DEFAULT_RUNTIME_PREFERENCES.general;
 
-/**
- * Pilih runtime terbaik untuk specialist profile tertentu.
- * Dari RUNTIME_PREFERENCES, ambil yang pertama ada di availableRuntimes.
- * Fallback: "codex" kalau tidak ada yang cocok.
- */
-export function selectRuntime(profileId, availableRuntimes = []) {
-  const preferred = RUNTIME_PREFERENCES[profileId] ?? ["codex"];
-  return preferred.find((r) => availableRuntimes.includes(r)) ?? "codex";
+  if (available.length === 0) {
+    return [...requestedOrder];
+  }
+
+  const requestedAvailable = requestedOrder.filter((runtimeId) => available.includes(runtimeId));
+  if (requestedAvailable.length > 0) {
+    return requestedAvailable;
+  }
+
+  if (taskType !== "general") {
+    const generalOrder = preferenceMap.general || DEFAULT_RUNTIME_PREFERENCES.general;
+    const generalAvailable = generalOrder.filter((runtimeId) => available.includes(runtimeId));
+    if (generalAvailable.length > 0) {
+      return generalAvailable;
+    }
+  }
+
+  return available;
 }
 
-/**
- * Get runtime module by ID.
- * Fallback ke codex kalau ID tidak dikenal.
- */
+export function selectRuntime(profileId, availableRuntimes = [], preferences = DEFAULT_RUNTIME_PREFERENCES) {
+  return resolveRuntimeOrder({
+    taskType: profileId,
+    preferences,
+    availableRuntimeIds: availableRuntimes
+  })[0] ?? "codex";
+}
+
 export function getRuntime(runtimeId) {
   return RUNTIME_MAP.get(runtimeId) ?? codex;
+}
+
+export function buildRuntimeStartupSummary({
+  config = DEFAULT_RUNTIME_CONFIG,
+  availableRuntimeIds = []
+} = {}) {
+  const available = uniqueRuntimeIds(availableRuntimeIds);
+  const preferences = mergeRuntimePreferences(config?.preferences || {}, DEFAULT_RUNTIME_PREFERENCES);
+  const routing = Object.keys(DEFAULT_RUNTIME_PREFERENCES).map((taskType) => {
+    const activeRuntime =
+      resolveRuntimeOrder({
+        taskType,
+        preferences,
+        availableRuntimeIds: available
+      })[0] || "none";
+
+    return `${taskType}→${activeRuntime}`;
+  });
+
+  return {
+    availableLine: `runtimes available: ${available.length > 0 ? available.join(", ") : "none"}`,
+    routingLine: `routing: ${routing.join(", ")}`,
+    fallbackLine: `rate-limit fallback: ${config?.rateLimitFallback === false ? "disabled" : "enabled"}`
+  };
 }

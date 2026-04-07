@@ -717,28 +717,38 @@ function buildExecutePreviewDetail(target, skillProfile, { roadmap = null } = {}
   return `Ready to run the next execute issue #${target.number}.${specialistLine}`;
 }
 
-export function buildExecuteStartComment({ issue, repoCwd, runtimeLabel = "Codex" }) {
+export function buildExecuteStartComment({ issue, repoCwd, runtimeLabel = "Codex", runtimePlan = [] }) {
+  const runtimePlanLine =
+    Array.isArray(runtimePlan) && runtimePlan.length > 0
+      ? `Runtime plan: ${runtimePlan.map((runtimeId) => `\`${runtimeId}\``).join(" → ")}`
+      : `Runtime: ${runtimeLabel}`;
+  const launchLabel = Array.isArray(runtimePlan) && runtimePlan.length > 0 ? runtimePlan[0] : runtimeLabel;
+
   return [
     `<!-- rei:execute issue=${issue.number} state=started -->`,
     `Rei execute service picked up #${issue.number}.`,
     "",
     `Target: [#${issue.number} ${issue.title}](${issue.url})`,
     `Workspace: \`${repoCwd}\``,
-    `Runtime: ${runtimeLabel}`,
+    runtimePlanLine,
     "",
-    `The local executor is launching ${runtimeLabel} now and will post a follow-up summary after verification.`
-  ].join("\n");
+    `The local executor is launching ${launchLabel} now and will post a follow-up summary after verification.`
+  ]
+    .filter(Boolean)
+    .join("\n");
 }
 
 export function buildExecuteCompletionComment({
   issue,
   outcome = "completed",
   lastMessage = "",
-  runDir = null
+  runDir = null,
+  runtimeId = null
 }) {
   const summary = String(lastMessage || "").trim() || "Codex finished without a final summary message.";
   const detail = summary.length > 600 ? `${summary.slice(0, 597)}...` : summary;
   const artifactLine = runDir ? `Artifacts: \`${runDir}\`` : "Artifacts: local worker log only.";
+  const runtimeLine = runtimeId ? `Runtime used: \`${runtimeId}\`` : null;
   const stateVerb =
     outcome === "completed"
       ? "finished"
@@ -752,10 +762,13 @@ export function buildExecuteCompletionComment({
     "",
     `Target: [#${issue.number} ${issue.title}](${issue.url})`,
     artifactLine,
+    runtimeLine,
     "",
     "Result summary:",
     detail
-  ].join("\n");
+  ]
+    .filter(Boolean)
+    .join("\n");
 }
 
 export async function prepareExecuteAction({
