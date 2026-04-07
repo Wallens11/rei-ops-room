@@ -95,11 +95,23 @@ export function buildExecuteAgentViewModel({
     };
   }
 
+  if (preview.status === "awaiting_approval" && preview.target?.number) {
+    return {
+      title: "Awaiting Approval",
+      detail: formatTarget(preview.target),
+      note: preview.detail || "This issue has mode:execute but needs explicit approval before the agent can run it.",
+      tone: "idle",
+      buttonLabel: "Approve for Execution",
+      buttonDisabled: false,
+      action: "approve"
+    };
+  }
+
   if (preview.status === "ready" && preview.target?.number) {
     return {
       title: "Execute Ready",
       detail: formatTarget(preview.target),
-      note: preview.detail || "The next mode:execute issue is ready to run.",
+      note: preview.detail || "The next mode:execute issue is approved and ready to run.",
       tone: "ready",
       buttonLabel: "Start Agent",
       buttonDisabled: false,

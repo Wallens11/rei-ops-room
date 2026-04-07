@@ -167,3 +167,30 @@ test("buildExecuteAgentViewModel blocks start when the roadmap queue is halted o
   assert.equal(model.buttonLabel, "Blocked");
   assert.equal(model.buttonDisabled, true);
 });
+
+test("buildExecuteAgentViewModel shows Awaiting Approval when issue needs explicit approval", () => {
+  const model = buildExecuteAgentViewModel({
+    preview: {
+      status: "awaiting_approval",
+      target: {
+        number: 23,
+        title: "Feature needing approval"
+      },
+      detail: "Issue #23 has mode:execute but needs explicit approval before running."
+    },
+    service: {
+      status: "idle",
+      running: false,
+      pid: null,
+      source: "none",
+      detail: "execute worker is not running"
+    }
+  });
+
+  assert.equal(model.title, "Awaiting Approval");
+  assert.equal(model.detail, "#23 Feature needing approval");
+  assert.equal(model.buttonLabel, "Approve for Execution");
+  assert.equal(model.action, "approve");
+  assert.equal(model.tone, "idle");
+  assert.equal(model.buttonDisabled, false);
+});

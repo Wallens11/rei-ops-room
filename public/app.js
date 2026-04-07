@@ -1665,7 +1665,28 @@ async function refreshExecuteService() {
   renderExecuteAgent();
 }
 
+async function approveExecuteIssue() {
+  const issueNumber = renderState.executePreview?.target?.number;
+  if (!issueNumber) return;
+
+  try {
+    const res = await fetch(`/api/github/issues/${encodeURIComponent(issueNumber)}/approve`, {
+      method: "POST"
+    });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    await refreshExecutePreview();
+    await refreshGithubInbox();
+  } catch {
+    // ignore — UI will refresh on next poll
+  }
+}
+
 async function controlExecuteService(action) {
+  if (action === "approve") {
+    await approveExecuteIssue();
+    return;
+  }
+
   if (!action || (action !== "start" && action !== "stop")) {
     return;
   }

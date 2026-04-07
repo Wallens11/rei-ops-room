@@ -6,6 +6,7 @@ import {
   selectExecuteSkillProfile,
   prepareExecuteAction,
   selectExecuteTarget,
+  approveExecuteIssue,
   countExecuteAttempts,
   getLastExecuteAttemptMs,
   isBlockedIssueRetryEligible
@@ -129,7 +130,7 @@ test("buildExecutePrompt includes the recommended specialist profile and skills"
   assert.match(prompt, /arrange/i);
 });
 
-test("prepareExecuteAction returns the next execute issue with a launch prompt", async () => {
+test("prepareExecuteAction returns the next execute issue with a launch prompt when status:approved", async () => {
   const preview = await prepareExecuteAction({
     repo: "Wallens11/rei-ops-room",
     handoff: {
@@ -152,7 +153,7 @@ test("prepareExecuteAction returns the next execute issue with a launch prompt",
               createdAt: "2026-04-02T02:00:00Z",
               updatedAt: "2026-04-02T02:00:00Z",
               url: "https://github.com/Wallens11/rei-ops-room/issues/15",
-              labels: [{ name: "agent:rei" }, { name: "status:todo" }, { name: "mode:execute" }],
+              labels: [{ name: "agent:rei" }, { name: "status:approved" }, { name: "mode:execute" }],
               assignees: [],
               author: { login: "Wallens11" }
             }
@@ -167,7 +168,7 @@ test("prepareExecuteAction returns the next execute issue with a launch prompt",
             title: "Agent execute queue MVP",
             body: "## Scope\n- pick the next mode:execute issue\n- start Codex\n- comment the result",
             url: "https://github.com/Wallens11/rei-ops-room/issues/15",
-            labels: [{ name: "agent:rei" }, { name: "status:todo" }, { name: "mode:execute" }],
+            labels: [{ name: "agent:rei" }, { name: "status:approved" }, { name: "mode:execute" }],
             comments: []
           })
         };
@@ -181,6 +182,52 @@ test("prepareExecuteAction returns the next execute issue with a launch prompt",
   assert.equal(preview.target.number, 15);
   assert.match(preview.prompt, /start Codex/i);
   assert.match(preview.prompt, /Cross-device handoff is the current continuity source/i);
+});
+
+test("prepareExecuteAction returns awaiting_approval when issue has mode:execute but no status:approved", async () => {
+  const preview = await prepareExecuteAction({
+    repo: "Wallens11/rei-ops-room",
+    handoff: { date: "2026-04-02", sections: [] },
+    runner: async (file, args) => {
+      if (file === "gh" && args[0] === "issue" && args[1] === "list") {
+        return {
+          stdout: JSON.stringify([
+            {
+              number: 17,
+              title: "Issue needing approval",
+              state: "OPEN",
+              createdAt: "2026-04-02T02:00:00Z",
+              updatedAt: "2026-04-02T02:00:00Z",
+              url: "https://github.com/Wallens11/rei-ops-room/issues/17",
+              labels: [{ name: "agent:rei" }, { name: "status:todo" }, { name: "mode:execute" }],
+              assignees: [],
+              author: { login: "Wallens11" }
+            }
+          ])
+        };
+      }
+
+      if (file === "gh" && args[0] === "issue" && args[1] === "view") {
+        return {
+          stdout: JSON.stringify({
+            number: 17,
+            title: "Issue needing approval",
+            body: "## Scope\n- needs approval first",
+            url: "https://github.com/Wallens11/rei-ops-room/issues/17",
+            labels: [{ name: "agent:rei" }, { name: "status:todo" }, { name: "mode:execute" }],
+            comments: []
+          })
+        };
+      }
+
+      throw new Error(`Unexpected call: ${file} ${args.join(" ")}`);
+    }
+  });
+
+  assert.equal(preview.status, "awaiting_approval");
+  assert.equal(preview.target.number, 17);
+  assert.equal(preview.prompt, null);
+  assert.match(preview.detail, /needs explicit approval/i);
 });
 
 test("prepareExecuteAction can auto-pick the next roadmap child when no explicit execute issue is queued", async () => {
@@ -372,8 +419,8 @@ test("selectExecuteTarget skips an in_progress issue updated within the claim co
     { nowMs: Date.now() }
   );
 
-  // issue 20 di-skip karena cooldown, fallback ke todo issue 21
-  assert.equal(target.status, "todo");
+  // issue 20 di-skip karena cooldown, fallback ke issue 21 (awaiting_approval karena belum ada status:approved)
+  assert.equal(target.status, "awaiting_approval");
   assert.equal(target.issue.number, 21);
 });
 
@@ -548,4 +595,96 @@ test("prepareExecuteAction retries a blocked execute issue after backoff has pas
   assert.match(preview.detail, /retry/i);
   assert.match(preview.detail, /40/);
   assert.ok(preview.prompt);
+});
+
+// ─── Approval gate ────────────────────────────────────────────────────────────
+
+test("selectExecuteTarget returns 'approved' status for mode:execute + status:approved issue", () => {
+  const target = selectExecuteTarget({
+    issues: [
+      {
+        number: 30,
+        title: "Explicitly approved execute issue",
+        createdAt: "2026-04-07T01:00:00Z",
+        updatedAt: "2026-04-07T01:00:00Z",
+        url: "https://github.com/Wallens11/rei-ops-room/issues/30",
+        labels: ["agent:rei", "status:approved", "mode:execute"]
+      }
+    ]
+  });
+
+  assert.equal(target.status, "approved");
+  assert.equal(target.issue.number, 30);
+});
+
+test("selectExecuteTarget returns 'awaiting_approval' for mode:execute + status:todo without status:approved", () => {
+  const target = selectExecuteTarget({
+    issues: [
+      {
+        number: 31,
+        title: "Issue pending approval",
+        createdAt: "2026-04-07T01:00:00Z",
+        updatedAt: "2026-04-07T01:00:00Z",
+        url: "https://github.com/Wallens11/rei-ops-room/issues/31",
+        labels: ["agent:rei", "status:todo", "mode:execute"]
+      }
+    ]
+  });
+
+  assert.equal(target.status, "awaiting_approval");
+  assert.equal(target.issue.number, 31);
+});
+
+test("selectExecuteTarget prefers status:approved over status:todo (awaiting_approval)", () => {
+  const target = selectExecuteTarget({
+    issues: [
+      {
+        number: 32,
+        title: "Pending approval issue",
+        createdAt: "2026-04-07T01:00:00Z",
+        updatedAt: "2026-04-07T01:00:00Z",
+        url: "https://github.com/Wallens11/rei-ops-room/issues/32",
+        labels: ["agent:rei", "status:todo", "mode:execute"]
+      },
+      {
+        number: 33,
+        title: "Explicitly approved issue",
+        createdAt: "2026-04-07T01:01:00Z",
+        updatedAt: "2026-04-07T01:01:00Z",
+        url: "https://github.com/Wallens11/rei-ops-room/issues/33",
+        labels: ["agent:rei", "status:approved", "mode:execute"]
+      }
+    ]
+  });
+
+  assert.equal(target.status, "approved");
+  assert.equal(target.issue.number, 33);
+});
+
+test("selectExecuteTarget returns null when no execute issues exist", () => {
+  const target = selectExecuteTarget({ issues: [] });
+  assert.equal(target, null);
+});
+
+test("approveExecuteIssue adds status:approved and mode:execute labels", async () => {
+  const calls = [];
+
+  await approveExecuteIssue({
+    repo: "Wallens11/rei-ops-room",
+    issueNumber: 35,
+    runner: async (file, args) => {
+      calls.push({ file, args });
+      return { stdout: "" };
+    }
+  });
+
+  assert.equal(calls.length, 1);
+  const ghArgs = calls[0].args;
+  assert.ok(ghArgs.includes("edit"), "should call gh issue edit");
+  assert.ok(ghArgs.includes("35") || ghArgs.includes(35), "should target issue 35");
+  // Should add status:approved
+  const addIdx = ghArgs.indexOf("--add-label");
+  assert.ok(addIdx >= 0, "should have --add-label flag");
+  const addValue = ghArgs[addIdx + 1] || "";
+  assert.ok(addValue.includes("status:approved"), `--add-label should include status:approved, got: ${addValue}`);
 });

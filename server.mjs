@@ -656,6 +656,19 @@ async function previewExecuteAction(options = {}) {
   });
 }
 
+async function defaultApproveIssue({ issueNumber, repo }) {
+  const module = await import("./tools/execute-bridge.mjs");
+  const resolvedRepo = repo ||
+    (await inferGithubRepoSlug({ cwd: __dirname, remoteName: "origin" }).catch(() => null));
+  if (!resolvedRepo) {
+    const err = new Error("Cannot infer GitHub repo slug. Pass ?repo= parameter.");
+    err.statusCode = 400;
+    throw err;
+  }
+  await module.approveExecuteIssue({ issueNumber, repo: resolvedRepo });
+  return { approved: true, issueNumber, repo: resolvedRepo };
+}
+
 async function getExecuteServiceStatus() {
   const module = await import("./tools/execute-worker-cli.mjs");
   const runtime = await module.inspectExecuteWorkerRuntime();
@@ -1564,6 +1577,7 @@ export function createServer({
   removeQueueTask: removeQueueTaskImpl = defaultRemoveQueueTask,
   listRuntimes: listRuntimesImpl = defaultListRuntimes,
   getRunLedger: getRunLedgerImpl = defaultGetRunLedger,
+  approveIssue: approveIssueImpl = defaultApproveIssue,
   serveStatic: serveStaticImpl = serveStatic
 } = {}) {
   return http.createServer(async (request, response) => {
@@ -1916,6 +1930,28 @@ export function createServer({
       } catch (error) {
         writeJson(response, 500, {
           error: "Gagal baca run log",
+          detail: error instanceof Error ? error.message : String(error)
+        });
+      }
+      return;
+    }
+
+    // ─── Approve Issue for Execution ─────────────────────────────────────────
+    // POST /api/github/issues/:number/approve
+    // Menambahkan label status:approved + mode:execute ke issue.
+    // Ini adalah approval gate eksplisit untuk issue #15.
+
+    const approveIssueMatch = request.method === "POST" &&
+      url.pathname.match(/^\/api\/github\/issues\/(\d+)\/approve$/);
+    if (approveIssueMatch) {
+      try {
+        const issueNumber = Number(approveIssueMatch[1]);
+        const repo = url.searchParams.get("repo")?.trim() || null;
+        const result = await approveIssueImpl({ issueNumber, repo });
+        writeJson(response, 200, result);
+      } catch (error) {
+        writeJson(response, error?.statusCode || 500, {
+          error: "Gagal approve issue",
           detail: error instanceof Error ? error.message : String(error)
         });
       }

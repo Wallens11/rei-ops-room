@@ -200,6 +200,15 @@ function isExecuteIssue(issue) {
   return hasLabel(issue?.labels, "agent:rei") && hasLabel(issue?.labels, "mode:execute");
 }
 
+/**
+ * Cek apakah issue sudah di-approve secara eksplisit untuk eksekusi.
+ * Issue dengan `mode:execute + status:approved` = approved.
+ * Issue dengan `mode:execute + status:todo` (tanpa status:approved) = awaiting approval.
+ */
+function isApprovedExecuteIssue(issue) {
+  return isExecuteIssue(issue) && hasLabel(issue?.labels, "status:approved");
+}
+
 function isRoadmapIssue(issue) {
   return hasLabel(issue?.labels, "agent:rei") && !hasAnyModeLabel(issue?.labels);
 }
@@ -597,8 +606,8 @@ function isWithinClaimCooldown(issue, nowMs = Date.now()) {
 export function selectExecuteTarget(payload = {}, { nowMs = Date.now() } = {}) {
   const executeIssues = (payload.issues || []).filter((issue) => isExecuteIssue(issue));
 
-  // in_progress: ambil yang sudah berjalan, tapi skip yang baru saja di-update
-  // (mungkin executor lain baru saja claim-nya)
+  // 1. in_progress: ambil yang sudah berjalan, tapi skip yang baru saja di-update
+  //    (mungkin executor lain baru saja claim-nya)
   const activeIssue = executeIssues
     .filter((issue) => issueStatus(issue) === "in_progress")
     .filter((issue) => !isWithinClaimCooldown(issue, nowMs))
@@ -611,13 +620,28 @@ export function selectExecuteTarget(payload = {}, { nowMs = Date.now() } = {}) {
     };
   }
 
+  // 2. Approved: mode:execute + status:approved — approval gate eksplisit.
+  //    Hanya issue yang sudah di-approve yang boleh di-execute oleh worker.
+  const approvedIssue = executeIssues
+    .filter((issue) => isApprovedExecuteIssue(issue) && issueStatus(issue) !== "blocked")
+    .sort(byTodoPriority)[0];
+
+  if (approvedIssue) {
+    return {
+      status: "approved",
+      issue: formatTarget(approvedIssue)
+    };
+  }
+
+  // 3. Awaiting approval: mode:execute + status:todo tapi belum status:approved.
+  //    Ditampilkan di UI sebagai "waiting for approval" — worker TIDAK execute ini.
   const todoIssue = executeIssues
     .filter((issue) => issueStatus(issue) === "todo")
     .sort(byTodoPriority)[0];
 
   if (todoIssue) {
     return {
-      status: "todo",
+      status: "awaiting_approval",
       issue: formatTarget(todoIssue)
     };
   }
@@ -860,6 +884,26 @@ export async function prepareExecuteAction({
   });
   const resolvedHandoff = handoff || (await readDailyDeviceHandoff());
   const skillProfile = selectExecuteSkillProfile(issue);
+
+  // Approval gate: kalau issue belum di-approve (status:todo tanpa status:approved),
+  // return "awaiting_approval" — worker tidak akan execute ini.
+  // Hanya issue dengan status:approved yang boleh jalan (atau status:in_progress / retry).
+  if (target.status === "awaiting_approval") {
+    return {
+      repo: resolvedRepo,
+      status: "awaiting_approval",
+      target: {
+        ...target.issue,
+        status: target.status
+      },
+      issue,
+      skillProfile,
+      prompt: null,
+      handoff: resolvedHandoff,
+      detail: `Issue #${target.issue.number} has mode:execute but needs explicit approval before running. Use /api/github/issues/${target.issue.number}/approve to approve.`
+    };
+  }
+
   const prompt = buildExecutePrompt({
     repo: resolvedRepo,
     repoCwd: cwd,
@@ -883,6 +927,28 @@ export async function prepareExecuteAction({
   };
 }
 
+/**
+ * Approve issue untuk eksekusi.
+ *
+ * Menambahkan label `status:approved` dan `mode:execute`, menghapus
+ * `mode:report_only` sehingga execute worker bisa pick-up issue ini.
+ *
+ * Operator memanggil ini via POST /api/github/issues/:number/approve
+ * atau via tombol "Approve for Execution" di UI.
+ */
+export async function approveExecuteIssue({
+  runner = execFileAsync,
+  repo,
+  issueNumber
+} = {}) {
+  await editIssueLabelsWithRunner(runner, {
+    repo,
+    issueNumber,
+    addLabels: ["status:approved", "mode:execute"],
+    removeLabels: ["mode:report_only"]
+  });
+}
+
 export async function transitionExecuteIssueToInProgress({
   runner = execFileAsync,
   repo,
@@ -892,7 +958,7 @@ export async function transitionExecuteIssueToInProgress({
     repo,
     issueNumber,
     addLabels: ["status:in_progress", "mode:execute"],
-    removeLabels: ["status:todo", "status:blocked", "mode:report_only"]
+    removeLabels: ["status:todo", "status:approved", "status:blocked", "mode:report_only"]
   });
 }
 
