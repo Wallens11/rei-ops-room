@@ -6,8 +6,9 @@
  *   RUNTIME_ID, RUNTIME_LABEL, resolveCommand(), buildInvocation()
  *
  * Cara kerja:
- *   claude --dangerously-skip-permissions
- *   Prompt dikirim via stdin, output (last message) dibaca dari stdout.
+ *   claude --print --dangerously-skip-permissions
+ *   --print = non-interactive/headless mode, output ke stdout.
+ *   Prompt dikirim via stdin.
  *
  * Env overrides:
  *   CLAUDE_BIN — path custom ke claude binary (optional)
@@ -35,7 +36,7 @@ export async function resolveCommand({ env = process.env, fallback = "claude" } 
 export function buildInvocation({ command, repoCwd }) {
   return {
     command,
-    args: ["--dangerously-skip-permissions"],
+    args: ["--print", "--dangerously-skip-permissions"],
     cwd: repoCwd,
     outputMode: "stdout",
     stdinMode: "prompt"

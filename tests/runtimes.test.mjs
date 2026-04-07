@@ -79,6 +79,7 @@ describe("claude-code runtime", () => {
     const inv = claudeCode.buildInvocation({ command: "claude", repoCwd: "/repo" });
     assert.equal(inv.command, "claude");
     assert.equal(inv.outputMode, "stdout");
+    assert.ok(inv.args.includes("--print"));
     assert.ok(inv.args.includes("--dangerously-skip-permissions"));
   });
 
