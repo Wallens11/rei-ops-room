@@ -189,8 +189,22 @@ Di viewer:
 - panel `Execute Agent` akan bilang apakah queue siap jalan, lagi running, atau idle
 - kalau queue datang dari roadmap parent, panel akan bilang child issue mana yang dipilih dari roadmap itu
 - execute preview juga akan menampilkan specialist profile yang kepilih dari isi issue, misalnya frontend, backend, scraping, atau docs
+- repo ini sekarang punya root `DESIGN.md` (preset `cursor` via `getdesign.md`), dan execute prompt akan menyuruh agent baca file itu dulu kalau task menyentuh UI/layout/copy
 - tombol `Start Agent` menyalakan executor lokal
 - tombol `Stop Agent` menghentikan watcher lokal setelah sinyal stop dikirim ke worker aktif
+
+### Repo Design Brief
+
+`rei-ops-room` sekarang menyimpan `DESIGN.md` di root repo sebagai visual authority lokal.
+
+- source preset: `cursor`
+- refresh command:
+
+```bash
+npx getdesign@latest add cursor --force --out DESIGN.md
+```
+
+- execute flow akan surface profile ini di preview note kalau issue yang dipilih condong ke frontend/UI work
 
 ## Execute Service
 

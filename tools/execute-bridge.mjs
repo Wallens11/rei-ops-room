@@ -1,4 +1,5 @@
 import { execFile } from "node:child_process";
+import fsSync from "node:fs";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -273,6 +274,82 @@ function summarizeHandoff(handoff = {}) {
   return lines.length > 0 ? lines.join("\n") : "- No current handoff recap was available.";
 }
 
+function normalizeDesignTitle(value = "") {
+  return String(value || "").replace(/^#\s+/, "").trim();
+}
+
+function extractDesignBrand(title = "") {
+  const normalized = normalizeDesignTitle(title);
+  const match = normalized.match(/inspired by (.+)$/i);
+  return match?.[1]?.trim() || normalized || null;
+}
+
+function formatDesignProfileLabel(designProfile = null) {
+  if (!designProfile) {
+    return null;
+  }
+
+  if (designProfile.brand) {
+    return `${designProfile.brand} inspired DESIGN.md`;
+  }
+
+  return designProfile.title || "DESIGN.md";
+}
+
+export function readRepoDesignProfile(repoCwd) {
+  if (!repoCwd) {
+    return null;
+  }
+
+  const designPath = path.join(repoCwd, "DESIGN.md");
+  let text = "";
+
+  try {
+    text = fsSync.readFileSync(designPath, "utf8");
+  } catch {
+    return null;
+  }
+
+  const lines = text.split(/\r?\n/);
+  const titleLine = lines.find((line) => line.startsWith("# ")) || "";
+  const title = normalizeDesignTitle(titleLine);
+  let summary = "";
+
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (!trimmed || trimmed.startsWith("#")) {
+      continue;
+    }
+
+    summary = trimmed;
+    break;
+  }
+
+  return {
+    path: designPath,
+    title,
+    brand: extractDesignBrand(title),
+    summary: summary || null
+  };
+}
+
+function buildDesignGuidanceLines(designProfile = null) {
+  if (!designProfile) {
+    return [];
+  }
+
+  const displayPath = stripWorkspacePrefix(designProfile.path) || designProfile.path;
+  const profileLabel = formatDesignProfileLabel(designProfile);
+
+  return [
+    "Active design guidance:",
+    `- DESIGN.md: ${displayPath}`,
+    profileLabel ? `- Profile: ${profileLabel}` : null,
+    designProfile.summary ? `- Cue: ${designProfile.summary}` : null,
+    "- If the task touches UI, layout, or copy, read and follow DESIGN.md before editing."
+  ].filter(Boolean);
+}
+
 function resolveSkillBundle(skillIds = []) {
   return skillIds.map((skillId) => EXECUTE_SKILL_CATALOG[skillId]).filter(Boolean);
 }
@@ -332,8 +409,16 @@ export function selectExecuteSkillProfile(issue = {}) {
  * Lebih simpel dari buildExecutePrompt — tidak ada GitHub issue context,
  * tidak ada skill profile. Cukup task, context opsional, dan handoff.
  */
-export function buildDirectTaskPrompt({ task, context = null, repoCwd, handoff = null, learningContext = null } = {}) {
+export function buildDirectTaskPrompt({
+  task,
+  context = null,
+  repoCwd,
+  handoff = null,
+  learningContext = null,
+  designProfile = readRepoDesignProfile(repoCwd)
+} = {}) {
   const repoLabel = stripWorkspacePrefix(repoCwd) || repoCwd;
+  const designGuidanceLines = buildDesignGuidanceLines(designProfile);
 
   return [
     `You are Rei, an autonomous agent working inside ${repoCwd} (${repoLabel}).`,
@@ -351,6 +436,8 @@ export function buildDirectTaskPrompt({ task, context = null, repoCwd, handoff =
       ? `Known blockers:\n${handoff.blockers.map((b) => `- ${b}`).join("\n")}`
       : null,
     learningContext ? `\n${learningContext}` : null,
+    designGuidanceLines.length > 0 ? "" : null,
+    ...designGuidanceLines,
     "",
     "Execution rules:",
     "- Inspect the repo before changing anything.",
@@ -649,10 +736,18 @@ export function selectExecuteTarget(payload = {}, { nowMs = Date.now() } = {}) {
   return null;
 }
 
-export function buildExecutePrompt({ repo, repoCwd, issue, handoff, learningContext = null }) {
+export function buildExecutePrompt({
+  repo,
+  repoCwd,
+  issue,
+  handoff,
+  learningContext = null,
+  designProfile = readRepoDesignProfile(repoCwd)
+}) {
   const issueBody = String(issue?.body || "").trim() || "No issue body provided.";
   const repoLabel = stripWorkspacePrefix(repoCwd) || repoCwd;
   const skillProfile = selectExecuteSkillProfile(issue);
+  const designGuidanceLines = buildDesignGuidanceLines(designProfile);
   const skillLines =
     skillProfile.skills.length > 0
       ? skillProfile.skills.map((skill) => `- ${skill.label}: ${skill.path}`).join("\n")
@@ -689,6 +784,8 @@ export function buildExecutePrompt({ repo, repoCwd, issue, handoff, learningCont
       ? `Known blockers from handoff:\n${handoff.blockers.map((b) => `- ${b}`).join("\n")}\nAvoid re-attempting these without a plan to resolve them.`
       : null,
     learningContext ? `\n${learningContext}` : null,
+    designGuidanceLines.length > 0 ? "" : null,
+    ...designGuidanceLines,
     "",
     "Execution rules:",
     "- Inspect the repository and issue history before changing code.",
@@ -703,18 +800,22 @@ export function buildExecutePrompt({ repo, repoCwd, issue, handoff, learningCont
     .join("\n");
 }
 
-function buildExecutePreviewDetail(target, skillProfile, { roadmap = null } = {}) {
+function buildExecutePreviewDetail(target, skillProfile, { roadmap = null, designProfile = null } = {}) {
   const specialistLine = skillProfile?.label ? ` Suggested specialist: ${skillProfile.label}.` : "";
+  const designLine =
+    designProfile && skillProfile?.id === "frontend"
+      ? ` Active design profile: ${formatDesignProfileLabel(designProfile)}.`
+      : "";
 
   if (roadmap?.number) {
-    return `Roadmap #${roadmap.number} selected #${target.number} as the next unresolved child issue.${specialistLine}`;
+    return `Roadmap #${roadmap.number} selected #${target.number} as the next unresolved child issue.${specialistLine}${designLine}`;
   }
 
   if (target?.status === "in_progress") {
-    return `Resume the active execute issue #${target.number}.${specialistLine}`;
+    return `Resume the active execute issue #${target.number}.${specialistLine}${designLine}`;
   }
 
-  return `Ready to run the next execute issue #${target.number}.${specialistLine}`;
+  return `Ready to run the next execute issue #${target.number}.${specialistLine}${designLine}`;
 }
 
 export function buildExecuteStartComment({ issue, repoCwd, runtimeLabel = "Codex", runtimePlan = [] }) {
@@ -786,6 +887,7 @@ export async function prepareExecuteAction({
   const payload = await listGithubIssuesWithRunner(runner, {
     repo: resolvedRepo
   });
+  const designProfile = readRepoDesignProfile(cwd);
 
   // Fetch learning context sekali — di-share ke semua buildExecutePrompt calls di bawah
   const learningContext = await getLearningContext({ limit: 5 }).catch(() => null);
@@ -817,33 +919,36 @@ export async function prepareExecuteAction({
       });
       const skillProfile = selectExecuteSkillProfile(issue);
       const resolvedHandoff = handoff || (await readDailyDeviceHandoff());
-      const prompt = buildExecutePrompt({
-        repo: resolvedRepo,
-        repoCwd: cwd,
-        issue: {
-          ...issue,
-          roadmap: roadmapTarget.roadmap
-        },
-        handoff: resolvedHandoff,
-        learningContext
-      });
+        const prompt = buildExecutePrompt({
+          repo: resolvedRepo,
+          repoCwd: cwd,
+          issue: {
+            ...issue,
+            roadmap: roadmapTarget.roadmap
+          },
+          handoff: resolvedHandoff,
+          learningContext,
+          designProfile
+        });
 
-      return {
+        return {
         repo: resolvedRepo,
         status: "roadmap_ready",
         target: roadmapTarget.issue,
-        issue: {
-          ...issue,
-          roadmap: roadmapTarget.roadmap
-        },
-        skillProfile,
-        prompt,
-        handoff: resolvedHandoff,
-        detail: buildExecutePreviewDetail(roadmapTarget.issue, skillProfile, {
-          roadmap: roadmapTarget.roadmap
-        })
-      };
-    }
+          issue: {
+            ...issue,
+            roadmap: roadmapTarget.roadmap
+          },
+          designProfile,
+          skillProfile,
+          prompt,
+          handoff: resolvedHandoff,
+          detail: buildExecutePreviewDetail(roadmapTarget.issue, skillProfile, {
+            roadmap: roadmapTarget.roadmap,
+            designProfile
+          })
+        };
+      }
   }
 
   if (!target?.issue) {
@@ -865,7 +970,8 @@ export async function prepareExecuteAction({
           repoCwd: cwd,
           issue: fullIssue,
           handoff: resolvedHandoff,
-          learningContext
+          learningContext,
+          designProfile
         });
 
         return {
@@ -873,6 +979,7 @@ export async function prepareExecuteAction({
           status: "retry",
           target: formatTarget({ ...fullIssue, status: "blocked" }),
           issue: fullIssue,
+          designProfile,
           skillProfile,
           prompt,
           handoff: resolvedHandoff,
@@ -886,6 +993,7 @@ export async function prepareExecuteAction({
       status: "no_target",
       target: null,
       issue: null,
+      designProfile,
       prompt: null,
       detail: "No active mode:execute issue is ready in the tracked queue."
     };
@@ -910,6 +1018,7 @@ export async function prepareExecuteAction({
         status: target.status
       },
       issue,
+      designProfile,
       skillProfile,
       prompt: null,
       handoff: resolvedHandoff,
@@ -922,7 +1031,8 @@ export async function prepareExecuteAction({
     repoCwd: cwd,
     issue,
     handoff: resolvedHandoff,
-    learningContext
+    learningContext,
+    designProfile
   });
 
   return {
@@ -933,10 +1043,11 @@ export async function prepareExecuteAction({
       status: target.status
     },
     issue,
+    designProfile,
     skillProfile,
     prompt,
     handoff: resolvedHandoff,
-    detail: buildExecutePreviewDetail(target.issue, skillProfile)
+    detail: buildExecutePreviewDetail(target.issue, skillProfile, { designProfile })
   };
 }
 

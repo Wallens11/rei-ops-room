@@ -5,6 +5,7 @@ import {
   buildExecutePrompt,
   selectExecuteSkillProfile,
   prepareExecuteAction,
+  readRepoDesignProfile,
   selectExecuteTarget,
   approveExecuteIssue,
   countExecuteAttempts,
@@ -74,6 +75,14 @@ test("buildExecutePrompt folds issue scope and handoff context into one launch p
   assert.match(prompt, /Do not push or create a PR unless explicitly asked/i);
 });
 
+test("readRepoDesignProfile reads the local repo DESIGN.md when present", () => {
+  const profile = readRepoDesignProfile("/Users/funtoco/workSpace/codex-pixel-agent");
+
+  assert.equal(profile.brand, "Cursor");
+  assert.match(profile.title, /Cursor/i);
+  assert.match(profile.path, /DESIGN\.md$/);
+});
+
 test("selectExecuteSkillProfile chooses a frontend specialist bundle for UI-heavy issues", () => {
   const profile = selectExecuteSkillProfile({
     title: "Polish the Execute Agent panel layout",
@@ -128,6 +137,8 @@ test("buildExecutePrompt includes the recommended specialist profile and skills"
   assert.match(prompt, /frontend/i);
   assert.match(prompt, /frontend-design/i);
   assert.match(prompt, /arrange/i);
+  assert.match(prompt, /Active design guidance/i);
+  assert.match(prompt, /Cursor inspired DESIGN\.md/i);
 });
 
 test("prepareExecuteAction returns the next execute issue with a launch prompt when status:approved", async () => {

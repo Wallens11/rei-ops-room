@@ -53,6 +53,8 @@ const FOCUS_PROFILES = [
       "css",
       "style",
       "design",
+      "design.md",
+      "getdesign",
       "widget",
       "pixel",
       "react",

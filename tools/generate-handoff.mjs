@@ -61,6 +61,11 @@ function todayDate() {
   return new Date().toISOString().slice(0, 10);
 }
 
+function extractSectionDateHeader(section = "") {
+  const match = String(section).match(/^##\s+(\d{4}-\d{2}-\d{2})\b/m);
+  return match ? `## ${match[1]}` : `## ${todayDate()}`;
+}
+
 /**
  * Baca last-message.md dari N run dir terbaru.
  * Return: array of { runDir, lastMessage }
@@ -237,8 +242,7 @@ export function formatHandoffSection(payload) {
  * @param section     — Markdown string dari formatHandoffSection()
  */
 export async function writeHandoffSection(section, outputPaths = handoffOutputPaths) {
-  const today = todayDate();
-  const dateHeader = `## ${today}`;
+  const dateHeader = extractSectionDateHeader(section);
 
   for (const outputPath of outputPaths) {
     try {

@@ -100,6 +100,8 @@ export const ZONE_DEFINITIONS = [
       "css",
       "style",
       "design",
+      "design.md",
+      "getdesign",
       "widget",
       "pixel",
       "react",
