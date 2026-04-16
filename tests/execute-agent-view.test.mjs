@@ -122,7 +122,14 @@ test("buildExecuteAgentViewModel explains when a roadmap child was auto-selected
           title: "Roadmap: Paperclip-lite gap map for Rei Ops Room"
         }
       },
-      detail: "Roadmap #13 selected #15 as the next unresolved child issue."
+      detail: "Roadmap #13 selected #15 as the next unresolved child issue.",
+      trust: {
+        items: [
+          "Queue source: roadmap #13 child queue",
+          "Assigned profile: Backend specialist",
+          "Continuity anchor: codex-pixel-agent | Backend | Keep execute routing easy to trust."
+        ]
+      }
     },
     service: {
       status: "idle",
@@ -137,6 +144,11 @@ test("buildExecuteAgentViewModel explains when a roadmap child was auto-selected
   assert.equal(model.detail, "#15 Approval-gated execution lane beyond report-only");
   assert.match(model.note, /roadmap #13/i);
   assert.equal(model.buttonLabel, "Start Agent");
+  assert.deepEqual(model.signals, [
+    "Queue source: roadmap #13 child queue",
+    "Assigned profile: Backend specialist",
+    "Continuity anchor: codex-pixel-agent | Backend | Keep execute routing easy to trust."
+  ]);
 });
 
 test("buildExecuteAgentViewModel blocks start when the roadmap queue is halted on a blocked child", () => {

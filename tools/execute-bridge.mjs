@@ -10,6 +10,7 @@ import {
   inferGithubRepoSlugWithRunner,
   listGithubIssuesWithRunner,
   readDailyDeviceHandoff,
+  readExecuteContinuity,
   stripWorkspacePrefix
 } from "../server.mjs";
 import { getLearningContext } from "./execute-learning.mjs";
@@ -350,6 +351,62 @@ function buildDesignGuidanceLines(designProfile = null) {
   ].filter(Boolean);
 }
 
+function buildContinuityPromptLines(continuity = null) {
+  if (!continuity?.summary) {
+    return [];
+  }
+
+  return [
+    "",
+    `Session continuity snapshot${continuity.generatedAt ? ` (${continuity.generatedAt})` : ""}:`,
+    continuity.summary
+  ];
+}
+
+function buildContinuityAnchor(continuity = null) {
+  if (!continuity) {
+    return null;
+  }
+
+  const fragments = [continuity.repo, continuity.focus, continuity.objective].filter(Boolean);
+  return fragments.length > 0 ? fragments.join(" | ") : null;
+}
+
+function buildExecuteTrust({ roadmap = null, skillProfile = null, designProfile = null, continuity = null } = {}) {
+  const items = [];
+
+  items.push(
+    roadmap?.number
+      ? `Queue source: roadmap #${roadmap.number} child queue`
+      : "Queue source: explicit mode:execute issue"
+  );
+
+  if (skillProfile?.label) {
+    items.push(`Assigned profile: ${skillProfile.label}`);
+  }
+
+  const continuityAnchor = buildContinuityAnchor(continuity);
+  if (continuityAnchor) {
+    items.push(`Continuity anchor: ${continuityAnchor}`);
+  }
+
+  if (continuity?.liveNow) {
+    items.push(`Live signal: ${continuity.liveNow}`);
+  }
+
+  if (designProfile && skillProfile?.id === "frontend") {
+    items.push(`Design authority: ${formatDesignProfileLabel(designProfile)}`);
+  }
+
+  return {
+    queueSource: roadmap?.number ? "roadmap" : "explicit",
+    specialist: skillProfile?.label || null,
+    designAuthority: designProfile && skillProfile?.id === "frontend" ? formatDesignProfileLabel(designProfile) : null,
+    continuitySummary: continuity?.summary || null,
+    items: items.slice(0, 4)
+  };
+}
+
 function resolveSkillBundle(skillIds = []) {
   return skillIds.map((skillId) => EXECUTE_SKILL_CATALOG[skillId]).filter(Boolean);
 }
@@ -415,10 +472,12 @@ export function buildDirectTaskPrompt({
   repoCwd,
   handoff = null,
   learningContext = null,
+  continuity = null,
   designProfile = readRepoDesignProfile(repoCwd)
 } = {}) {
   const repoLabel = stripWorkspacePrefix(repoCwd) || repoCwd;
   const designGuidanceLines = buildDesignGuidanceLines(designProfile);
+  const continuityLines = buildContinuityPromptLines(continuity);
 
   return [
     `You are Rei, an autonomous agent working inside ${repoCwd} (${repoLabel}).`,
@@ -436,6 +495,7 @@ export function buildDirectTaskPrompt({
       ? `Known blockers:\n${handoff.blockers.map((b) => `- ${b}`).join("\n")}`
       : null,
     learningContext ? `\n${learningContext}` : null,
+    ...continuityLines,
     designGuidanceLines.length > 0 ? "" : null,
     ...designGuidanceLines,
     "",
@@ -742,12 +802,14 @@ export function buildExecutePrompt({
   issue,
   handoff,
   learningContext = null,
+  continuity = null,
   designProfile = readRepoDesignProfile(repoCwd)
 }) {
   const issueBody = String(issue?.body || "").trim() || "No issue body provided.";
   const repoLabel = stripWorkspacePrefix(repoCwd) || repoCwd;
   const skillProfile = selectExecuteSkillProfile(issue);
   const designGuidanceLines = buildDesignGuidanceLines(designProfile);
+  const continuityLines = buildContinuityPromptLines(continuity);
   const skillLines =
     skillProfile.skills.length > 0
       ? skillProfile.skills.map((skill) => `- ${skill.label}: ${skill.path}`).join("\n")
@@ -784,6 +846,7 @@ export function buildExecutePrompt({
       ? `Known blockers from handoff:\n${handoff.blockers.map((b) => `- ${b}`).join("\n")}\nAvoid re-attempting these without a plan to resolve them.`
       : null,
     learningContext ? `\n${learningContext}` : null,
+    ...continuityLines,
     designGuidanceLines.length > 0 ? "" : null,
     ...designGuidanceLines,
     "",
@@ -876,7 +939,8 @@ export async function prepareExecuteAction({
   runner = execFileAsync,
   cwd = path.resolve(__dirname, ".."),
   repo = null,
-  handoff = null
+  handoff = null,
+  continuity = null
 } = {}) {
   const resolvedRepo =
     repo ||
@@ -888,6 +952,7 @@ export async function prepareExecuteAction({
     repo: resolvedRepo
   });
   const designProfile = readRepoDesignProfile(cwd);
+  const resolvedContinuity = continuity || (await readExecuteContinuity().catch(() => null));
 
   // Fetch learning context sekali — di-share ke semua buildExecutePrompt calls di bawah
   const learningContext = await getLearningContext({ limit: 5 }).catch(() => null);
@@ -928,27 +993,37 @@ export async function prepareExecuteAction({
           },
           handoff: resolvedHandoff,
           learningContext,
+          continuity: resolvedContinuity,
           designProfile
         });
 
-        return {
+      const trust = buildExecuteTrust({
+        roadmap: roadmapTarget.roadmap,
+        skillProfile,
+        designProfile,
+        continuity: resolvedContinuity
+      });
+
+      return {
         repo: resolvedRepo,
         status: "roadmap_ready",
         target: roadmapTarget.issue,
-          issue: {
-            ...issue,
-            roadmap: roadmapTarget.roadmap
-          },
-          designProfile,
-          skillProfile,
-          prompt,
-          handoff: resolvedHandoff,
-          detail: buildExecutePreviewDetail(roadmapTarget.issue, skillProfile, {
-            roadmap: roadmapTarget.roadmap,
-            designProfile
-          })
-        };
-      }
+        issue: {
+          ...issue,
+          roadmap: roadmapTarget.roadmap
+        },
+        designProfile,
+        skillProfile,
+        prompt,
+        handoff: resolvedHandoff,
+        continuity: resolvedContinuity,
+        trust,
+        detail: buildExecutePreviewDetail(roadmapTarget.issue, skillProfile, {
+          roadmap: roadmapTarget.roadmap,
+          designProfile
+        })
+      };
+    }
   }
 
   if (!target?.issue) {
@@ -971,7 +1046,14 @@ export async function prepareExecuteAction({
           issue: fullIssue,
           handoff: resolvedHandoff,
           learningContext,
+          continuity: resolvedContinuity,
           designProfile
+        });
+
+        const trust = buildExecuteTrust({
+          skillProfile,
+          designProfile,
+          continuity: resolvedContinuity
         });
 
         return {
@@ -983,6 +1065,8 @@ export async function prepareExecuteAction({
           skillProfile,
           prompt,
           handoff: resolvedHandoff,
+          continuity: resolvedContinuity,
+          trust,
           detail: `Retrying blocked issue #${fullIssue.number} — attempt ${countExecuteAttempts(fullIssue.comments || []) + 1}/${EXECUTE_MAX_RETRIES}.`
         };
       }
@@ -1022,6 +1106,12 @@ export async function prepareExecuteAction({
       skillProfile,
       prompt: null,
       handoff: resolvedHandoff,
+      continuity: resolvedContinuity,
+      trust: buildExecuteTrust({
+        skillProfile,
+        designProfile,
+        continuity: resolvedContinuity
+      }),
       detail: `Issue #${target.issue.number} has mode:execute but needs explicit approval before running. Use /api/github/issues/${target.issue.number}/approve to approve.`
     };
   }
@@ -1032,7 +1122,14 @@ export async function prepareExecuteAction({
     issue,
     handoff: resolvedHandoff,
     learningContext,
+    continuity: resolvedContinuity,
     designProfile
+  });
+
+  const trust = buildExecuteTrust({
+    skillProfile,
+    designProfile,
+    continuity: resolvedContinuity
   });
 
   return {
@@ -1047,6 +1144,8 @@ export async function prepareExecuteAction({
     skillProfile,
     prompt,
     handoff: resolvedHandoff,
+    continuity: resolvedContinuity,
+    trust,
     detail: buildExecutePreviewDetail(target.issue, skillProfile, { designProfile })
   };
 }

@@ -444,17 +444,19 @@ async function runDirectTask({
   workerId = null
 } = {}) {
   const { buildDirectTaskPrompt } = await import("./execute-bridge.mjs");
-  const { readDailyDeviceHandoff } = await import("../server.mjs");
+  const { readDailyDeviceHandoff, readExecuteContinuity } = await import("../server.mjs");
   const { getLearningContext } = await import("./execute-learning.mjs");
 
   const handoff = await readDailyDeviceHandoff().catch(() => null);
+  const continuity = await readExecuteContinuity().catch(() => null);
   const learningContext = await getLearningContext({ limit: 5 }).catch(() => null);
   const prompt = buildDirectTaskPrompt({
     task: task.task,
     context: task.context,
     repoCwd: projectRoot,
     handoff,
-    learningContext
+    learningContext,
+    continuity
   });
 
   const runtimeId = task.runtimeId
@@ -561,10 +563,13 @@ export async function executeNextIssue({
       runner: runnerImpl
     })
 } = {}) {
+  const { readExecuteContinuity } = await import("../server.mjs");
+  const continuity = await readExecuteContinuity().catch(() => null);
   const preview = await previewAction({
     cwd,
     repo,
-    runner
+    runner,
+    continuity
   });
 
   if (preview.status !== "ready" || !preview.target || !preview.issue || !preview.prompt) {
