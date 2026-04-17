@@ -184,6 +184,7 @@ const elements = {
   githubExecuteChip: document.getElementById("github-execute-chip"),
   githubExecuteDetail: document.getElementById("github-execute-detail"),
   githubExecuteNote: document.getElementById("github-execute-note"),
+  githubExecuteTrust: document.getElementById("github-execute-trust"),
   githubExecuteButton: document.getElementById("github-execute-button"),
   githubInboxList: document.getElementById("github-inbox-list"),
   taskQueueTitle: document.getElementById("task-queue-title"),
@@ -1218,6 +1219,19 @@ function renderExecuteAgent() {
   elements.githubExecuteButton.disabled = model.buttonDisabled;
   elements.githubExecuteButton.dataset.tone = model.tone;
   elements.githubExecuteButton.dataset.action = model.action;
+
+  if (elements.githubExecuteTrust) {
+    elements.githubExecuteTrust.innerHTML = "";
+    const signals = Array.isArray(model.signals) ? model.signals.filter(Boolean).slice(0, 4) : [];
+    elements.githubExecuteTrust.hidden = signals.length === 0;
+
+    for (const signal of signals) {
+      const item = document.createElement("li");
+      item.className = "dim mono";
+      item.textContent = signal;
+      elements.githubExecuteTrust.appendChild(item);
+    }
+  }
 }
 
 async function readJsonResponseOrThrow(response) {

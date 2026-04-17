@@ -10,7 +10,10 @@ export function createEmptyExecutePreviewState() {
   return {
     status: "loading",
     target: null,
-    detail: "Checking the execute queue."
+    detail: "Checking the execute queue.",
+    trust: {
+      items: []
+    }
   };
 }
 
@@ -29,12 +32,15 @@ export function buildExecuteAgentViewModel({
   preview = createEmptyExecutePreviewState(),
   service = createEmptyExecuteServiceState()
 } = {}) {
+  const signals = Array.isArray(preview?.trust?.items) ? preview.trust.items.filter(Boolean).slice(0, 4) : [];
+
   if (service.pendingAction === "start" || service.pendingAction === "stop") {
     const verb = service.pendingAction === "start" ? "Starting" : "Stopping";
     return {
       title: "Agent Updating",
       detail: `${verb} the local execute agent...`,
       note: "Waiting for the local executor control request to finish.",
+      signals,
       tone: "loading",
       buttonLabel: `${verb}...`,
       buttonDisabled: true,
@@ -49,6 +55,7 @@ export function buildExecuteAgentViewModel({
       title: "Agent Action Failed",
       detail: service.detail || "The local execute service is unavailable.",
       note: "The last control request failed on this device. No hidden retry was attempted.",
+      signals,
       tone: "error",
       buttonLabel: `Retry ${actionLabel}`,
       buttonDisabled: false,
@@ -64,6 +71,7 @@ export function buildExecuteAgentViewModel({
         service.pid && service.currentTarget?.number
           ? `Local execute service is active on this device (pid ${service.pid}).`
           : service.detail || "The execute agent is currently running.",
+      signals,
       tone: "ready",
       buttonLabel: "Stop Agent",
       buttonDisabled: false,
@@ -76,6 +84,7 @@ export function buildExecuteAgentViewModel({
       title: "Roadmap Blocked",
       detail: formatTarget(preview.target),
       note: preview.detail || "The roadmap queue is halted on a blocked child issue.",
+      signals,
       tone: "error",
       buttonLabel: "Blocked",
       buttonDisabled: true,
@@ -88,6 +97,7 @@ export function buildExecuteAgentViewModel({
       title: "Roadmap Ready",
       detail: formatTarget(preview.target),
       note: preview.detail || "A roadmap parent selected the next child issue automatically.",
+      signals,
       tone: "ready",
       buttonLabel: "Start Agent",
       buttonDisabled: false,
@@ -100,6 +110,7 @@ export function buildExecuteAgentViewModel({
       title: "Awaiting Approval",
       detail: formatTarget(preview.target),
       note: preview.detail || "This issue has mode:execute but needs explicit approval before the agent can run it.",
+      signals,
       tone: "idle",
       buttonLabel: "Approve for Execution",
       buttonDisabled: false,
@@ -112,6 +123,7 @@ export function buildExecuteAgentViewModel({
       title: "Execute Ready",
       detail: formatTarget(preview.target),
       note: preview.detail || "The next mode:execute issue is approved and ready to run.",
+      signals,
       tone: "ready",
       buttonLabel: "Start Agent",
       buttonDisabled: false,
@@ -124,6 +136,7 @@ export function buildExecuteAgentViewModel({
       title: "Execute Checking",
       detail: "Checking the queue and local service.",
       note: preview.detail || service.detail || "Waiting for the local executor state.",
+      signals,
       tone: "loading",
       buttonLabel: "Checking...",
       buttonDisabled: true,
@@ -135,6 +148,7 @@ export function buildExecuteAgentViewModel({
     title: "Execute Idle",
     detail: "No execute issue queued.",
     note: preview.detail || "Move an `agent:rei` issue into `mode:execute` + `status:todo` first.",
+    signals,
     tone: "idle",
     buttonLabel: "Nothing Queued",
     buttonDisabled: true,

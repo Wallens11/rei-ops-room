@@ -1,4 +1,5 @@
 import { execFile } from "node:child_process";
+import fsSync from "node:fs";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -9,6 +10,7 @@ import {
   inferGithubRepoSlugWithRunner,
   listGithubIssuesWithRunner,
   readDailyDeviceHandoff,
+  readExecuteContinuity,
   stripWorkspacePrefix
 } from "../server.mjs";
 import { getLearningContext } from "./execute-learning.mjs";
@@ -273,6 +275,138 @@ function summarizeHandoff(handoff = {}) {
   return lines.length > 0 ? lines.join("\n") : "- No current handoff recap was available.";
 }
 
+function normalizeDesignTitle(value = "") {
+  return String(value || "").replace(/^#\s+/, "").trim();
+}
+
+function extractDesignBrand(title = "") {
+  const normalized = normalizeDesignTitle(title);
+  const match = normalized.match(/inspired by (.+)$/i);
+  return match?.[1]?.trim() || normalized || null;
+}
+
+function formatDesignProfileLabel(designProfile = null) {
+  if (!designProfile) {
+    return null;
+  }
+
+  if (designProfile.brand) {
+    return `${designProfile.brand} inspired DESIGN.md`;
+  }
+
+  return designProfile.title || "DESIGN.md";
+}
+
+export function readRepoDesignProfile(repoCwd) {
+  if (!repoCwd) {
+    return null;
+  }
+
+  const designPath = path.join(repoCwd, "DESIGN.md");
+  let text = "";
+
+  try {
+    text = fsSync.readFileSync(designPath, "utf8");
+  } catch {
+    return null;
+  }
+
+  const lines = text.split(/\r?\n/);
+  const titleLine = lines.find((line) => line.startsWith("# ")) || "";
+  const title = normalizeDesignTitle(titleLine);
+  let summary = "";
+
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (!trimmed || trimmed.startsWith("#")) {
+      continue;
+    }
+
+    summary = trimmed;
+    break;
+  }
+
+  return {
+    path: designPath,
+    title,
+    brand: extractDesignBrand(title),
+    summary: summary || null
+  };
+}
+
+function buildDesignGuidanceLines(designProfile = null) {
+  if (!designProfile) {
+    return [];
+  }
+
+  const displayPath = stripWorkspacePrefix(designProfile.path) || designProfile.path;
+  const profileLabel = formatDesignProfileLabel(designProfile);
+
+  return [
+    "Active design guidance:",
+    `- DESIGN.md: ${displayPath}`,
+    profileLabel ? `- Profile: ${profileLabel}` : null,
+    designProfile.summary ? `- Cue: ${designProfile.summary}` : null,
+    "- If the task touches UI, layout, or copy, read and follow DESIGN.md before editing."
+  ].filter(Boolean);
+}
+
+function buildContinuityPromptLines(continuity = null) {
+  if (!continuity?.summary) {
+    return [];
+  }
+
+  return [
+    "",
+    `Session continuity snapshot${continuity.generatedAt ? ` (${continuity.generatedAt})` : ""}:`,
+    continuity.summary
+  ];
+}
+
+function buildContinuityAnchor(continuity = null) {
+  if (!continuity) {
+    return null;
+  }
+
+  const fragments = [continuity.repo, continuity.focus, continuity.objective].filter(Boolean);
+  return fragments.length > 0 ? fragments.join(" | ") : null;
+}
+
+function buildExecuteTrust({ roadmap = null, skillProfile = null, designProfile = null, continuity = null } = {}) {
+  const items = [];
+
+  items.push(
+    roadmap?.number
+      ? `Queue source: roadmap #${roadmap.number} child queue`
+      : "Queue source: explicit mode:execute issue"
+  );
+
+  if (skillProfile?.label) {
+    items.push(`Assigned profile: ${skillProfile.label}`);
+  }
+
+  const continuityAnchor = buildContinuityAnchor(continuity);
+  if (continuityAnchor) {
+    items.push(`Continuity anchor: ${continuityAnchor}`);
+  }
+
+  if (continuity?.liveNow) {
+    items.push(`Live signal: ${continuity.liveNow}`);
+  }
+
+  if (designProfile && skillProfile?.id === "frontend") {
+    items.push(`Design authority: ${formatDesignProfileLabel(designProfile)}`);
+  }
+
+  return {
+    queueSource: roadmap?.number ? "roadmap" : "explicit",
+    specialist: skillProfile?.label || null,
+    designAuthority: designProfile && skillProfile?.id === "frontend" ? formatDesignProfileLabel(designProfile) : null,
+    continuitySummary: continuity?.summary || null,
+    items: items.slice(0, 4)
+  };
+}
+
 function resolveSkillBundle(skillIds = []) {
   return skillIds.map((skillId) => EXECUTE_SKILL_CATALOG[skillId]).filter(Boolean);
 }
@@ -332,8 +466,18 @@ export function selectExecuteSkillProfile(issue = {}) {
  * Lebih simpel dari buildExecutePrompt — tidak ada GitHub issue context,
  * tidak ada skill profile. Cukup task, context opsional, dan handoff.
  */
-export function buildDirectTaskPrompt({ task, context = null, repoCwd, handoff = null, learningContext = null } = {}) {
+export function buildDirectTaskPrompt({
+  task,
+  context = null,
+  repoCwd,
+  handoff = null,
+  learningContext = null,
+  continuity = null,
+  designProfile = readRepoDesignProfile(repoCwd)
+} = {}) {
   const repoLabel = stripWorkspacePrefix(repoCwd) || repoCwd;
+  const designGuidanceLines = buildDesignGuidanceLines(designProfile);
+  const continuityLines = buildContinuityPromptLines(continuity);
 
   return [
     `You are Rei, an autonomous agent working inside ${repoCwd} (${repoLabel}).`,
@@ -351,6 +495,9 @@ export function buildDirectTaskPrompt({ task, context = null, repoCwd, handoff =
       ? `Known blockers:\n${handoff.blockers.map((b) => `- ${b}`).join("\n")}`
       : null,
     learningContext ? `\n${learningContext}` : null,
+    ...continuityLines,
+    designGuidanceLines.length > 0 ? "" : null,
+    ...designGuidanceLines,
     "",
     "Execution rules:",
     "- Inspect the repo before changing anything.",
@@ -649,10 +796,20 @@ export function selectExecuteTarget(payload = {}, { nowMs = Date.now() } = {}) {
   return null;
 }
 
-export function buildExecutePrompt({ repo, repoCwd, issue, handoff, learningContext = null }) {
+export function buildExecutePrompt({
+  repo,
+  repoCwd,
+  issue,
+  handoff,
+  learningContext = null,
+  continuity = null,
+  designProfile = readRepoDesignProfile(repoCwd)
+}) {
   const issueBody = String(issue?.body || "").trim() || "No issue body provided.";
   const repoLabel = stripWorkspacePrefix(repoCwd) || repoCwd;
   const skillProfile = selectExecuteSkillProfile(issue);
+  const designGuidanceLines = buildDesignGuidanceLines(designProfile);
+  const continuityLines = buildContinuityPromptLines(continuity);
   const skillLines =
     skillProfile.skills.length > 0
       ? skillProfile.skills.map((skill) => `- ${skill.label}: ${skill.path}`).join("\n")
@@ -689,6 +846,9 @@ export function buildExecutePrompt({ repo, repoCwd, issue, handoff, learningCont
       ? `Known blockers from handoff:\n${handoff.blockers.map((b) => `- ${b}`).join("\n")}\nAvoid re-attempting these without a plan to resolve them.`
       : null,
     learningContext ? `\n${learningContext}` : null,
+    ...continuityLines,
+    designGuidanceLines.length > 0 ? "" : null,
+    ...designGuidanceLines,
     "",
     "Execution rules:",
     "- Inspect the repository and issue history before changing code.",
@@ -703,42 +863,56 @@ export function buildExecutePrompt({ repo, repoCwd, issue, handoff, learningCont
     .join("\n");
 }
 
-function buildExecutePreviewDetail(target, skillProfile, { roadmap = null } = {}) {
+function buildExecutePreviewDetail(target, skillProfile, { roadmap = null, designProfile = null } = {}) {
   const specialistLine = skillProfile?.label ? ` Suggested specialist: ${skillProfile.label}.` : "";
+  const designLine =
+    designProfile && skillProfile?.id === "frontend"
+      ? ` Active design profile: ${formatDesignProfileLabel(designProfile)}.`
+      : "";
 
   if (roadmap?.number) {
-    return `Roadmap #${roadmap.number} selected #${target.number} as the next unresolved child issue.${specialistLine}`;
+    return `Roadmap #${roadmap.number} selected #${target.number} as the next unresolved child issue.${specialistLine}${designLine}`;
   }
 
   if (target?.status === "in_progress") {
-    return `Resume the active execute issue #${target.number}.${specialistLine}`;
+    return `Resume the active execute issue #${target.number}.${specialistLine}${designLine}`;
   }
 
-  return `Ready to run the next execute issue #${target.number}.${specialistLine}`;
+  return `Ready to run the next execute issue #${target.number}.${specialistLine}${designLine}`;
 }
 
-export function buildExecuteStartComment({ issue, repoCwd, runtimeLabel = "Codex" }) {
+export function buildExecuteStartComment({ issue, repoCwd, runtimeLabel = "Codex", runtimePlan = [] }) {
+  const runtimePlanLine =
+    Array.isArray(runtimePlan) && runtimePlan.length > 0
+      ? `Runtime plan: ${runtimePlan.map((runtimeId) => `\`${runtimeId}\``).join(" → ")}`
+      : `Runtime: ${runtimeLabel}`;
+  const launchLabel = Array.isArray(runtimePlan) && runtimePlan.length > 0 ? runtimePlan[0] : runtimeLabel;
+
   return [
     `<!-- rei:execute issue=${issue.number} state=started -->`,
     `Rei execute service picked up #${issue.number}.`,
     "",
     `Target: [#${issue.number} ${issue.title}](${issue.url})`,
     `Workspace: \`${repoCwd}\``,
-    `Runtime: ${runtimeLabel}`,
+    runtimePlanLine,
     "",
-    `The local executor is launching ${runtimeLabel} now and will post a follow-up summary after verification.`
-  ].join("\n");
+    `The local executor is launching ${launchLabel} now and will post a follow-up summary after verification.`
+  ]
+    .filter(Boolean)
+    .join("\n");
 }
 
 export function buildExecuteCompletionComment({
   issue,
   outcome = "completed",
   lastMessage = "",
-  runDir = null
+  runDir = null,
+  runtimeId = null
 }) {
   const summary = String(lastMessage || "").trim() || "Codex finished without a final summary message.";
   const detail = summary.length > 600 ? `${summary.slice(0, 597)}...` : summary;
   const artifactLine = runDir ? `Artifacts: \`${runDir}\`` : "Artifacts: local worker log only.";
+  const runtimeLine = runtimeId ? `Runtime used: \`${runtimeId}\`` : null;
   const stateVerb =
     outcome === "completed"
       ? "finished"
@@ -752,17 +926,21 @@ export function buildExecuteCompletionComment({
     "",
     `Target: [#${issue.number} ${issue.title}](${issue.url})`,
     artifactLine,
+    runtimeLine,
     "",
     "Result summary:",
     detail
-  ].join("\n");
+  ]
+    .filter(Boolean)
+    .join("\n");
 }
 
 export async function prepareExecuteAction({
   runner = execFileAsync,
   cwd = path.resolve(__dirname, ".."),
   repo = null,
-  handoff = null
+  handoff = null,
+  continuity = null
 } = {}) {
   const resolvedRepo =
     repo ||
@@ -773,6 +951,8 @@ export async function prepareExecuteAction({
   const payload = await listGithubIssuesWithRunner(runner, {
     repo: resolvedRepo
   });
+  const designProfile = readRepoDesignProfile(cwd);
+  const resolvedContinuity = continuity || (await readExecuteContinuity().catch(() => null));
 
   // Fetch learning context sekali — di-share ke semua buildExecutePrompt calls di bawah
   const learningContext = await getLearningContext({ limit: 5 }).catch(() => null);
@@ -804,15 +984,24 @@ export async function prepareExecuteAction({
       });
       const skillProfile = selectExecuteSkillProfile(issue);
       const resolvedHandoff = handoff || (await readDailyDeviceHandoff());
-      const prompt = buildExecutePrompt({
-        repo: resolvedRepo,
-        repoCwd: cwd,
-        issue: {
-          ...issue,
-          roadmap: roadmapTarget.roadmap
-        },
-        handoff: resolvedHandoff,
-        learningContext
+        const prompt = buildExecutePrompt({
+          repo: resolvedRepo,
+          repoCwd: cwd,
+          issue: {
+            ...issue,
+            roadmap: roadmapTarget.roadmap
+          },
+          handoff: resolvedHandoff,
+          learningContext,
+          continuity: resolvedContinuity,
+          designProfile
+        });
+
+      const trust = buildExecuteTrust({
+        roadmap: roadmapTarget.roadmap,
+        skillProfile,
+        designProfile,
+        continuity: resolvedContinuity
       });
 
       return {
@@ -823,11 +1012,15 @@ export async function prepareExecuteAction({
           ...issue,
           roadmap: roadmapTarget.roadmap
         },
+        designProfile,
         skillProfile,
         prompt,
         handoff: resolvedHandoff,
+        continuity: resolvedContinuity,
+        trust,
         detail: buildExecutePreviewDetail(roadmapTarget.issue, skillProfile, {
-          roadmap: roadmapTarget.roadmap
+          roadmap: roadmapTarget.roadmap,
+          designProfile
         })
       };
     }
@@ -852,7 +1045,15 @@ export async function prepareExecuteAction({
           repoCwd: cwd,
           issue: fullIssue,
           handoff: resolvedHandoff,
-          learningContext
+          learningContext,
+          continuity: resolvedContinuity,
+          designProfile
+        });
+
+        const trust = buildExecuteTrust({
+          skillProfile,
+          designProfile,
+          continuity: resolvedContinuity
         });
 
         return {
@@ -860,9 +1061,12 @@ export async function prepareExecuteAction({
           status: "retry",
           target: formatTarget({ ...fullIssue, status: "blocked" }),
           issue: fullIssue,
+          designProfile,
           skillProfile,
           prompt,
           handoff: resolvedHandoff,
+          continuity: resolvedContinuity,
+          trust,
           detail: `Retrying blocked issue #${fullIssue.number} — attempt ${countExecuteAttempts(fullIssue.comments || []) + 1}/${EXECUTE_MAX_RETRIES}.`
         };
       }
@@ -873,6 +1077,7 @@ export async function prepareExecuteAction({
       status: "no_target",
       target: null,
       issue: null,
+      designProfile,
       prompt: null,
       detail: "No active mode:execute issue is ready in the tracked queue."
     };
@@ -897,9 +1102,16 @@ export async function prepareExecuteAction({
         status: target.status
       },
       issue,
+      designProfile,
       skillProfile,
       prompt: null,
       handoff: resolvedHandoff,
+      continuity: resolvedContinuity,
+      trust: buildExecuteTrust({
+        skillProfile,
+        designProfile,
+        continuity: resolvedContinuity
+      }),
       detail: `Issue #${target.issue.number} has mode:execute but needs explicit approval before running. Use /api/github/issues/${target.issue.number}/approve to approve.`
     };
   }
@@ -909,7 +1121,15 @@ export async function prepareExecuteAction({
     repoCwd: cwd,
     issue,
     handoff: resolvedHandoff,
-    learningContext
+    learningContext,
+    continuity: resolvedContinuity,
+    designProfile
+  });
+
+  const trust = buildExecuteTrust({
+    skillProfile,
+    designProfile,
+    continuity: resolvedContinuity
   });
 
   return {
@@ -920,10 +1140,13 @@ export async function prepareExecuteAction({
       status: target.status
     },
     issue,
+    designProfile,
     skillProfile,
     prompt,
     handoff: resolvedHandoff,
-    detail: buildExecutePreviewDetail(target.issue, skillProfile)
+    continuity: resolvedContinuity,
+    trust,
+    detail: buildExecutePreviewDetail(target.issue, skillProfile, { designProfile })
   };
 }
 

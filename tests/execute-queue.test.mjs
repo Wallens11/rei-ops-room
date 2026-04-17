@@ -389,6 +389,16 @@ describe("execute-bridge: buildDirectTaskPrompt", async () => {
     assert.ok(prompt.includes("Execution rules:"));
     assert.ok(prompt.includes("do not push"));
   });
+
+  it("prompt ikut menyebut DESIGN.md kalau repo punya design brief lokal", () => {
+    const prompt = buildDirectTaskPrompt({
+      task: "polish execute panel",
+      repoCwd: "/Users/funtoco/workSpace/codex-pixel-agent"
+    });
+
+    assert.ok(prompt.includes("Active design guidance:"));
+    assert.ok(prompt.includes("Cursor inspired DESIGN.md"));
+  });
 });
 
 // ─── Retry logic ──────────────────────────────────────────────────────────────

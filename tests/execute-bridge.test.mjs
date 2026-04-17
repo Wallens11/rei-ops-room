@@ -5,6 +5,7 @@ import {
   buildExecutePrompt,
   selectExecuteSkillProfile,
   prepareExecuteAction,
+  readRepoDesignProfile,
   selectExecuteTarget,
   approveExecuteIssue,
   countExecuteAttempts,
@@ -74,6 +75,14 @@ test("buildExecutePrompt folds issue scope and handoff context into one launch p
   assert.match(prompt, /Do not push or create a PR unless explicitly asked/i);
 });
 
+test("readRepoDesignProfile reads the local repo DESIGN.md when present", () => {
+  const profile = readRepoDesignProfile("/Users/funtoco/workSpace/codex-pixel-agent");
+
+  assert.equal(profile.brand, "Cursor");
+  assert.match(profile.title, /Cursor/i);
+  assert.match(profile.path, /DESIGN\.md$/);
+});
+
 test("selectExecuteSkillProfile chooses a frontend specialist bundle for UI-heavy issues", () => {
   const profile = selectExecuteSkillProfile({
     title: "Polish the Execute Agent panel layout",
@@ -128,6 +137,43 @@ test("buildExecutePrompt includes the recommended specialist profile and skills"
   assert.match(prompt, /frontend/i);
   assert.match(prompt, /frontend-design/i);
   assert.match(prompt, /arrange/i);
+  assert.match(prompt, /Active design guidance/i);
+  assert.match(prompt, /Cursor inspired DESIGN\.md/i);
+});
+
+test("buildExecutePrompt includes the latest ops-room continuity snapshot when available", () => {
+  const prompt = buildExecutePrompt({
+    repo: "Wallens11/rei-ops-room",
+    repoCwd: "/Users/funtoco/workSpace/codex-pixel-agent",
+    issue: {
+      number: 28,
+      title: "Improve operator trust cues in the execute panel",
+      body: "Show why the next issue was selected and what continuity context the executor will use.",
+      url: "https://github.com/Wallens11/rei-ops-room/issues/28",
+      labels: ["agent:rei", "mode:execute", "status:approved"]
+    },
+    handoff: {
+      date: "2026-04-16",
+      sections: []
+    },
+    continuity: {
+      repo: "codex-pixel-agent",
+      objective: "Make execute routing easier to trust from the panel.",
+      focus: "Backend",
+      liveNow: "Reviewing the execute queue heuristic (thread | 2 min ago)",
+      summary: [
+        "- Active repo: codex-pixel-agent",
+        "- Objective: Make execute routing easier to trust from the panel.",
+        "- Focus: Backend",
+        "- Live signal: Reviewing the execute queue heuristic (thread | 2 min ago)"
+      ].join("\n")
+    }
+  });
+
+  assert.match(prompt, /Session continuity snapshot/i);
+  assert.match(prompt, /Active repo: codex-pixel-agent/i);
+  assert.match(prompt, /Focus: Backend/i);
+  assert.match(prompt, /Live signal: Reviewing the execute queue heuristic/i);
 });
 
 test("prepareExecuteAction returns the next execute issue with a launch prompt when status:approved", async () => {
@@ -141,6 +187,18 @@ test("prepareExecuteAction returns the next execute issue with a launch prompt w
           items: ["Cross-device handoff is the current continuity source."]
         }
       ]
+    },
+    continuity: {
+      repo: "codex-pixel-agent",
+      objective: "Keep execute runs aligned with the active ops-room mission.",
+      focus: "Backend",
+      liveNow: "Evaluating queue trust signals (thread | 1 min ago)",
+      summary: [
+        "- Active repo: codex-pixel-agent",
+        "- Objective: Keep execute runs aligned with the active ops-room mission.",
+        "- Focus: Backend",
+        "- Live signal: Evaluating queue trust signals (thread | 1 min ago)"
+      ].join("\n")
     },
     runner: async (file, args) => {
       if (file === "gh" && args[0] === "issue" && args[1] === "list") {
@@ -182,6 +240,13 @@ test("prepareExecuteAction returns the next execute issue with a launch prompt w
   assert.equal(preview.target.number, 15);
   assert.match(preview.prompt, /start Codex/i);
   assert.match(preview.prompt, /Cross-device handoff is the current continuity source/i);
+  assert.match(preview.prompt, /Session continuity snapshot/i);
+  assert.deepEqual(preview.trust.items, [
+    "Queue source: explicit mode:execute issue",
+    "Assigned profile: Backend specialist",
+    "Continuity anchor: codex-pixel-agent | Backend | Keep execute runs aligned with the active ops-room mission.",
+    "Live signal: Evaluating queue trust signals (thread | 1 min ago)"
+  ]);
 });
 
 test("prepareExecuteAction returns awaiting_approval when issue has mode:execute but no status:approved", async () => {

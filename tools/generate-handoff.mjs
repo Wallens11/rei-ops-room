@@ -61,6 +61,11 @@ function todayDate() {
   return new Date().toISOString().slice(0, 10);
 }
 
+function extractSectionDateHeader(section = "") {
+  const match = String(section).match(/^##\s+(\d{4}-\d{2}-\d{2})\b/m);
+  return match ? `## ${match[1]}` : `## ${todayDate()}`;
+}
+
 /**
  * Baca last-message.md dari N run dir terbaru.
  * Return: array of { runDir, lastMessage }
@@ -237,10 +242,7 @@ export function formatHandoffSection(payload) {
  * @param section     — Markdown string dari formatHandoffSection()
  */
 export async function writeHandoffSection(section, outputPaths = handoffOutputPaths) {
-  // Ekstrak tanggal dari section header (## YYYY-MM-DD) — jangan pakai todayDate()
-  // supaya section lama dengan tanggal berbeda tetap bisa di-replace dengan benar.
-  const headerMatch = section.match(/^## (\d{4}-\d{2}-\d{2})/m);
-  const dateHeader = headerMatch ? `## ${headerMatch[1]}` : `## ${todayDate()}`;
+  const dateHeader = extractSectionDateHeader(section);
 
   for (const outputPath of outputPaths) {
     try {

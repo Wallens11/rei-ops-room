@@ -53,6 +53,8 @@ const FOCUS_PROFILES = [
       "css",
       "style",
       "design",
+      "design.md",
+      "getdesign",
       "widget",
       "pixel",
       "react",
@@ -650,8 +652,10 @@ async function controlReportOnlyService({ action }) {
 
 async function previewExecuteAction(options = {}) {
   const module = await import("./tools/execute-bridge.mjs");
+  const continuity = options.continuity || (await readExecuteContinuity().catch(() => null));
   return module.prepareExecuteAction({
     cwd: __dirname,
+    continuity,
     ...options
   });
 }
@@ -1229,6 +1233,72 @@ async function getStatus() {
     workspaceRoot,
     ...roomState
   };
+}
+
+function compactExecuteContinuityText(value, maxLength = 140) {
+  const normalized = String(value || "").replace(/\s+/g, " ").trim();
+
+  if (!normalized) {
+    return "";
+  }
+
+  if (normalized.length <= maxLength) {
+    return normalized;
+  }
+
+  return `${normalized.slice(0, Math.max(0, maxLength - 3)).trimEnd()}...`;
+}
+
+export function summarizeExecuteContinuity(status = {}) {
+  if (!status || typeof status !== "object") {
+    return null;
+  }
+
+  const repo = compactExecuteContinuityText(
+    status.room?.current_repo || status.objective?.repo || status.repoContext?.repoName || "",
+    80
+  );
+  const objective = compactExecuteContinuityText(
+    status.objective?.title || status.room?.current_task || status.activity?.summary || "",
+    160
+  );
+  const focus = compactExecuteContinuityText(status.focus?.title || status.phase?.title || "", 80);
+  const liveTitle = compactExecuteContinuityText(status.runtime?.live_now?.title || "", 160);
+  const liveMeta = compactExecuteContinuityText(
+    [status.runtime?.live_now?.source_label, status.runtime?.live_now?.age_label].filter(Boolean).join(" | "),
+    80
+  );
+  const lastFinishedTitle = compactExecuteContinuityText(status.runtime?.last_finished?.title || "", 160);
+  const lastFinishedMeta = compactExecuteContinuityText(
+    [status.runtime?.last_finished?.source_label, status.runtime?.last_finished?.age_label].filter(Boolean).join(" | "),
+    80
+  );
+  const lines = [
+    repo ? `- Active repo: ${repo}` : null,
+    objective ? `- Objective: ${objective}` : null,
+    focus ? `- Focus: ${focus}` : null,
+    liveTitle ? `- Live signal: ${liveTitle}${liveMeta ? ` (${liveMeta})` : ""}` : null,
+    lastFinishedTitle ? `- Last finished: ${lastFinishedTitle}${lastFinishedMeta ? ` (${lastFinishedMeta})` : ""}` : null
+  ].filter(Boolean);
+
+  if (lines.length === 0) {
+    return null;
+  }
+
+  return {
+    generatedAt: status.generatedAt || null,
+    repo: repo || null,
+    objective: objective || null,
+    focus: focus || null,
+    liveNow: liveTitle ? `${liveTitle}${liveMeta ? ` (${liveMeta})` : ""}` : null,
+    lastFinished: lastFinishedTitle ? `${lastFinishedTitle}${lastFinishedMeta ? ` (${lastFinishedMeta})` : ""}` : null,
+    summary: lines.slice(0, 4).join("\n")
+  };
+}
+
+export async function readExecuteContinuity({ getStatusImpl = getStatus } = {}) {
+  const status = await getStatusImpl();
+  return summarizeExecuteContinuity(status);
 }
 
 function writeStatusStreamFrame(response, payload) {

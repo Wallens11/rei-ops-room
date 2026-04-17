@@ -429,6 +429,7 @@ function cwdPathZoneHint(cwd) {
     { pattern: "room-engine", zoneId: "frontend", hit: "cwd:room-engine" },
     { pattern: "room-state", zoneId: "frontend", hit: "cwd:room-state" },
     { pattern: "room-schema", zoneId: "frontend", hit: "cwd:room-schema" },
+    { pattern: "design.md", zoneId: "frontend", hit: "cwd:design.md" },
     { pattern: "server.mjs", zoneId: "backend", hit: "cwd:server.mjs" },
     { pattern: "tools/", zoneId: "backend", hit: "cwd:tools/" },
     { pattern: "execute-bridge", zoneId: "backend", hit: "cwd:execute-bridge" },
