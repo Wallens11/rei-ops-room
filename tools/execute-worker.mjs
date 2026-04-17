@@ -22,9 +22,12 @@ import {
   writeExecuteWorkerState
 } from "./execute-worker-state.mjs";
 import {
+  getFallbackRuntime,
   getRuntime,
+  isRateLimitError,
+  loadRuntimePreferences,
   probeAvailableRuntimes,
-  selectRuntime
+  selectRuntimeAdaptive
 } from "./runtimes/index.mjs";
 import {
   checkAndClearWakeTrigger,
@@ -37,12 +40,13 @@ import {
   unregisterWorker,
   updateWorkerActivity
 } from "./execute-queue.mjs";
-import { recordRunInsight } from "./execute-learning.mjs";
+import { getLearningEntries, recordRunInsight } from "./execute-learning.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const DEFAULT_INTERVAL_SECONDS = 60;
 const MIN_INTERVAL_SECONDS = 30;
 const STUCK_TASK_THRESHOLD_MS = 10 * 60 * 1000; // 10 menit
+const EXECUTE_TIMEOUT_MS = Number(process.env.EXECUTE_TIMEOUT_MS || 10 * 60 * 1000); // default 10 menit
 const DEFAULT_CODEX_CANDIDATES = ["/Applications/Codex.app/Contents/Resources/codex"];
 const execFileAsync = promisify(execFile);
 const EXECUTE_RUNTIME_PATH_PREFIXES = [
@@ -527,8 +531,11 @@ async function executeNextIssue({
   signal = null,
   codexCommand = "codex", // backward-compat — diabaikan kalau availableRuntimes disediakan
   availableRuntimes = null, // null = fallback ke codex saja
+  runtimePrefs = null,     // loaded from .rei-runtimes.json; null = default
+  rateLimitFallback = true,
   runner = undefined,
-  onStateChange = async () => {}
+  onStateChange = async () => {},
+  stdout = process.stdout
 } = {}) {
   const preview = await prepareExecuteAction({
     cwd,
@@ -552,13 +559,18 @@ async function executeNextIssue({
     return preview;
   }
 
-  // Pilih runtime berdasarkan specialist profile issue.
+  // Pilih runtime berdasarkan specialist profile issue + histori learning (adaptive).
   // Kalau availableRuntimes tidak disediakan (caller lama), fallback ke codex.
   const profileId = preview.skillProfile?.id ?? "general";
-  const runtimeId = availableRuntimes
-    ? selectRuntime(profileId, availableRuntimes)
-    : "codex";
-  const runtimeLabel = getRuntime(runtimeId).RUNTIME_LABEL;
+  const prefs = runtimePrefs ?? {};
+  let runtimeId;
+  if (availableRuntimes) {
+    const learningEntries = await getLearningEntries().catch(() => []);
+    runtimeId = selectRuntimeAdaptive(profileId, availableRuntimes, learningEntries, prefs);
+  } else {
+    runtimeId = "codex";
+  }
+  let runtimeLabel = getRuntime(runtimeId).RUNTIME_LABEL;
 
   if (preview.target.status !== "in_progress") {
     await transitionExecuteIssueToInProgress({
@@ -595,23 +607,88 @@ async function executeNextIssue({
     detail: `Launching ${runtimeLabel} for issue #${preview.target.number}.`
   });
 
-  const mission = await runMission({
-    runtimeId,
-    repoCwd: cwd,
-    prompt: preview.prompt,
-    runDir,
-    signal,
-    onChildPid: async (childPid) => {
+  // Jalankan mission dengan timeout supaya worker tidak hang selamanya.
+  const ac = new AbortController();
+  const execSignal = signal
+    ? AbortSignal.any ? AbortSignal.any([signal, ac.signal]) : ac.signal
+    : ac.signal;
+  const timeoutHandle = setTimeout(() => ac.abort(), EXECUTE_TIMEOUT_MS);
+
+  let mission;
+  try {
+    mission = await runMission({
+      runtimeId,
+      repoCwd: cwd,
+      prompt: preview.prompt,
+      runDir,
+      signal: execSignal,
+      onChildPid: async (childPid) => {
+        await onStateChange({
+          status: "running",
+          currentTarget: preview.target,
+          currentChildPid: childPid,
+          currentRunDir: runDir,
+          detail: `${runtimeLabel} is running issue #${preview.target.number}.`
+        });
+      }
+    });
+  } finally {
+    clearTimeout(timeoutHandle);
+  }
+
+  let lastMessage = await readTextIfExists(mission.outputLastMessageFile);
+
+  // Rate-limit fallback: kalau primary runtime gagal dengan indikasi rate limit,
+  // coba runtime berikutnya dari daftar preferensi.
+  let usedRuntimeId = runtimeId;
+  if (
+    !mission.aborted &&
+    Number(mission.exitCode || 0) !== 0 &&
+    rateLimitFallback &&
+    availableRuntimes &&
+    isRateLimitError(lastMessage)
+  ) {
+    const fallbackId = getFallbackRuntime(profileId, runtimeId, availableRuntimes, prefs);
+    if (fallbackId) {
+      const fallbackLabel = getRuntime(fallbackId).RUNTIME_LABEL;
+      stdout.write(
+        `[warn] rate-limit detected on ${runtimeLabel}, retrying with ${fallbackLabel} for issue #${preview.target.number}\n`
+      );
       await onStateChange({
-        status: "running",
+        status: "launching",
         currentTarget: preview.target,
-        currentChildPid: childPid,
+        currentChildPid: null,
         currentRunDir: runDir,
-        detail: `${runtimeLabel} is running issue #${preview.target.number}.`
+        detail: `Rate limit hit. Switching to ${fallbackLabel} for issue #${preview.target.number}.`
       });
+      const ac2 = new AbortController();
+      const timeoutHandle2 = setTimeout(() => ac2.abort(), EXECUTE_TIMEOUT_MS);
+      try {
+        mission = await runMission({
+          runtimeId: fallbackId,
+          repoCwd: cwd,
+          prompt: preview.prompt,
+          runDir,
+          signal: signal ?? ac2.signal,
+          onChildPid: async (childPid) => {
+            await onStateChange({
+              status: "running",
+              currentTarget: preview.target,
+              currentChildPid: childPid,
+              currentRunDir: runDir,
+              detail: `${fallbackLabel} is running issue #${preview.target.number} (fallback).`
+            });
+          }
+        });
+      } finally {
+        clearTimeout(timeoutHandle2);
+      }
+      lastMessage = await readTextIfExists(mission.outputLastMessageFile);
+      usedRuntimeId = fallbackId;
+      runtimeLabel = fallbackLabel;
     }
-  });
-  const lastMessage = await readTextIfExists(mission.outputLastMessageFile);
+  }
+
   const nextWorktreePaths = await listMeaningfulWorktreePaths({
     cwd,
     runner
@@ -629,7 +706,8 @@ async function executeNextIssue({
   await recordRunInsight({
     issueNumber: preview.target.number,
     taskTitle: preview.issue?.title ?? "",
-    runtimeId,
+    runtimeId: usedRuntimeId,
+    profileId,
     outcome: mission.aborted ? "aborted" : outcome,
     filesChanged: newChanges,
     lastMessage
@@ -820,6 +898,11 @@ export async function runExecuteWorker({
   // Probe runtime yang tersedia di sistem saat startup.
   const availableRuntimes = await probeAvailableRuntimes(process.env);
 
+  // Muat preferensi runtime dari .rei-runtimes.json (opsional).
+  const { preferences: runtimePrefs, rateLimitFallback } = await loadRuntimePreferences().catch(
+    () => ({ preferences: {}, rateLimitFallback: true })
+  );
+
   // Register ke workers registry
   await registerWorker({ workerId, pid: process.pid, runtimeId: availableRuntimes[0] ?? "codex" }).catch(() => {});
 
@@ -831,6 +914,11 @@ export async function runExecuteWorker({
       `[${timestamp()}] execute worker ${workerId} watching ${repo || "origin repo"} every ${Math.round(
         intervalMs / 1000
       )}s | runtimes: ${availableRuntimes.join(", ") || "none"}\n`
+    );
+    stdout.write(
+      `[${timestamp()}] routing: ${Object.entries(runtimePrefs)
+        .map(([k, v]) => `${k}→${v[0]}`)
+        .join(", ") || "default"} | rate-limit fallback: ${rateLimitFallback ? "enabled" : "disabled"}\n`
     );
   }
 
@@ -874,8 +962,11 @@ export async function runExecuteWorker({
       signal,
       codexCommand,
       availableRuntimes,
+      runtimePrefs,
+      rateLimitFallback,
       runner,
-      onStateChange: persistState
+      onStateChange: persistState,
+      stdout
     });
     const signature = createExecuteWorkerResultSignature(result);
 

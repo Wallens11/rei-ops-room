@@ -1,14 +1,21 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
+import fs from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
 
 import * as codex from "../tools/runtimes/codex.mjs";
 import * as claudeCode from "../tools/runtimes/claude-code.mjs";
 import {
   RUNTIME_MAP,
   RUNTIME_PREFERENCES,
+  getFallbackRuntime,
   getRuntime,
+  isRateLimitError,
+  loadRuntimePreferences,
   probeAvailableRuntimes,
-  selectRuntime
+  selectRuntime,
+  selectRuntimeAdaptive
 } from "../tools/runtimes/index.mjs";
 
 // ─── codex.mjs ───────────────────────────────────────────────────────────────
@@ -196,5 +203,160 @@ describe("probeAvailableRuntimes", () => {
     // resolveCommand claude-code return "claude" (relative) → trust PATH → masuk available
     const result = await probeAvailableRuntimes({});
     assert.ok(result.includes("claude-code"));
+  });
+});
+
+// ─── isRateLimitError ────────────────────────────────────────────────────────
+
+describe("isRateLimitError", () => {
+  it("deteksi 'rate limit' dalam pesan error", () => {
+    assert.ok(isRateLimitError("Error: rate limit exceeded, please try later"));
+  });
+
+  it("deteksi 'overloaded' dalam pesan error", () => {
+    assert.ok(isRateLimitError("API is currently overloaded with requests"));
+  });
+
+  it("deteksi '529' dalam pesan error", () => {
+    assert.ok(isRateLimitError("HTTP 529 error from API"));
+  });
+
+  it("return false untuk error biasa (bukan rate limit)", () => {
+    assert.ok(!isRateLimitError("SyntaxError: Unexpected token '}' at line 42"));
+  });
+
+  it("return false untuk string kosong", () => {
+    assert.ok(!isRateLimitError(""));
+    assert.ok(!isRateLimitError(null));
+  });
+});
+
+// ─── getFallbackRuntime ───────────────────────────────────────────────────────
+
+describe("getFallbackRuntime", () => {
+  const prefs = { frontend: ["claude-code", "codex"], backend: ["codex", "claude-code"] };
+
+  it("return runtime berikutnya kalau primary gagal", () => {
+    const fallback = getFallbackRuntime("frontend", "claude-code", ["codex"], prefs);
+    assert.equal(fallback, "codex");
+  });
+
+  it("return null kalau tidak ada runtime berikutnya yang tersedia", () => {
+    const fallback = getFallbackRuntime("frontend", "codex", ["codex"], prefs);
+    assert.equal(fallback, null);
+  });
+
+  it("return null kalau currentRuntimeId tidak ada di preferences", () => {
+    const fallback = getFallbackRuntime("frontend", "gemini", ["codex"], prefs);
+    assert.equal(fallback, null);
+  });
+
+  it("hanya return runtime yang ada di availableRuntimes", () => {
+    // codex tersedia, tapi backend pref = [codex, claude-code]. claude-code fallback tidak tersedia
+    const fallback = getFallbackRuntime("backend", "codex", ["codex"], prefs);
+    assert.equal(fallback, null); // claude-code tidak di availableRuntimes
+  });
+});
+
+// ─── loadRuntimePreferences ──────────────────────────────────────────────────
+
+describe("loadRuntimePreferences", () => {
+  it("return defaults kalau file tidak ada", async () => {
+    const result = await loadRuntimePreferences("/nonexistent/.rei-runtimes.json");
+    assert.deepEqual(result.preferences, RUNTIME_PREFERENCES);
+    assert.equal(result.rateLimitFallback, true);
+  });
+
+  it("merge config dengan default — key yang ada override, yang tidak ada tetap default", async () => {
+    const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "rei-rt-"));
+    const configPath = path.join(tmpDir, ".rei-runtimes.json");
+    await fs.writeFile(configPath, JSON.stringify({
+      preferences: { frontend: ["claude-code"] }
+    }), "utf8");
+
+    const result = await loadRuntimePreferences(configPath);
+    assert.deepEqual(result.preferences.frontend, ["claude-code"]);
+    // backend tidak di-override → ambil default
+    assert.deepEqual(result.preferences.backend, RUNTIME_PREFERENCES.backend);
+    await fs.rm(tmpDir, { recursive: true });
+  });
+
+  it("abaikan preferences dengan runtime ID tidak dikenal", async () => {
+    const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "rei-rt-"));
+    const configPath = path.join(tmpDir, ".rei-runtimes.json");
+    await fs.writeFile(configPath, JSON.stringify({
+      preferences: { frontend: ["gemini-pro"] }  // tidak terdaftar di RUNTIME_MAP
+    }), "utf8");
+
+    const result = await loadRuntimePreferences(configPath);
+    // frontend tidak di-override karena gemini-pro tidak valid
+    assert.deepEqual(result.preferences.frontend, RUNTIME_PREFERENCES.frontend);
+    await fs.rm(tmpDir, { recursive: true });
+  });
+
+  it("rateLimitFallback: false kalau di-set di config", async () => {
+    const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "rei-rt-"));
+    const configPath = path.join(tmpDir, ".rei-runtimes.json");
+    await fs.writeFile(configPath, JSON.stringify({ rateLimitFallback: false }), "utf8");
+
+    const result = await loadRuntimePreferences(configPath);
+    assert.equal(result.rateLimitFallback, false);
+    await fs.rm(tmpDir, { recursive: true });
+  });
+});
+
+// ─── selectRuntimeAdaptive ───────────────────────────────────────────────────
+
+describe("selectRuntimeAdaptive", () => {
+  const prefs = {
+    frontend: ["claude-code", "codex"],
+    backend:  ["codex", "claude-code"]
+  };
+
+  it("pakai urutan preferensi kalau belum ada learning data", () => {
+    const r = selectRuntimeAdaptive("frontend", ["claude-code", "codex"], [], prefs);
+    assert.equal(r, "claude-code");
+  });
+
+  it("pakai urutan preferensi kalau sample terlalu sedikit (< 3)", () => {
+    const entries = [
+      { profileId: "frontend", runtimeId: "codex", outcome: "completed" },
+      { profileId: "frontend", runtimeId: "claude-code", outcome: "failed" }
+    ];
+    const r = selectRuntimeAdaptive("frontend", ["claude-code", "codex"], entries, prefs);
+    assert.equal(r, "claude-code"); // tetap default, sample < 3
+  });
+
+  it("pilih runtime dengan success rate lebih tinggi kalau cukup sample", () => {
+    // codex: 3 completed, claude-code: 0 completed 3 failed → pilih codex
+    const entries = [
+      { profileId: "frontend", runtimeId: "codex", outcome: "completed" },
+      { profileId: "frontend", runtimeId: "codex", outcome: "completed" },
+      { profileId: "frontend", runtimeId: "codex", outcome: "completed" },
+      { profileId: "frontend", runtimeId: "claude-code", outcome: "failed" },
+      { profileId: "frontend", runtimeId: "claude-code", outcome: "failed" },
+      { profileId: "frontend", runtimeId: "claude-code", outcome: "failed" }
+    ];
+    const r = selectRuntimeAdaptive("frontend", ["claude-code", "codex"], entries, prefs);
+    assert.equal(r, "codex"); // codex menang dengan 100% success rate
+  });
+
+  it("abaikan entries dari profile lain", () => {
+    // Hanya backend entries, tidak pengaruhi frontend selection
+    const entries = [
+      { profileId: "backend", runtimeId: "codex", outcome: "completed" },
+      { profileId: "backend", runtimeId: "codex", outcome: "completed" },
+      { profileId: "backend", runtimeId: "codex", outcome: "completed" },
+      { profileId: "backend", runtimeId: "claude-code", outcome: "failed" },
+      { profileId: "backend", runtimeId: "claude-code", outcome: "failed" },
+      { profileId: "backend", runtimeId: "claude-code", outcome: "failed" }
+    ];
+    const r = selectRuntimeAdaptive("frontend", ["claude-code", "codex"], entries, prefs);
+    assert.equal(r, "claude-code"); // frontend tetap pakai preferensi default
+  });
+
+  it("fallback ke codex kalau tidak ada runtime tersedia", () => {
+    const r = selectRuntimeAdaptive("frontend", [], [], prefs);
+    assert.equal(r, "codex");
   });
 });

@@ -80,11 +80,17 @@ export async function readLearningLog() {
 }
 
 /**
+ * Alias untuk readLearningLog — dipakai oleh adaptive runtime selection.
+ */
+export const getLearningEntries = readLearningLog;
+
+/**
  * Catat insight dari satu run yang sudah selesai.
  *
  * @param issueNumber  — nomor GitHub issue (null untuk direct task)
  * @param taskTitle    — judul issue atau deskripsi singkat direct task
  * @param runtimeId    — "codex" | "claude-code"
+ * @param profileId    — specialist profile: "frontend" | "backend" | "general" | ...
  * @param outcome      — "completed" | "review_needed" | "failed" | "aborted"
  * @param filesChanged — array path relatif file yang berubah
  * @param lastMessage  — teks output terakhir dari agent
@@ -93,6 +99,7 @@ export async function recordRunInsight({
   issueNumber = null,
   taskTitle = "",
   runtimeId = "codex",
+  profileId = "general",
   outcome = "unknown",
   filesChanged = [],
   lastMessage = ""
@@ -105,6 +112,7 @@ export async function recordRunInsight({
     issueNumber: issueNumber ?? null,
     taskTitle: String(taskTitle || "").trim().slice(0, 120),
     runtimeId,
+    profileId: String(profileId || "general"),
     outcome,
     filesChanged: (filesChanged || []).slice(0, 20), // cap supaya tidak terlalu besar
     keySummary: extractKeySummary(lastMessage)

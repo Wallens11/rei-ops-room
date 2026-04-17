@@ -1,0 +1,11 @@
+{
+  "_comment": "Runtime routing config untuk Rei execute worker. Edit sesuai kebutuhan — tanpa restart worker.",
+  "preferences": {
+    "frontend":  ["claude-code", "codex"],
+    "backend":   ["codex", "claude-code"],
+    "scraping":  ["codex"],
+    "docs":      ["claude-code", "codex"],
+    "general":   ["codex", "claude-code"]
+  },
+  "rateLimitFallback": true
+}

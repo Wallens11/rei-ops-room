@@ -237,8 +237,10 @@ export function formatHandoffSection(payload) {
  * @param section     — Markdown string dari formatHandoffSection()
  */
 export async function writeHandoffSection(section, outputPaths = handoffOutputPaths) {
-  const today = todayDate();
-  const dateHeader = `## ${today}`;
+  // Ekstrak tanggal dari section header (## YYYY-MM-DD) — jangan pakai todayDate()
+  // supaya section lama dengan tanggal berbeda tetap bisa di-replace dengan benar.
+  const headerMatch = section.match(/^## (\d{4}-\d{2}-\d{2})/m);
+  const dateHeader = headerMatch ? `## ${headerMatch[1]}` : `## ${todayDate()}`;
 
   for (const outputPath of outputPaths) {
     try {

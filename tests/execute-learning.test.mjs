@@ -1,9 +1,15 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
+import fs from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
 
 import {
   extractKeySummary,
-  formatLearningContext
+  formatLearningContext,
+  getLearningEntries,
+  learningLogFile,
+  recordRunInsight
 } from "../tools/execute-learning.mjs";
 
 // ─── extractKeySummary ────────────────────────────────────────────────────────
@@ -181,5 +187,72 @@ describe("buildDirectTaskPrompt: learningContext injection", async () => {
   it("learningContext null tidak meninggalkan 'null' literal di prompt", () => {
     const prompt = buildDirectTaskPrompt({ task: "task", repoCwd: "/repo", learningContext: null });
     assert.ok(!prompt.includes("null"));
+  });
+});
+
+// ─── recordRunInsight: profileId ─────────────────────────────────────────────
+
+describe("recordRunInsight menyimpan profileId", () => {
+  // Gunakan tmp file agar tidak menyentuh .execute-learning.json asli
+  async function withTmpLog(fn) {
+    const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "rei-learn-"));
+    const origFile = learningLogFile;
+    // Monkey-patch modul path via env tidak bisa langsung — test ini mengandalkan
+    // bahwa recordRunInsight menulis ke learningLogFile default.
+    // Untuk isolasi, kita tulis tmp file ke path yang sama sementara.
+    // Simpan isi asli kalau ada, restore setelahnya.
+    let originalContent = null;
+    try {
+      originalContent = await fs.readFile(learningLogFile, "utf8");
+    } catch {
+      // file tidak ada — ok
+    }
+    try {
+      // Reset log ke kosong untuk test ini
+      await fs.writeFile(learningLogFile, JSON.stringify({ entries: [] }), "utf8");
+      await fn();
+    } finally {
+      // Restore
+      if (originalContent !== null) {
+        await fs.writeFile(learningLogFile, originalContent, "utf8").catch(() => {});
+      } else {
+        await fs.unlink(learningLogFile).catch(() => {});
+      }
+      await fs.rm(tmpDir, { recursive: true }).catch(() => {});
+    }
+  }
+
+  it("entry yang direkam mengandung profileId", async () => {
+    await withTmpLog(async () => {
+      const entry = await recordRunInsight({
+        issueNumber: 42,
+        taskTitle: "Test task",
+        runtimeId: "claude-code",
+        profileId: "frontend",
+        outcome: "completed",
+        filesChanged: ["src/app.js"],
+        lastMessage: "Done successfully."
+      });
+
+      assert.equal(entry.profileId, "frontend");
+      assert.equal(entry.runtimeId, "claude-code");
+      assert.equal(entry.outcome, "completed");
+    });
+  });
+
+  it("profileId default 'general' kalau tidak disediakan", async () => {
+    await withTmpLog(async () => {
+      const entry = await recordRunInsight({
+        taskTitle: "No profile task",
+        runtimeId: "codex",
+        outcome: "failed"
+      });
+
+      assert.equal(entry.profileId, "general");
+    });
+  });
+
+  it("getLearningEntries adalah alias readLearningLog", async () => {
+    assert.equal(typeof getLearningEntries, "function");
   });
 });
