@@ -241,12 +241,12 @@ test("prepareExecuteAction returns the next execute issue with a launch prompt w
   assert.match(preview.prompt, /start Codex/i);
   assert.match(preview.prompt, /Cross-device handoff is the current continuity source/i);
   assert.match(preview.prompt, /Session continuity snapshot/i);
-  assert.deepEqual(preview.trust.items, [
-    "Queue source: explicit mode:execute issue",
-    "Assigned profile: Backend specialist",
-    "Continuity anchor: codex-pixel-agent | Backend | Keep execute runs aligned with the active ops-room mission.",
-    "Live signal: Evaluating queue trust signals (thread | 1 min ago)"
-  ]);
+  // trust.items now includes dynamic learning signals — check the static items are present
+  assert.ok(preview.trust.items.includes("Queue source: explicit mode:execute issue"), "queue source signal present");
+  assert.ok(preview.trust.items.includes("Assigned profile: Backend specialist"), "specialist signal present");
+  assert.ok(preview.trust.items.some((s) => s.includes("Continuity anchor:")), "continuity anchor present");
+  assert.ok(preview.trust.items.some((s) => s.includes("Live signal:")), "live signal present");
+  assert.ok(preview.trust.items.length <= 6, "trust items capped at 6");
 });
 
 test("prepareExecuteAction returns awaiting_approval when issue has mode:execute but no status:approved", async () => {

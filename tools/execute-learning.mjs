@@ -164,3 +164,125 @@ export async function getLearningContext({ limit = 5 } = {}) {
   const entries = await readLearningLog();
   return formatLearningContext(entries, { limit });
 }
+
+// ─── Trust signals ────────────────────────────────────────────────────────────
+
+/**
+ * Hitung sinyal kepercayaan dari learning entries untuk ditampilkan di UI.
+ *
+ * @param entries    — semua learning entries
+ * @param profileId  — "frontend" | "backend" | "general" | ...
+ * @param issueNumber — nomor issue yang sedang diproses (null untuk direct task)
+ *
+ * Return: array of signal strings (max 4), atau [] kalau belum ada data.
+ */
+export function computeTrustSignals(entries = [], { profileId = "general", issueNumber = null } = {}) {
+  const signals = [];
+  const allEntries = Array.isArray(entries) ? entries : [];
+
+  // Signal 1: success rate untuk profile type ini (10 run terakhir)
+  const profileEntries = allEntries.filter((e) => e.profileId === profileId).slice(-10);
+  if (profileEntries.length >= 2) {
+    const completed = profileEntries.filter((e) => e.outcome === "completed").length;
+    const pct = Math.round((completed / profileEntries.length) * 100);
+    signals.push(`${profileId} tasks: ${completed}/${profileEntries.length} completed (${pct}%)`);
+  }
+
+  // Signal 2: runtime terbaik untuk profile ini (kalau ada cukup data)
+  const runtimeStats = {};
+  for (const e of profileEntries) {
+    if (!e.runtimeId) continue;
+    if (!runtimeStats[e.runtimeId]) runtimeStats[e.runtimeId] = { ok: 0, total: 0 };
+    runtimeStats[e.runtimeId].total++;
+    if (e.outcome === "completed") runtimeStats[e.runtimeId].ok++;
+  }
+  const bestEntry = Object.entries(runtimeStats)
+    .filter(([, s]) => s.total >= 2)
+    .sort(([, a], [, b]) => b.ok / b.total - a.ok / a.total)[0];
+  if (bestEntry) {
+    const [runtimeId, stats] = bestEntry;
+    signals.push(`best runtime for ${profileId}: ${runtimeId} (${stats.ok}/${stats.total} ok)`);
+  }
+
+  // Signal 3: riwayat issue yang sama (kalau ada issueNumber)
+  if (issueNumber != null) {
+    const issueEntries = allEntries.filter((e) => e.issueNumber === issueNumber);
+    if (issueEntries.length > 0) {
+      const last = issueEntries[issueEntries.length - 1];
+      const recordedAt = last.recordedAt ? new Date(last.recordedAt).getTime() : null;
+      const daysAgo = recordedAt ? Math.round((Date.now() - recordedAt) / 86_400_000) : null;
+      const when = daysAgo === null ? "unknown" : daysAgo === 0 ? "today" : `${daysAgo}d ago`;
+      signals.push(`issue #${issueNumber}: last attempt ${when} — ${last.outcome}`);
+    }
+  }
+
+  // Signal 4: global success rate (semua entry, max 20 terakhir)
+  const globalRecent = allEntries.slice(-20);
+  if (globalRecent.length >= 5 && profileEntries.length < 2) {
+    // Hanya tampilkan kalau signal profile tidak muncul (menghindari duplikasi)
+    const globalCompleted = globalRecent.filter((e) => e.outcome === "completed").length;
+    const globalPct = Math.round((globalCompleted / globalRecent.length) * 100);
+    signals.push(`overall: ${globalCompleted}/${globalRecent.length} tasks completed (${globalPct}%)`);
+  }
+
+  return signals.slice(0, 4);
+}
+
+// ─── Failure pattern detection ────────────────────────────────────────────────
+
+/**
+ * Deteksi pola kegagalan yang perlu diwaspadai sebelum eksekusi.
+ *
+ * Pattern 1: issue yang sama gagal 2+ kali → high risk
+ * Pattern 2: profile type failure rate tinggi (>60% dalam 5 run terakhir) → medium risk
+ *
+ * @param entries    — semua learning entries
+ * @param profileId  — profile task yang akan dijalankan
+ * @param issueNumber — nomor issue target (null untuk direct task)
+ * @param window     — berapa entry terakhir yang dianalisa untuk profile streak (default 5)
+ *
+ * Return: { hasWarning, riskLevel: "low"|"medium"|"high", patterns: [{type, severity, message}] }
+ */
+export function detectFailurePattern(entries = [], { profileId = "general", issueNumber = null, window: recentWindow = 5 } = {}) {
+  const allEntries = Array.isArray(entries) ? entries : [];
+  const patterns = [];
+
+  // Pattern 1: issue yang sama gagal berulang kali
+  if (issueNumber != null) {
+    const issueEntries = allEntries.filter((e) => e.issueNumber === issueNumber);
+    const failCount = issueEntries.filter((e) => e.outcome === "failed").length;
+    if (failCount >= 2) {
+      patterns.push({
+        type: "repeated_issue_failure",
+        severity: failCount >= 3 ? "high" : "medium",
+        message: `Issue #${issueNumber} has failed ${failCount}× — consider changing approach or runtime.`
+      });
+    }
+  }
+
+  // Pattern 2: profile type failure streak
+  const recentProfileEntries = allEntries.filter((e) => e.profileId === profileId).slice(-recentWindow);
+  if (recentProfileEntries.length >= 3) {
+    const failCount = recentProfileEntries.filter((e) => e.outcome === "failed").length;
+    const failRate = failCount / recentProfileEntries.length;
+    if (failRate >= 0.6) {
+      patterns.push({
+        type: "profile_failure_streak",
+        severity: "medium",
+        message: `${profileId} tasks failing ${Math.round(failRate * 100)}% recently — runtime or prompt may need review.`
+      });
+    }
+  }
+
+  const riskLevel = patterns.some((p) => p.severity === "high")
+    ? "high"
+    : patterns.length > 0
+      ? "medium"
+      : "low";
+
+  return {
+    hasWarning: patterns.length > 0,
+    riskLevel,
+    patterns
+  };
+}

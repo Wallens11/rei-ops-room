@@ -13,7 +13,12 @@ import {
   readExecuteContinuity,
   stripWorkspacePrefix
 } from "../server.mjs";
-import { getLearningContext } from "./execute-learning.mjs";
+import {
+  computeTrustSignals,
+  detectFailurePattern,
+  formatLearningContext,
+  readLearningLog
+} from "./execute-learning.mjs";
 
 const execFileAsync = promisify(execFile);
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -372,7 +377,14 @@ function buildContinuityAnchor(continuity = null) {
   return fragments.length > 0 ? fragments.join(" | ") : null;
 }
 
-function buildExecuteTrust({ roadmap = null, skillProfile = null, designProfile = null, continuity = null } = {}) {
+function buildExecuteTrust({
+  roadmap = null,
+  skillProfile = null,
+  designProfile = null,
+  continuity = null,
+  learningSignals = [],
+  failurePattern = null
+} = {}) {
   const items = [];
 
   items.push(
@@ -398,12 +410,24 @@ function buildExecuteTrust({ roadmap = null, skillProfile = null, designProfile 
     items.push(`Design authority: ${formatDesignProfileLabel(designProfile)}`);
   }
 
+  // Inject learning signals — sinyal dari histori run nyata
+  for (const signal of (learningSignals || [])) {
+    items.push(signal);
+  }
+
+  // Failure pattern warning — muncul sebagai item tersendiri kalau ada
+  if (failurePattern?.hasWarning && failurePattern.patterns?.length > 0) {
+    const topPattern = failurePattern.patterns[0];
+    items.push(`⚠️ ${topPattern.message}`);
+  }
+
   return {
     queueSource: roadmap?.number ? "roadmap" : "explicit",
     specialist: skillProfile?.label || null,
     designAuthority: designProfile && skillProfile?.id === "frontend" ? formatDesignProfileLabel(designProfile) : null,
     continuitySummary: continuity?.summary || null,
-    items: items.slice(0, 4)
+    riskLevel: failurePattern?.riskLevel || "low",
+    items: items.slice(0, 6)
   };
 }
 
@@ -954,8 +978,9 @@ export async function prepareExecuteAction({
   const designProfile = readRepoDesignProfile(cwd);
   const resolvedContinuity = continuity || (await readExecuteContinuity().catch(() => null));
 
-  // Fetch learning context sekali — di-share ke semua buildExecutePrompt calls di bawah
-  const learningContext = await getLearningContext({ limit: 5 }).catch(() => null);
+  // Fetch learning entries sekali — dipakai untuk prompt context, trust signals, dan failure detection
+  const learningEntries = await readLearningLog().catch(() => []);
+  const learningContext = formatLearningContext(learningEntries, { limit: 5 });
   const target = selectExecuteTarget(payload);
 
   if (!target?.issue) {
@@ -997,11 +1022,15 @@ export async function prepareExecuteAction({
           designProfile
         });
 
+      const learningSignals = computeTrustSignals(learningEntries, { profileId: skillProfile?.id, issueNumber: issue?.number });
+      const failurePattern = detectFailurePattern(learningEntries, { profileId: skillProfile?.id, issueNumber: issue?.number });
       const trust = buildExecuteTrust({
         roadmap: roadmapTarget.roadmap,
         skillProfile,
         designProfile,
-        continuity: resolvedContinuity
+        continuity: resolvedContinuity,
+        learningSignals,
+        failurePattern
       });
 
       return {
@@ -1050,10 +1079,14 @@ export async function prepareExecuteAction({
           designProfile
         });
 
+        const learningSignals = computeTrustSignals(learningEntries, { profileId: skillProfile?.id, issueNumber: fullIssue?.number });
+        const failurePattern = detectFailurePattern(learningEntries, { profileId: skillProfile?.id, issueNumber: fullIssue?.number });
         const trust = buildExecuteTrust({
           skillProfile,
           designProfile,
-          continuity: resolvedContinuity
+          continuity: resolvedContinuity,
+          learningSignals,
+          failurePattern
         });
 
         return {
@@ -1110,7 +1143,9 @@ export async function prepareExecuteAction({
       trust: buildExecuteTrust({
         skillProfile,
         designProfile,
-        continuity: resolvedContinuity
+        continuity: resolvedContinuity,
+        learningSignals: computeTrustSignals(learningEntries, { profileId: skillProfile?.id, issueNumber: issue?.number }),
+        failurePattern: detectFailurePattern(learningEntries, { profileId: skillProfile?.id, issueNumber: issue?.number })
       }),
       detail: `Issue #${target.issue.number} has mode:execute but needs explicit approval before running. Use /api/github/issues/${target.issue.number}/approve to approve.`
     };
@@ -1126,10 +1161,14 @@ export async function prepareExecuteAction({
     designProfile
   });
 
+  const learningSignals = computeTrustSignals(learningEntries, { profileId: skillProfile?.id, issueNumber: issue?.number });
+  const failurePattern = detectFailurePattern(learningEntries, { profileId: skillProfile?.id, issueNumber: issue?.number });
   const trust = buildExecuteTrust({
     skillProfile,
     designProfile,
-    continuity: resolvedContinuity
+    continuity: resolvedContinuity,
+    learningSignals,
+    failurePattern
   });
 
   return {
@@ -1146,6 +1185,7 @@ export async function prepareExecuteAction({
     handoff: resolvedHandoff,
     continuity: resolvedContinuity,
     trust,
+    riskLevel: failurePattern.riskLevel,
     detail: buildExecutePreviewDetail(target.issue, skillProfile, { designProfile })
   };
 }

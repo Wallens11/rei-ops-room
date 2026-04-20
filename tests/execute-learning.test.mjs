@@ -5,6 +5,8 @@ import os from "node:os";
 import path from "node:path";
 
 import {
+  computeTrustSignals,
+  detectFailurePattern,
   extractKeySummary,
   formatLearningContext,
   getLearningEntries,
@@ -254,5 +256,150 @@ describe("recordRunInsight menyimpan profileId", () => {
 
   it("getLearningEntries adalah alias readLearningLog", async () => {
     assert.equal(typeof getLearningEntries, "function");
+  });
+});
+
+// ─── computeTrustSignals ──────────────────────────────────────────────────────
+
+describe("computeTrustSignals", () => {
+  const makeEntries = (overrides = []) => overrides.map((o) => ({
+    profileId: "frontend",
+    runtimeId: "claude-code",
+    outcome: "completed",
+    issueNumber: null,
+    recordedAt: new Date().toISOString(),
+    ...o
+  }));
+
+  it("return empty array untuk entries kosong", () => {
+    assert.deepEqual(computeTrustSignals([], { profileId: "frontend" }), []);
+    assert.deepEqual(computeTrustSignals(null, { profileId: "frontend" }), []);
+  });
+
+  it("return empty array kalau belum ada cukup data profile (< 2 entries)", () => {
+    const entries = makeEntries([{ outcome: "completed" }]);
+    const signals = computeTrustSignals(entries, { profileId: "frontend" });
+    // Hanya 1 entry — tidak cukup untuk menampilkan success rate
+    assert.ok(!signals.some((s) => s.includes("1/1 completed")));
+  });
+
+  it("menampilkan success rate kalau ada >= 2 entries untuk profile", () => {
+    const entries = makeEntries([
+      { outcome: "completed" },
+      { outcome: "completed" },
+      { outcome: "failed" }
+    ]);
+    const signals = computeTrustSignals(entries, { profileId: "frontend" });
+    assert.ok(signals.some((s) => s.includes("frontend tasks:")));
+    assert.ok(signals.some((s) => s.includes("2/3 completed")));
+  });
+
+  it("menampilkan best runtime kalau ada >= 2 entries untuk runtime tersebut", () => {
+    const entries = makeEntries([
+      { runtimeId: "codex", outcome: "completed" },
+      { runtimeId: "codex", outcome: "completed" },
+      { runtimeId: "claude-code", outcome: "failed" },
+      { runtimeId: "claude-code", outcome: "failed" }
+    ]);
+    const signals = computeTrustSignals(entries, { profileId: "frontend" });
+    assert.ok(signals.some((s) => s.includes("best runtime") && s.includes("codex")));
+  });
+
+  it("menampilkan riwayat issue kalau issueNumber diberikan", () => {
+    const entries = makeEntries([{ issueNumber: 42, outcome: "completed" }]);
+    const signals = computeTrustSignals(entries, { profileId: "frontend", issueNumber: 42 });
+    assert.ok(signals.some((s) => s.includes("#42") && s.includes("completed")));
+  });
+
+  it("tidak menampilkan riwayat issue kalau issueNumber tidak cocok", () => {
+    const entries = makeEntries([{ issueNumber: 99, outcome: "completed" }]);
+    const signals = computeTrustSignals(entries, { profileId: "frontend", issueNumber: 42 });
+    assert.ok(!signals.some((s) => s.includes("#42")));
+  });
+
+  it("max 4 signals dikembalikan", () => {
+    const entries = makeEntries([
+      { outcome: "completed" },
+      { outcome: "completed" },
+      { runtimeId: "codex", outcome: "completed" },
+      { runtimeId: "codex", outcome: "completed" },
+      { issueNumber: 1, outcome: "completed" }
+    ]);
+    const signals = computeTrustSignals(entries, { profileId: "frontend", issueNumber: 1 });
+    assert.ok(signals.length <= 4);
+  });
+});
+
+// ─── detectFailurePattern ─────────────────────────────────────────────────────
+
+describe("detectFailurePattern", () => {
+  const makeEntries = (overrides = []) => overrides.map((o) => ({
+    profileId: "backend",
+    runtimeId: "codex",
+    outcome: "completed",
+    issueNumber: null,
+    ...o
+  }));
+
+  it("return low risk kalau tidak ada kegagalan", () => {
+    const entries = makeEntries([
+      { outcome: "completed" },
+      { outcome: "completed" },
+      { outcome: "completed" }
+    ]);
+    const result = detectFailurePattern(entries, { profileId: "backend" });
+    assert.equal(result.hasWarning, false);
+    assert.equal(result.riskLevel, "low");
+    assert.deepEqual(result.patterns, []);
+  });
+
+  it("deteksi repeated_issue_failure kalau issue yang sama gagal 2+ kali", () => {
+    const entries = makeEntries([
+      { issueNumber: 10, outcome: "failed" },
+      { issueNumber: 10, outcome: "failed" }
+    ]);
+    const result = detectFailurePattern(entries, { profileId: "backend", issueNumber: 10 });
+    assert.equal(result.hasWarning, true);
+    assert.ok(result.riskLevel === "medium" || result.riskLevel === "high");
+    assert.ok(result.patterns.some((p) => p.type === "repeated_issue_failure"));
+  });
+
+  it("severity high kalau issue yang sama gagal 3+ kali", () => {
+    const entries = makeEntries([
+      { issueNumber: 10, outcome: "failed" },
+      { issueNumber: 10, outcome: "failed" },
+      { issueNumber: 10, outcome: "failed" }
+    ]);
+    const result = detectFailurePattern(entries, { profileId: "backend", issueNumber: 10 });
+    assert.equal(result.riskLevel, "high");
+    assert.ok(result.patterns.some((p) => p.severity === "high"));
+  });
+
+  it("deteksi profile_failure_streak kalau >60% gagal dalam 5 run terakhir", () => {
+    const entries = makeEntries([
+      { outcome: "failed" },
+      { outcome: "failed" },
+      { outcome: "failed" },
+      { outcome: "completed" }
+    ]);
+    const result = detectFailurePattern(entries, { profileId: "backend" });
+    assert.equal(result.hasWarning, true);
+    assert.ok(result.patterns.some((p) => p.type === "profile_failure_streak"));
+  });
+
+  it("tidak trigger streak kalau failure rate < 60%", () => {
+    const entries = makeEntries([
+      { outcome: "failed" },
+      { outcome: "completed" },
+      { outcome: "completed" }
+    ]);
+    const result = detectFailurePattern(entries, { profileId: "backend" });
+    assert.ok(!result.patterns.some((p) => p.type === "profile_failure_streak"));
+  });
+
+  it("return low risk untuk input kosong", () => {
+    const result = detectFailurePattern([], { profileId: "backend" });
+    assert.equal(result.hasWarning, false);
+    assert.equal(result.riskLevel, "low");
   });
 });
