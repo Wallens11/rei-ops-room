@@ -32,13 +32,14 @@ import {
   unregisterWorker,
   updateWorkerActivity
 } from "./execute-queue.mjs";
-import { recordRunInsight } from "./execute-learning.mjs";
+import { getLearningEntries, recordRunInsight } from "./execute-learning.mjs";
 import {
   buildRuntimeStartupSummary,
   getRuntime,
   loadRuntimePreferences,
   probeAvailableRuntimes,
-  resolveRuntimeOrder
+  resolveRuntimeOrder,
+  selectRuntimeAdaptive
 } from "./runtimes/index.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -512,6 +513,7 @@ async function runDirectTask({
     issueNumber: null,
     taskTitle: task.task,
     runtimeId,
+    profileId: "general", // direct tasks selalu general — tidak ada issue context untuk infer profile
     outcome: status,
     filesChanged: [],
     lastMessage
@@ -592,13 +594,18 @@ export async function executeNextIssue({
   const runtimeConfig = await loadRuntimeConfig({
     cwd
   });
+  const available = Array.isArray(availableRuntimes) && availableRuntimes.length > 0 ? availableRuntimes : ["codex"];
+  // Adaptive selection: prefer runtime dengan success rate lebih tinggi untuk profile ini.
+  // Fallback ke preference order biasa kalau belum cukup learning data.
+  const learningEntries = await getLearningEntries().catch(() => []);
+  const initialRuntimeId = selectRuntimeAdaptive(profileId, available, learningEntries, runtimeConfig.preferences);
+  const initialRuntimeLabel = getRuntime(initialRuntimeId).RUNTIME_LABEL;
+  // Full ordered list untuk fallback sequence saat rate-limit
   const runtimePlan = resolveRuntimeOrder({
     taskType: profileId,
     preferences: runtimeConfig.preferences,
-    availableRuntimeIds: Array.isArray(availableRuntimes) && availableRuntimes.length > 0 ? availableRuntimes : ["codex"]
+    availableRuntimeIds: available
   });
-  const initialRuntimeId = runtimePlan[0] || "codex";
-  const initialRuntimeLabel = getRuntime(initialRuntimeId).RUNTIME_LABEL;
 
   if (preview.target.status !== "in_progress") {
     await transitionIssueToInProgress({

@@ -1880,7 +1880,8 @@ export function createServer({
         const entry = await enqueueTask({
           task,
           context: body?.context || null,
-          runtimeId: body?.runtimeId || null
+          runtimeId: body?.runtimeId || null,
+          priority: body?.priority ?? 0
         });
 
         // Bangunkan worker kalau sedang sleep — supaya task langsung diproses,

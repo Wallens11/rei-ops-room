@@ -132,10 +132,11 @@ async function saveQueue(tasks) {
  * @param task      — deskripsi task (required)
  * @param context   — konteks tambahan (optional, misal "ini untuk repo X")
  * @param runtimeId — override runtime: "codex" | "claude-code" | null (auto-select)
+ * @param priority  — angka prioritas: lebih tinggi = dijalankan lebih dulu (default 0)
  *
  * Return: task entry yang baru dibuat.
  */
-export async function enqueueTask({ task, context = null, runtimeId = null } = {}) {
+export async function enqueueTask({ task, context = null, runtimeId = null, priority = 0 } = {}) {
   const tasks = await readQueue();
 
   const entry = {
@@ -143,6 +144,7 @@ export async function enqueueTask({ task, context = null, runtimeId = null } = {
     task: String(task || "").trim(),
     context: context ? String(context).trim() : null,
     runtimeId: runtimeId || null,
+    priority: Number.isFinite(Number(priority)) ? Number(priority) : 0,
     submittedAt: new Date().toISOString(),
     status: "queued",
     startedAt: null,
@@ -168,13 +170,22 @@ export async function claimNextQueuedTask() {
   return withQueueLock(async () => {
     const tasks = await readQueue();
     const now = Date.now();
-    const next = tasks.find(
+    const eligible = tasks.filter(
       (t) => t.status === "queued" &&
         (!t.retryAfter || new Date(t.retryAfter).getTime() <= now)
     );
 
-    if (!next) return null;
+    if (eligible.length === 0) return null;
 
+    // Sort: priority desc (lebih tinggi dijalankan dulu), lalu submittedAt asc (FIFO tiebreak)
+    eligible.sort((a, b) => {
+      const pa = Number(a.priority) || 0;
+      const pb = Number(b.priority) || 0;
+      if (pb !== pa) return pb - pa;
+      return new Date(a.submittedAt).getTime() - new Date(b.submittedAt).getTime();
+    });
+
+    const next = eligible[0];
     next.status = "in_progress";
     next.startedAt = new Date().toISOString();
     await saveQueue(tasks);

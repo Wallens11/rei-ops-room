@@ -856,3 +856,105 @@ describe("execute-queue: removeQueueTask", async () => {
     assert.equal(result.reason, "in_progress");
   });
 });
+
+// ─── Queue priority ───────────────────────────────────────────────────────────
+
+describe("execute-queue: task priority", async () => {
+  let tmpPrioDir;
+
+  before(async () => {
+    tmpPrioDir = await fs.mkdtemp(path.join(os.tmpdir(), "rei-prio-test-"));
+  });
+
+  after(async () => {
+    await fs.rm(tmpPrioDir, { recursive: true, force: true }).catch(() => {});
+  });
+
+  // Buat isolated queue yang support priority
+  async function makePrioQueue(dir) {
+    const qFile = path.join(dir, ".execute-queue.json");
+    const readQ = async () => {
+      try { return JSON.parse(await fs.readFile(qFile, "utf8")).tasks ?? []; }
+      catch (e) { if (e?.code === "ENOENT") return []; throw e; }
+    };
+    const saveQ = async (tasks) => fs.writeFile(qFile, JSON.stringify({ tasks }, null, 2), "utf8");
+
+    const enqueue = async ({ task, priority = 0 }) => {
+      const tasks = await readQ();
+      const entry = {
+        id: crypto.randomUUID(), task, priority: Number(priority) || 0,
+        submittedAt: new Date().toISOString(), status: "queued",
+        startedAt: null, finishedAt: null, result: null, retryCount: 0, maxRetries: 2, retryAfter: null
+      };
+      tasks.push(entry);
+      await saveQ(tasks);
+      return entry;
+    };
+
+    const claim = async () => {
+      const tasks = await readQ();
+      const now = Date.now();
+      const eligible = tasks.filter(t => t.status === "queued" && (!t.retryAfter || new Date(t.retryAfter).getTime() <= now));
+      if (!eligible.length) return null;
+      eligible.sort((a, b) => {
+        const pa = Number(a.priority) || 0, pb = Number(b.priority) || 0;
+        if (pb !== pa) return pb - pa;
+        return new Date(a.submittedAt).getTime() - new Date(b.submittedAt).getTime();
+      });
+      const next = eligible[0];
+      next.status = "in_progress";
+      next.startedAt = new Date().toISOString();
+      await saveQ(tasks);
+      return next;
+    };
+
+    return { enqueue, claim, readQ };
+  }
+
+  it("enqueueTask menyimpan field priority", async () => {
+    const q = await makePrioQueue(path.join(tmpPrioDir, "t1"));
+    await fs.mkdir(path.join(tmpPrioDir, "t1"), { recursive: true });
+    const entry = await q.enqueue({ task: "high prio task", priority: 10 });
+    assert.equal(entry.priority, 10);
+  });
+
+  it("claimNextQueuedTask mengambil task dengan priority tertinggi duluan", async () => {
+    const dir = path.join(tmpPrioDir, "t2");
+    await fs.mkdir(dir, { recursive: true });
+    const q = await makePrioQueue(dir);
+
+    await q.enqueue({ task: "low prio", priority: 0 });
+    await q.enqueue({ task: "high prio", priority: 5 });
+    await q.enqueue({ task: "mid prio", priority: 2 });
+
+    const first = await q.claim();
+    assert.equal(first?.task, "high prio");
+
+    const second = await q.claim();
+    assert.equal(second?.task, "mid prio");
+
+    const third = await q.claim();
+    assert.equal(third?.task, "low prio");
+  });
+
+  it("same priority → FIFO tiebreak (submitted lebih awal dijalankan dulu)", async () => {
+    const dir = path.join(tmpPrioDir, "t3");
+    await fs.mkdir(dir, { recursive: true });
+    const q = await makePrioQueue(dir);
+
+    await q.enqueue({ task: "first submitted", priority: 1 });
+    await new Promise(r => setTimeout(r, 5)); // small delay biar submittedAt beda
+    await q.enqueue({ task: "second submitted", priority: 1 });
+
+    const first = await q.claim();
+    assert.equal(first?.task, "first submitted");
+  });
+
+  it("priority default 0 kalau tidak disediakan", async () => {
+    const dir = path.join(tmpPrioDir, "t4");
+    await fs.mkdir(dir, { recursive: true });
+    const q = await makePrioQueue(dir);
+    const entry = await q.enqueue({ task: "no priority given" });
+    assert.equal(entry.priority, 0);
+  });
+});
