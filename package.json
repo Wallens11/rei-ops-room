@@ -15,6 +15,7 @@
     "report-only-worker": "node tools/report-only-worker.mjs",
     "report-only-service": "node tools/report-only-worker-cli.mjs",
     "execute-worker": "node tools/execute-worker.mjs",
-    "execute-service": "node tools/execute-worker-cli.mjs"
+    "execute-service": "node tools/execute-worker-cli.mjs",
+    "setup": "node setup.mjs"
   }
 }

@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 
 import {
   buildExecutePrompt,
+  extractNewHumanComments,
   selectExecuteSkillProfile,
   prepareExecuteAction,
   readRepoDesignProfile,
@@ -752,4 +753,104 @@ test("approveExecuteIssue adds status:approved and mode:execute labels", async (
   assert.ok(addIdx >= 0, "should have --add-label flag");
   const addValue = ghArgs[addIdx + 1] || "";
   assert.ok(addValue.includes("status:approved"), `--add-label should include status:approved, got: ${addValue}`);
+});
+
+// ─── extractNewHumanComments ─────────────────────────────────────────────────
+
+const REI_STARTED = "<!-- rei:execute issue=10 state=started -->";
+const REI_DONE    = "<!-- rei:execute issue=10 state=completed -->";
+
+test("extractNewHumanComments: returns [] for empty comments", () => {
+  assert.deepEqual(extractNewHumanComments([]), []);
+  assert.deepEqual(extractNewHumanComments(null), []);
+});
+
+test("extractNewHumanComments: returns [] when no rei:execute marker (fresh issue)", () => {
+  const comments = [
+    { body: "Hey can you fix this?", createdAt: "2026-04-20T10:00:00Z", author: { login: "raffi" } }
+  ];
+  // No rei:execute state=started → fresh issue, no re-prompt needed
+  assert.deepEqual(extractNewHumanComments(comments, 10), []);
+});
+
+test("extractNewHumanComments: returns [] when all new comments are from Rei", () => {
+  const comments = [
+    { body: `${REI_STARTED}\nRei picked up issue.`, createdAt: "2026-04-20T10:00:00Z" },
+    { body: `${REI_DONE}\nRei finished.`,           createdAt: "2026-04-20T11:00:00Z" }
+  ];
+  assert.deepEqual(extractNewHumanComments(comments, 10), []);
+});
+
+test("extractNewHumanComments: returns human comments after last rei:execute state=started", () => {
+  const comments = [
+    { body: `${REI_STARTED}\nStarting.`,              createdAt: "2026-04-20T10:00:00Z" },
+    { body: "Please also fix the header",             createdAt: "2026-04-20T10:30:00Z", author: { login: "raffi" } },
+    { body: "And the footer too",                     createdAt: "2026-04-20T10:45:00Z", author: { login: "raffi" } }
+  ];
+  const result = extractNewHumanComments(comments, 10);
+  assert.equal(result.length, 2);
+  assert.ok(result[0].body.includes("header"));
+  assert.ok(result[1].body.includes("footer"));
+});
+
+test("extractNewHumanComments: does NOT return comments before the last run started", () => {
+  const comments = [
+    { body: "Old comment before run",                 createdAt: "2026-04-19T09:00:00Z", author: { login: "raffi" } },
+    { body: `${REI_STARTED}\nStarting.`,              createdAt: "2026-04-20T10:00:00Z" },
+    { body: "New comment after run",                  createdAt: "2026-04-20T11:00:00Z", author: { login: "raffi" } }
+  ];
+  const result = extractNewHumanComments(comments, 10);
+  assert.equal(result.length, 1);
+  assert.ok(result[0].body.includes("New comment"));
+});
+
+test("extractNewHumanComments: uses latest rei run timestamp when multiple runs", () => {
+  const comments = [
+    { body: `${REI_STARTED}\nFirst run.`,   createdAt: "2026-04-19T10:00:00Z" },
+    { body: "Comment after first run",      createdAt: "2026-04-19T11:00:00Z", author: { login: "raffi" } },
+    { body: `${REI_STARTED}\nSecond run.`,  createdAt: "2026-04-20T10:00:00Z" },
+    { body: "Comment after second run",     createdAt: "2026-04-20T11:00:00Z", author: { login: "raffi" } }
+  ];
+  const result = extractNewHumanComments(comments, 10);
+  // Only comment after SECOND (latest) run
+  assert.equal(result.length, 1);
+  assert.ok(result[0].body.includes("second run"));
+});
+
+test("extractNewHumanComments: skips comments with missing createdAt", () => {
+  const comments = [
+    { body: `${REI_STARTED}\nStarting.`, createdAt: "2026-04-20T10:00:00Z" },
+    { body: "No timestamp here",         author: { login: "raffi" } },
+    { body: "Has timestamp",             createdAt: "2026-04-20T11:00:00Z", author: { login: "raffi" } }
+  ];
+  const result = extractNewHumanComments(comments, 10);
+  assert.equal(result.length, 1);
+  assert.ok(result[0].body.includes("Has timestamp"));
+});
+
+test("buildExecutePrompt injects human comments when provided", () => {
+  const humanComments = [
+    { body: "Please use TypeScript not JavaScript", author: { login: "raffi" }, createdAt: "2026-04-20T11:00:00Z" }
+  ];
+  const prompt = buildExecutePrompt({
+    repo: "owner/repo",
+    repoCwd: "/repo",
+    issue: { number: 10, title: "Refactor auth", body: "Fix the auth module", labels: [], url: "https://github.com/owner/repo/issues/10" },
+    handoff: { date: "2026-04-20", sections: [] },
+    humanComments
+  });
+  assert.ok(prompt.includes("⚡ Human corrections"), "should include human corrections header");
+  assert.ok(prompt.includes("TypeScript not JavaScript"), "should include the comment body");
+  assert.ok(prompt.includes("@raffi"), "should include the author");
+  assert.ok(prompt.includes("Incorporate these corrections"), "should include the action directive");
+});
+
+test("buildExecutePrompt with no human comments has no corrections section", () => {
+  const prompt = buildExecutePrompt({
+    repo: "owner/repo",
+    repoCwd: "/repo",
+    issue: { number: 10, title: "Fix bug", body: "Details", labels: [], url: "" },
+    handoff: { date: "2026-04-20", sections: [] }
+  });
+  assert.ok(!prompt.includes("⚡ Human corrections"), "should NOT include corrections header when no comments");
 });

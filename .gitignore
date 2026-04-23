@@ -13,3 +13,4 @@ node_modules/
 .execute-wake.trigger
 .execute-queue.lock
 .DS_Store
+rei.config.json

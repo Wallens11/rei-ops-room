@@ -820,6 +820,46 @@ export function selectExecuteTarget(payload = {}, { nowMs = Date.now() } = {}) {
   return null;
 }
 
+/**
+ * Ekstrak komentar manusia yang ditulis SETELAH run Rei terakhir dimulai.
+ *
+ * Dipakai untuk "comment re-prompting": kalau issue in_progress dan ada komentar
+ * baru dari manusia (bukan dari Rei), komentar itu di-inject ke prompt supaya
+ * Rei bisa course-correct tanpa harus stop/restart worker.
+ *
+ * @param comments    — array komentar dari GitHub issue (field: body, createdAt, author)
+ * @param issueNumber — nomor issue (opsional, tidak dipakai secara fungsional)
+ *
+ * Return: array komentar manusia baru, atau [] kalau belum ada run sebelumnya.
+ */
+export function extractNewHumanComments(comments = [], issueNumber = null) {
+  const all = Array.isArray(comments) ? comments : [];
+
+  // Cari timestamp komentar Rei terakhir dengan state=started
+  const startedRe = /<!--\s*rei:execute\s+issue=\d+\s+state=started\s*-->/;
+  let lastReiRunMs = null;
+
+  for (const comment of all) {
+    if (!startedRe.test(String(comment?.body || ""))) continue;
+    const t = comment?.createdAt ? Date.parse(String(comment.createdAt)) : NaN;
+    if (Number.isFinite(t) && (lastReiRunMs === null || t > lastReiRunMs)) {
+      lastReiRunMs = t;
+    }
+  }
+
+  // Belum pernah ada run — fresh start, tidak perlu re-prompt
+  if (lastReiRunMs === null) return [];
+
+  // Komentar setelah last started yang bukan dari Rei sendiri
+  const reiMarkerRe = /<!--\s*rei:execute/;
+  return all.filter((comment) => {
+    const body = String(comment?.body || "");
+    if (reiMarkerRe.test(body)) return false; // skip komentar Rei
+    const t = comment?.createdAt ? Date.parse(String(comment.createdAt)) : NaN;
+    return Number.isFinite(t) && t > lastReiRunMs;
+  });
+}
+
 export function buildExecutePrompt({
   repo,
   repoCwd,
@@ -827,7 +867,8 @@ export function buildExecutePrompt({
   handoff,
   learningContext = null,
   continuity = null,
-  designProfile = readRepoDesignProfile(repoCwd)
+  designProfile = readRepoDesignProfile(repoCwd),
+  humanComments = []
 }) {
   const issueBody = String(issue?.body || "").trim() || "No issue body provided.";
   const repoLabel = stripWorkspacePrefix(repoCwd) || repoCwd;
@@ -838,6 +879,20 @@ export function buildExecutePrompt({
     skillProfile.skills.length > 0
       ? skillProfile.skills.map((skill) => `- ${skill.label}: ${skill.path}`).join("\n")
       : "- No specialized skills were matched.";
+
+  const newComments = Array.isArray(humanComments) ? humanComments : [];
+  const humanCommentLines = newComments.length > 0
+    ? [
+        "",
+        `⚡ Human corrections since last run (${newComments.length} new comment${newComments.length > 1 ? "s" : ""}):`,
+        ...newComments.slice(0, 5).map((c) => {
+          const author = c?.author?.login || String(c?.author || "human");
+          const body = String(c?.body || "").trim().slice(0, 500);
+          return `- @${author}: ${body}`;
+        }),
+        "→ Incorporate these corrections before continuing."
+      ]
+    : [];
 
   return [
     `You are handling GitHub issue #${issue.number} in repo ${repo}.`,
@@ -862,7 +917,6 @@ export function buildExecutePrompt({
     "",
     `Latest handoff (${handoff?.date || "no date"}):`,
     summarizeHandoff(handoff),
-    // 3: surface next_focus_zone dan blockers secara eksplisit kalau ada
     handoff?.next_focus_zone
       ? `\nOperator-specified next focus zone: ${handoff.next_focus_zone} — lean toward this area unless the issue clearly overrides it.`
       : null,
@@ -873,6 +927,7 @@ export function buildExecutePrompt({
     ...continuityLines,
     designGuidanceLines.length > 0 ? "" : null,
     ...designGuidanceLines,
+    ...humanCommentLines,
     "",
     "Execution rules:",
     "- Inspect the repository and issue history before changing code.",
@@ -1019,7 +1074,8 @@ export async function prepareExecuteAction({
           handoff: resolvedHandoff,
           learningContext,
           continuity: resolvedContinuity,
-          designProfile
+          designProfile,
+          humanComments: extractNewHumanComments(issue?.comments || [], issue?.number)
         });
 
       const learningSignals = computeTrustSignals(learningEntries, { profileId: skillProfile?.id, issueNumber: issue?.number });
@@ -1076,7 +1132,8 @@ export async function prepareExecuteAction({
           handoff: resolvedHandoff,
           learningContext,
           continuity: resolvedContinuity,
-          designProfile
+          designProfile,
+          humanComments: extractNewHumanComments(fullIssue?.comments || [], fullIssue?.number)
         });
 
         const learningSignals = computeTrustSignals(learningEntries, { profileId: skillProfile?.id, issueNumber: fullIssue?.number });
@@ -1158,7 +1215,8 @@ export async function prepareExecuteAction({
     handoff: resolvedHandoff,
     learningContext,
     continuity: resolvedContinuity,
-    designProfile
+    designProfile,
+    humanComments: extractNewHumanComments(issue?.comments || [], issue?.number)
   });
 
   const learningSignals = computeTrustSignals(learningEntries, { profileId: skillProfile?.id, issueNumber: issue?.number });

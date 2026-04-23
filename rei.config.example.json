@@ -1,0 +1,11 @@
+{
+  "_comment": "Copy this file to rei.config.json and fill in your values. rei.config.json is gitignored.",
+  "repo": "owner/your-repo",
+  "workspacePath": "/path/to/your/workspace",
+  "port": 4317,
+  "codexHome": null,
+  "codexBin": null,
+  "claudeBin": null,
+  "dailyHandoffPath": null,
+  "githubWebhookSecret": ""
+}
