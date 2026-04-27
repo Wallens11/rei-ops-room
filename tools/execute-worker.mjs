@@ -33,6 +33,7 @@ import {
   updateWorkerActivity
 } from "./execute-queue.mjs";
 import { getLearningEntries, recordRunInsight } from "./execute-learning.mjs";
+import { clearSessionPin, readSessionPin, writeSessionPin } from "./execute-sessions.mjs";
 import {
   buildRuntimeStartupSummary,
   getRuntime,
@@ -312,12 +313,66 @@ export function detectRateLimitFailure({
   return RATE_LIMIT_ERROR_PATTERN.test([stdoutText, stderrText, lastMessage].join("\n"));
 }
 
+/**
+ * Parse JSONL output dari claude-code --output-format stream-json.
+ * Ekstrak session_id dan teks output terakhir dari stream events.
+ *
+ * Format event yang relevan:
+ *   {"type":"system","subtype":"init","session_id":"..."}
+ *   {"type":"assistant","message":{"content":[{"type":"text","text":"..."}]}}
+ *   {"type":"result","subtype":"success","session_id":"...","result":"..."}
+ *
+ * Kalau line tidak valid JSON (misal: output format lama) → dikembalikan sebagai teks biasa.
+ */
+export function parseStreamJsonOutput(text = "") {
+  let sessionId = null;
+  let lastText = "";
+  let hasJsonLines = false;
+
+  for (const line of String(text || "").split("\n")) {
+    const trimmed = line.trim();
+    if (!trimmed) continue;
+
+    try {
+      const event = JSON.parse(trimmed);
+      hasJsonLines = true;
+
+      // Ambil session_id dari event apapun yang punya field itu
+      if (event.session_id && typeof event.session_id === "string") {
+        sessionId = event.session_id;
+      }
+
+      // Teks dari assistant message blocks
+      if (event.type === "assistant" && Array.isArray(event.message?.content)) {
+        for (const block of event.message.content) {
+          if (block.type === "text" && block.text) {
+            lastText = String(block.text);
+          }
+        }
+      }
+
+      // result event: ambil result field sebagai fallback teks
+      if (event.type === "result" && event.result && !lastText) {
+        lastText = String(event.result);
+      }
+    } catch {
+      // Bukan JSON — mungkin plain text fallback atau log noise
+      if (trimmed && !hasJsonLines) {
+        lastText = trimmed;
+      }
+    }
+  }
+
+  return { sessionId, lastText: lastText.trim() };
+}
+
 async function runMission({
   runtimeId = "codex",
   repoCwd,
   prompt,
   runDir,
   signal = null,
+  resumeSessionId = null,
   onChildPid = () => {}
 } = {}) {
   await fs.mkdir(runDir, { recursive: true });
@@ -332,7 +387,8 @@ async function runMission({
   const invocation = runtime.buildInvocation({
     command: runtimeCommand,
     repoCwd,
-    outputLastMessageFile
+    outputLastMessageFile,
+    resumeSessionId: resumeSessionId || null
   });
 
   return await new Promise((resolve, reject) => {
@@ -377,10 +433,25 @@ async function runMission({
         stream.end();
         const stdoutText = Buffer.concat(stdoutChunks).toString("utf8");
         const stderrText = Buffer.concat(stderrChunks).toString("utf8");
-        const derivedLastMessage = stdoutText.trim() || stderrText.trim();
 
-        if (invocation.outputMode === "stdout" && stdoutText) {
-          await fs.writeFile(outputLastMessageFile, stdoutText, "utf8").catch(() => {});
+        // stream-json: parse JSONL untuk extract session_id dan teks akhir
+        let sessionId = null;
+        let derivedLastMessage = "";
+
+        if (invocation.outputMode === "stream-json" && stdoutText) {
+          const parsed = parseStreamJsonOutput(stdoutText);
+          sessionId = parsed.sessionId;
+          derivedLastMessage = parsed.lastText || stderrText.trim();
+          // Simpan teks yang sudah diparsing ke file (bukan raw JSONL)
+          if (derivedLastMessage) {
+            await fs.writeFile(outputLastMessageFile, `${derivedLastMessage}\n`, "utf8").catch(() => {});
+          }
+        } else {
+          // outputMode "stdout" atau lainnya — baca as-is
+          derivedLastMessage = stdoutText.trim() || stderrText.trim();
+          if (invocation.outputMode === "stdout" && stdoutText) {
+            await fs.writeFile(outputLastMessageFile, stdoutText, "utf8").catch(() => {});
+          }
         }
 
         if (derivedLastMessage) {
@@ -396,6 +467,7 @@ async function runMission({
           exitCode: Number.isInteger(exitCode) ? exitCode : exitSignal ? 1 : 0,
           signal: exitSignal || null,
           aborted,
+          sessionId,
           outputLastMessageFile,
           eventsFile,
           stdoutText,
@@ -677,9 +749,15 @@ export async function executeNextIssue({
   let activeRunDir = runDir;
   let activeRuntimeId = initialRuntimeId;
 
+  // Session pinning: kalau issue ini pernah dijalankan sebelumnya dan runtime-nya claude-code,
+  // coba resume dari session terakhir supaya konteks percakapan tidak hilang saat worker crash.
+  const pinnedSessionId = await readSessionPin(preview.target.number).catch(() => null);
+
   for (const [index, runtimeId] of runtimePlan.entries()) {
     const runtimeLabel = getRuntime(runtimeId).RUNTIME_LABEL;
     const attemptRunDir = path.join(runDir, `attempt-${String(index + 1).padStart(2, "0")}-${runtimeId}`);
+    // Hanya pakai session pin untuk attempt pertama dengan claude-code
+    const useSessionId = index === 0 && runtimeId === "claude-code" ? pinnedSessionId : null;
 
     mission = await runMissionImpl({
       runtimeId,
@@ -687,16 +765,22 @@ export async function executeNextIssue({
       prompt: preview.prompt,
       runDir: attemptRunDir,
       signal,
+      resumeSessionId: useSessionId,
       onChildPid: async (childPid) => {
         await onStateChange({
           status: "running",
           currentTarget: preview.target,
           currentChildPid: childPid,
           currentRunDir: attemptRunDir,
-          detail: `${runtimeLabel} is running issue #${preview.target.number}.`
+          detail: `${runtimeLabel} is running issue #${preview.target.number}${useSessionId ? " (resumed session)" : ""}.`
         });
       }
     });
+
+    // Simpan session_id dari run ini (claude-code only) untuk resume berikutnya
+    if (mission.sessionId && runtimeId === "claude-code") {
+      await writeSessionPin(preview.target.number, mission.sessionId, runtimeId).catch(() => {});
+    }
     lastMessage = mission.lastMessage || (await readTextIfExists(mission.outputLastMessageFile));
     activeRunDir = attemptRunDir;
     activeRuntimeId = runtimeId;
@@ -750,6 +834,9 @@ export async function executeNextIssue({
     filesChanged: newChanges,
     lastMessage
   }).catch(() => {});
+
+  // Issue selesai (apapun hasilnya) — hapus session pin supaya run berikutnya mulai fresh
+  await clearSessionPin(preview.target.number).catch(() => {});
 
   if (mission.aborted) {
     const result = {

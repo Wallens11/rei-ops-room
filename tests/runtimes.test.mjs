@@ -209,3 +209,25 @@ test("selectRuntimeAdaptive reorders by success rate when enough samples exist",
   ];
   assert.equal(selectRuntimeAdaptive("frontend", ["claude-code", "codex"], entries, prefs), "codex");
 });
+
+// ─── claude-code buildInvocation ─────────────────────────────────────────────
+
+test("claude buildInvocation includes --print and --output-format stream-json", () => {
+  const inv = claudeCode.buildInvocation({ command: "claude", repoCwd: "/repo" });
+  assert.ok(inv.args.includes("--print"), "should include --print");
+  assert.ok(inv.args.includes("--output-format"), "should include --output-format");
+  assert.ok(inv.args.includes("stream-json"), "should use stream-json format");
+  assert.equal(inv.outputMode, "stream-json");
+});
+
+test("claude buildInvocation includes --resume when resumeSessionId provided", () => {
+  const inv = claudeCode.buildInvocation({ command: "claude", repoCwd: "/repo", resumeSessionId: "sess-abc" });
+  const resumeIdx = inv.args.indexOf("--resume");
+  assert.ok(resumeIdx >= 0, "should include --resume flag");
+  assert.equal(inv.args[resumeIdx + 1], "sess-abc", "should pass session ID after --resume");
+});
+
+test("claude buildInvocation does NOT include --resume when no sessionId", () => {
+  const inv = claudeCode.buildInvocation({ command: "claude", repoCwd: "/repo" });
+  assert.ok(!inv.args.includes("--resume"), "should not include --resume when no session");
+});

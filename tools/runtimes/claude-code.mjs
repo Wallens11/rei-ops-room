@@ -29,16 +29,27 @@ export async function resolveCommand({ env = process.env, fallback = "claude" } 
 
 /**
  * Bangun invocation object untuk Claude Code CLI.
- * - outputMode "stdout": output last message dibaca dari stdout child process.
+ * - outputMode "stream-json": output di-parse sebagai JSONL untuk extract session_id.
  * - stdinMode "prompt": prompt dikirim lewat stdin.
  * - cwd: set ke repoCwd supaya Claude Code tau konteks working directory.
+ * - resumeSessionId: kalau ada, pakai --resume untuk lanjut dari session sebelumnya.
  */
-export function buildInvocation({ command, repoCwd }) {
+export function buildInvocation({ command, repoCwd, resumeSessionId = null } = {}) {
+  const args = [
+    "--print",
+    "--output-format", "stream-json",
+    "--dangerously-skip-permissions"
+  ];
+
+  if (resumeSessionId) {
+    args.push("--resume", String(resumeSessionId));
+  }
+
   return {
     command,
-    args: ["--print", "--dangerously-skip-permissions"],
+    args,
     cwd: repoCwd,
-    outputMode: "stdout",
+    outputMode: "stream-json",
     stdinMode: "prompt"
   };
 }

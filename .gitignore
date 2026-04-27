@@ -14,3 +14,4 @@ node_modules/
 .execute-queue.lock
 .DS_Store
 rei.config.json
+.execute-sessions.json
