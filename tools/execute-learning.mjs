@@ -286,3 +286,60 @@ export function detectFailurePattern(entries = [], { profileId = "general", issu
     patterns
   };
 }
+
+// ─── Dashboard metrics ────────────────────────────────────────────────────────
+
+/**
+ * Compute aggregated performance metrics from learning entries.
+ * Pure function — no file I/O, fully testable.
+ *
+ * @param entries — array from readLearningLog()
+ * @returns {{
+ *   totalRuns: number,
+ *   successRate: number,       // 0..1
+ *   byRuntime: Record<string, { completed: number, failed: number, total: number }>,
+ *   byProfile:  Record<string, { completed: number, failed: number, total: number }>,
+ *   recentRuns: Array<{ issueNumber, outcome, runtimeId, profileId, recordedAt }>
+ * }}
+ */
+export function computeMetrics(entries = []) {
+  const all = Array.isArray(entries) ? entries : [];
+  let completedCount = 0;
+  const byRuntime = {};
+  const byProfile = {};
+
+  for (const e of all) {
+    const rt = e.runtimeId || "unknown";
+    const pr = e.profileId || "general";
+    const isCompleted = e.outcome === "completed";
+    const isFailed = e.outcome === "failed" || e.outcome === "review_needed";
+
+    if (isCompleted) completedCount++;
+
+    if (!byRuntime[rt]) byRuntime[rt] = { completed: 0, failed: 0, total: 0 };
+    byRuntime[rt].total++;
+    if (isCompleted) byRuntime[rt].completed++;
+    else if (isFailed) byRuntime[rt].failed++;
+
+    if (!byProfile[pr]) byProfile[pr] = { completed: 0, failed: 0, total: 0 };
+    byProfile[pr].total++;
+    if (isCompleted) byProfile[pr].completed++;
+    else if (isFailed) byProfile[pr].failed++;
+  }
+
+  const totalRuns = all.length;
+  const successRate = totalRuns === 0 ? 0 : completedCount / totalRuns;
+
+  const recentRuns = all
+    .slice(-10)
+    .reverse()
+    .map(({ issueNumber, outcome, runtimeId, profileId, recordedAt }) => ({
+      issueNumber,
+      outcome,
+      runtimeId,
+      profileId,
+      recordedAt
+    }));
+
+  return { totalRuns, successRate, byRuntime, byProfile, recentRuns };
+}

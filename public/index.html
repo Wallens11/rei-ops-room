@@ -279,6 +279,21 @@
         </article>
 
         <article class="panel">
+          <p class="panel-label">Agent Metrics</p>
+          <div class="item-head">
+            <strong>Performance</strong>
+            <span id="metrics-success-badge" class="item-chip" style="font-variant-numeric:tabular-nums;">—%</span>
+          </div>
+          <p id="metrics-total-runs" class="dim mono" style="font-size:11px;margin-top:2px;">loading...</p>
+          <div class="mini-divider"></div>
+          <p class="panel-label">By Runtime</p>
+          <div id="metrics-runtime-bars" style="margin-top:6px;min-height:20px;"></div>
+          <div class="mini-divider"></div>
+          <p class="panel-label">Last 10 Runs</p>
+          <div id="metrics-recent-dots" style="margin-top:6px;display:flex;flex-wrap:wrap;gap:2px;min-height:14px;"></div>
+        </article>
+
+        <article class="panel">
           <p class="panel-label">Artifacts</p>
           <div class="item-head">
             <strong id="artifacts-title">Visual Outputs</strong>

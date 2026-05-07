@@ -5,6 +5,7 @@ import os from "node:os";
 import path from "node:path";
 
 import {
+  computeMetrics,
   computeTrustSignals,
   detectFailurePattern,
   extractKeySummary,
@@ -401,5 +402,79 @@ describe("detectFailurePattern", () => {
     const result = detectFailurePattern([], { profileId: "backend" });
     assert.equal(result.hasWarning, false);
     assert.equal(result.riskLevel, "low");
+  });
+});
+
+// ─── computeMetrics ───────────────────────────────────────────────────────────
+
+describe("computeMetrics", () => {
+  const sample = [
+    { runtimeId: "claude-code", profileId: "frontend", outcome: "completed",     issueNumber: 1, recordedAt: "2026-05-01T10:00:00Z" },
+    { runtimeId: "claude-code", profileId: "frontend", outcome: "failed",         issueNumber: 2, recordedAt: "2026-05-02T10:00:00Z" },
+    { runtimeId: "codex",       profileId: "general",  outcome: "completed",     issueNumber: 3, recordedAt: "2026-05-03T10:00:00Z" },
+    { runtimeId: "codex",       profileId: "general",  outcome: "aborted",       issueNumber: 4, recordedAt: "2026-05-04T10:00:00Z" },
+    { runtimeId: "codex",       profileId: "general",  outcome: "review_needed", issueNumber: 5, recordedAt: "2026-05-05T10:00:00Z" }
+  ];
+
+  it("returns zero metrics for empty entries", () => {
+    const m = computeMetrics([]);
+    assert.equal(m.totalRuns, 0);
+    assert.equal(m.successRate, 0);
+    assert.deepEqual(m.byRuntime, {});
+    assert.deepEqual(m.byProfile, {});
+    assert.deepEqual(m.recentRuns, []);
+  });
+
+  it("handles null/undefined gracefully", () => {
+    assert.equal(computeMetrics(null).totalRuns, 0);
+    assert.equal(computeMetrics(undefined).totalRuns, 0);
+  });
+
+  it("computes totalRuns correctly", () => {
+    assert.equal(computeMetrics(sample).totalRuns, 5);
+  });
+
+  it("computes successRate as fraction of completed outcomes", () => {
+    const m = computeMetrics(sample);
+    // 2 completed out of 5
+    assert.ok(Math.abs(m.successRate - 0.4) < 0.001);
+  });
+
+  it("groups byRuntime with correct completed + failed counts", () => {
+    const m = computeMetrics(sample);
+    assert.equal(m.byRuntime["claude-code"].total, 2);
+    assert.equal(m.byRuntime["claude-code"].completed, 1);
+    assert.equal(m.byRuntime["claude-code"].failed, 1);
+    assert.equal(m.byRuntime.codex.total, 3);
+    assert.equal(m.byRuntime.codex.completed, 1);
+    assert.equal(m.byRuntime.codex.failed, 1); // review_needed counts as failed
+  });
+
+  it("aborted is not counted as failed in byRuntime", () => {
+    const m = computeMetrics(sample);
+    // codex: 1 completed, 1 review_needed (=failed), 1 aborted (=neither) → total 3, failed 1
+    assert.equal(m.byRuntime.codex.failed, 1);
+  });
+
+  it("groups byProfile correctly", () => {
+    const m = computeMetrics(sample);
+    assert.equal(m.byProfile.frontend.total, 2);
+    assert.equal(m.byProfile.general.total, 3);
+  });
+
+  it("returns at most 10 recentRuns, most-recent first", () => {
+    const many = Array.from({ length: 15 }, (_, i) => ({
+      runtimeId: "codex", profileId: "general", outcome: "completed",
+      issueNumber: i + 1, recordedAt: `2026-05-${String(i + 1).padStart(2, "0")}T10:00:00Z`
+    }));
+    const m = computeMetrics(many);
+    assert.equal(m.recentRuns.length, 10);
+    assert.equal(m.recentRuns[0].issueNumber, 15); // most recent first
+  });
+
+  it("recentRuns only contains the required 5 fields", () => {
+    const m = computeMetrics(sample);
+    const keys = Object.keys(m.recentRuns[0]).sort();
+    assert.deepEqual(keys, ["issueNumber", "outcome", "profileId", "recordedAt", "runtimeId"]);
   });
 });

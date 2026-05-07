@@ -4,6 +4,7 @@ import { once } from "node:events";
 import os from "node:os";
 import path from "node:path";
 import fs from "node:fs/promises";
+import crypto from "node:crypto";
 
 import {
   buildAgentJobItemsSql,
@@ -18,6 +19,7 @@ import {
   buildThreadLogsSql,
   filterMeaningfulLogs,
   inferGithubRepoSlugWithRunner,
+  isRelevantWebhookEvent,
   listGithubIssuesWithRunner,
   normalizeGithubRepoSlug,
   parseDailyDeviceHandoffMarkdown,
@@ -25,6 +27,7 @@ import {
   selectActivityLogs,
   readDailyDeviceHandoff,
   stripWorkspacePrefix,
+  verifyGithubWebhookSignature,
   SQLITE_JSON_MAX_BUFFER,
   sqliteJsonWithRunner
 } from "../server.mjs";
@@ -1326,4 +1329,199 @@ test("createServer GET /api/execute/artifacts/:filename returns 404 for missing 
   const response = await fetch(`http://127.0.0.1:${port}/api/execute/artifacts/missing.html`);
 
   assert.equal(response.status, 404);
+});
+
+// ─── verifyGithubWebhookSignature ────────────────────────────────────────────
+
+test("verifyGithubWebhookSignature returns true when secret is empty (dev mode)", () => {
+  const body = Buffer.from("hello");
+  assert.equal(verifyGithubWebhookSignature("", body, ""), true);
+  assert.equal(verifyGithubWebhookSignature("", body, "sha256=wrong"), true);
+});
+
+test("verifyGithubWebhookSignature returns true for correct HMAC signature", () => {
+  const secret = "mysecret";
+  const body = Buffer.from('{"action":"labeled"}');
+  const mac = crypto.createHmac("sha256", secret).update(body).digest("hex");
+  assert.equal(verifyGithubWebhookSignature(secret, body, `sha256=${mac}`), true);
+});
+
+test("verifyGithubWebhookSignature returns false for wrong HMAC", () => {
+  const secret = "mysecret";
+  const body = Buffer.from('{"action":"labeled"}');
+  assert.equal(verifyGithubWebhookSignature(secret, body, "sha256=deadbeef00000000000000000000000000000000000000000000000000000000"), false);
+});
+
+test("verifyGithubWebhookSignature returns false for empty signature when secret is set", () => {
+  const secret = "mysecret";
+  const body = Buffer.from("payload");
+  assert.equal(verifyGithubWebhookSignature(secret, body, ""), false);
+  assert.equal(verifyGithubWebhookSignature(secret, body, undefined), false);
+});
+
+// ─── isRelevantWebhookEvent ───────────────────────────────────────────────────
+
+test("isRelevantWebhookEvent triggers on issues.labeled with agent:rei", () => {
+  assert.equal(isRelevantWebhookEvent("issues", { action: "labeled", label: { name: "agent:rei" } }).triggered, true);
+});
+
+test("isRelevantWebhookEvent triggers on issues.labeled with mode: prefix", () => {
+  assert.equal(isRelevantWebhookEvent("issues", { action: "labeled", label: { name: "mode:execute" } }).triggered, true);
+});
+
+test("isRelevantWebhookEvent does not trigger on issues.labeled with unrelated label", () => {
+  assert.equal(isRelevantWebhookEvent("issues", { action: "labeled", label: { name: "bug" } }).triggered, false);
+});
+
+test("isRelevantWebhookEvent triggers on issues.assigned and issues.unlabeled", () => {
+  assert.equal(isRelevantWebhookEvent("issues", { action: "assigned" }).triggered, true);
+  assert.equal(isRelevantWebhookEvent("issues", { action: "unlabeled" }).triggered, true);
+});
+
+test("isRelevantWebhookEvent triggers on issue_comment.created", () => {
+  assert.equal(isRelevantWebhookEvent("issue_comment", { action: "created" }).triggered, true);
+});
+
+test("isRelevantWebhookEvent does not trigger on issue_comment.deleted", () => {
+  assert.equal(isRelevantWebhookEvent("issue_comment", { action: "deleted" }).triggered, false);
+});
+
+test("isRelevantWebhookEvent triggers on push", () => {
+  assert.equal(isRelevantWebhookEvent("push", {}).triggered, true);
+});
+
+test("isRelevantWebhookEvent triggers on merged pull_request", () => {
+  assert.equal(isRelevantWebhookEvent("pull_request", { action: "closed", pull_request: { merged: true } }).triggered, true);
+});
+
+test("isRelevantWebhookEvent does not trigger on unmerged pull_request.closed", () => {
+  assert.equal(isRelevantWebhookEvent("pull_request", { action: "closed", pull_request: { merged: false } }).triggered, false);
+});
+
+test("isRelevantWebhookEvent does not trigger on unknown event type", () => {
+  assert.equal(isRelevantWebhookEvent("release", { action: "published" }).triggered, false);
+});
+
+// ─── POST /api/github/webhook (integration) ───────────────────────────────────
+
+test("createServer POST /api/github/webhook calls handler and responds triggered:true", async (t) => {
+  const woken = [];
+  const server = createServer({
+    getStatus: async () => ({ ok: true }),
+    handleGithubWebhook: async ({ eventType }) => {
+      woken.push(eventType);
+      return { valid: true, triggered: true, reason: "issue labeled" };
+    }
+  });
+
+  server.listen(0);
+  await once(server, "listening");
+  t.after(() => server.close());
+
+  const { port } = server.address();
+  const res = await fetch(`http://127.0.0.1:${port}/api/github/webhook`, {
+    method: "POST",
+    headers: { "x-github-event": "issues", "content-type": "application/json" },
+    body: JSON.stringify({ action: "labeled", label: { name: "agent:rei" } })
+  });
+  const body = await res.json();
+
+  assert.equal(res.status, 200);
+  assert.equal(body.triggered, true);
+  assert.equal(body.event, "issues");
+  assert.deepEqual(woken, ["issues"]);
+});
+
+test("createServer POST /api/github/webhook returns 401 when signature invalid", async (t) => {
+  const server = createServer({
+    getStatus: async () => ({ ok: true }),
+    handleGithubWebhook: async () => ({ valid: false })
+  });
+
+  server.listen(0);
+  await once(server, "listening");
+  t.after(() => server.close());
+
+  const { port } = server.address();
+  const res = await fetch(`http://127.0.0.1:${port}/api/github/webhook`, {
+    method: "POST",
+    headers: { "x-github-event": "push", "content-type": "application/json" },
+    body: JSON.stringify({})
+  });
+
+  assert.equal(res.status, 401);
+  const body = await res.json();
+  assert.ok(body.error);
+});
+
+test("createServer POST /api/github/webhook returns triggered:false for non-relevant event", async (t) => {
+  const server = createServer({
+    getStatus: async () => ({ ok: true }),
+    handleGithubWebhook: async () => ({ valid: true, triggered: false })
+  });
+
+  server.listen(0);
+  await once(server, "listening");
+  t.after(() => server.close());
+
+  const { port } = server.address();
+  const res = await fetch(`http://127.0.0.1:${port}/api/github/webhook`, {
+    method: "POST",
+    headers: { "x-github-event": "release", "content-type": "application/json" },
+    body: JSON.stringify({ action: "published" })
+  });
+  const body = await res.json();
+
+  assert.equal(res.status, 200);
+  assert.equal(body.triggered, false);
+});
+
+// ─── GET /api/execute/metrics ─────────────────────────────────────────────────
+
+test("createServer GET /api/execute/metrics returns metrics payload", async (t) => {
+  const fakeMetrics = {
+    totalRuns: 10,
+    successRate: 0.7,
+    byRuntime: { "claude-code": { completed: 7, failed: 2, total: 9 }, codex: { completed: 0, failed: 1, total: 1 } },
+    byProfile: { general: { completed: 7, failed: 3, total: 10 } },
+    recentRuns: [{ issueNumber: 42, outcome: "completed", runtimeId: "claude-code", profileId: "general", recordedAt: "2026-05-07T10:00:00Z" }]
+  };
+
+  const server = createServer({
+    getStatus: async () => ({ ok: true }),
+    getMetrics: async () => fakeMetrics
+  });
+
+  server.listen(0);
+  await once(server, "listening");
+  t.after(() => server.close());
+
+  const { port } = server.address();
+  const res = await fetch(`http://127.0.0.1:${port}/api/execute/metrics`);
+  const body = await res.json();
+
+  assert.equal(res.status, 200);
+  assert.equal(body.totalRuns, 10);
+  assert.equal(body.successRate, 0.7);
+  assert.ok(body.byRuntime["claude-code"]);
+  assert.ok(Array.isArray(body.recentRuns));
+  assert.equal(body.recentRuns[0].issueNumber, 42);
+});
+
+test("createServer GET /api/execute/metrics returns 500 on error", async (t) => {
+  const server = createServer({
+    getStatus: async () => ({ ok: true }),
+    getMetrics: async () => { throw new Error("disk read failed"); }
+  });
+
+  server.listen(0);
+  await once(server, "listening");
+  t.after(() => server.close());
+
+  const { port } = server.address();
+  const res = await fetch(`http://127.0.0.1:${port}/api/execute/metrics`);
+  const body = await res.json();
+
+  assert.equal(res.status, 500);
+  assert.ok(body.error);
 });

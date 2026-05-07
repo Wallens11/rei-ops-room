@@ -1633,6 +1633,96 @@ async function defaultGetRunLedger() {
   };
 }
 
+// ─── Webhook helpers (exported for testability) ───────────────────────────────
+
+/**
+ * Verify an X-Hub-Signature-256 header against a raw request body.
+ * Returns true if secret is empty (dev mode — skip verification).
+ * Returns false if secret is set and the signature does not match or is missing.
+ */
+export function verifyGithubWebhookSignature(secret, rawBody, signatureHeader) {
+  if (!secret) return true; // dev mode: no verification
+  const sig = String(signatureHeader || "");
+  const expected = `sha256=${crypto
+    .createHmac("sha256", secret)
+    .update(rawBody)
+    .digest("hex")}`;
+  // timingSafeEqual requires equal-length buffers — guard first
+  if (sig.length !== expected.length) return false;
+  return crypto.timingSafeEqual(Buffer.from(sig), Buffer.from(expected));
+}
+
+/**
+ * Decide whether a GitHub webhook event should trigger a worker wake-up.
+ * Returns { triggered: boolean, reason?: string }.
+ *
+ * Relevant:
+ *   issues        — labeled (agent:rei / mode:*), unlabeled, assigned, opened with rei label
+ *   issue_comment — created
+ *   push          — any push (worker is idempotent if queue is empty)
+ *   pull_request  — closed + merged
+ */
+export function isRelevantWebhookEvent(eventType, payload) {
+  const action = String(payload?.action || "");
+
+  if (eventType === "issues") {
+    if (action === "labeled") {
+      const labelName = String(payload?.label?.name || "");
+      if (labelName === "agent:rei" || labelName.startsWith("mode:")) {
+        return { triggered: true, reason: "issue labeled with agent/mode label" };
+      }
+      return { triggered: false };
+    }
+    if (action === "unlabeled" || action === "assigned") {
+      return { triggered: true, reason: `issue ${action}` };
+    }
+    if (action === "opened") {
+      const labels = Array.isArray(payload?.issue?.labels)
+        ? payload.issue.labels.map((l) => String(l?.name || ""))
+        : [];
+      if (labels.some((l) => l === "agent:rei" || l.startsWith("mode:"))) {
+        return { triggered: true, reason: "new issue with agent:rei label" };
+      }
+      return { triggered: false };
+    }
+    return { triggered: false };
+  }
+
+  if (eventType === "issue_comment" && action === "created") {
+    return { triggered: true, reason: "issue comment created" };
+  }
+
+  if (eventType === "push") {
+    return { triggered: true, reason: "push event" };
+  }
+
+  if (eventType === "pull_request" && action === "closed" && payload?.pull_request?.merged === true) {
+    return { triggered: true, reason: "pull request merged" };
+  }
+
+  return { triggered: false };
+}
+
+async function defaultHandleGithubWebhook({ rawBody, signatureHeader, eventType, payload } = {}) {
+  const secret = GITHUB_WEBHOOK_SECRET;
+  if (!verifyGithubWebhookSignature(secret, rawBody ?? Buffer.alloc(0), signatureHeader)) {
+    return { valid: false };
+  }
+  const { triggered, reason } = isRelevantWebhookEvent(eventType, payload ?? {});
+  if (triggered) {
+    await signalWorkerWake().catch(() => {});
+  }
+  return { valid: true, triggered, reason };
+}
+
+// ─── Metrics helper ───────────────────────────────────────────────────────────
+
+async function defaultGetMetrics() {
+  const { readLearningLog, computeMetrics } = await import("./tools/execute-learning.mjs");
+  const entries = await readLearningLog();
+  return computeMetrics(entries);
+}
+
 export function createServer({
   getStatus: getStatusImpl = getStatus,
   getDailyDeviceHandoff: getDailyDeviceHandoffImpl = readDailyDeviceHandoff,
@@ -1651,6 +1741,8 @@ export function createServer({
   approveIssue: approveIssueImpl = defaultApproveIssue,
   listArtifacts: listArtifactsImpl = readArtifacts,
   readArtifact: readArtifactImpl = readArtifactFile,
+  handleGithubWebhook: handleGithubWebhookImpl = defaultHandleGithubWebhook,
+  getMetrics: getMetricsImpl = defaultGetMetrics,
   serveStatic: serveStaticImpl = serveStatic
 } = {}) {
   return http.createServer(async (request, response) => {
@@ -2049,6 +2141,22 @@ export function createServer({
       return;
     }
 
+    // ─── Dashboard Metrics ────────────────────────────────────────────────────
+    // GET /api/execute/metrics — aggregated performance metrics for UI dashboard
+
+    if (url.pathname === "/api/execute/metrics" && request.method === "GET") {
+      try {
+        const result = await getMetricsImpl();
+        writeJson(response, 200, result);
+      } catch (error) {
+        writeJson(response, 500, {
+          error: "Gagal baca metrics",
+          detail: error instanceof Error ? error.message : String(error)
+        });
+      }
+      return;
+    }
+
     // ─── Run Usage Ledger ─────────────────────────────────────────────────────
     // GET /api/execute/ledger — ringkasan usage dari learning log (issue #17)
 
@@ -2186,9 +2294,9 @@ export function createServer({
 
     // ─── GitHub Webhook ──────────────────────────────────────────────────────
     // POST /api/github/webhook
-    // Set GITHUB_WEBHOOK_SECRET env kalau mau signature verification.
-    // Event yang di-handle:
-    //   issues + labeled → kalau label "agent:rei" ditambah → wake worker
+    // Set GITHUB_WEBHOOK_SECRET env (or rei.config.json) for signature verification.
+    // Relevant events: issues (labeled/unlabeled/assigned/opened), issue_comment,
+    //   push, pull_request (merged) → all wake the execute worker immediately.
 
     if (url.pathname === "/api/github/webhook" && request.method === "POST") {
       try {
@@ -2196,48 +2304,22 @@ export function createServer({
         for await (const chunk of request) rawChunks.push(chunk);
         const rawBody = Buffer.concat(rawChunks);
 
-        // Verify HMAC signature kalau secret di-set
-        if (GITHUB_WEBHOOK_SECRET) {
-          const signature = request.headers["x-hub-signature-256"] || "";
-          const expected = `sha256=${crypto
-            .createHmac("sha256", GITHUB_WEBHOOK_SECRET)
-            .update(rawBody)
-            .digest("hex")}`;
-
-          if (!crypto.timingSafeEqual(Buffer.from(signature), Buffer.from(expected))) {
-            writeJson(response, 401, { error: "Webhook signature tidak valid." });
-            return;
-          }
-        }
-
-        const event = request.headers["x-github-event"] || "";
+        const signatureHeader = request.headers["x-hub-signature-256"] || "";
+        const eventType = request.headers["x-github-event"] || "";
         const payload = rawBody.length ? JSON.parse(rawBody.toString("utf8")) : {};
-        const action = String(payload?.action || "");
 
-        // issues.labeled → cek apakah label "agent:rei" atau "mode:execute" yang ditambah
-        if (event === "issues" && action === "labeled") {
-          const addedLabel = String(payload?.label?.name || "");
-          const isReiLabel = addedLabel === "agent:rei" || addedLabel.startsWith("mode:");
+        const result = await handleGithubWebhookImpl({ rawBody, signatureHeader, eventType, payload });
 
-          if (isReiLabel) {
-            // Bangunkan worker supaya langsung cek GitHub queue tanpa tunggu interval
-            await signalWorkerWake();
-          }
+        if (!result.valid) {
+          writeJson(response, 401, { error: "Webhook signature tidak valid." });
+          return;
         }
 
-        // issues.opened → kalau issue baru dibuka dengan label agent:rei, bangunkan worker
-        // Ini bagian dari issue #14: realtime GitHub intake bridge.
-        if (event === "issues" && action === "opened") {
-          const labels = Array.isArray(payload?.issue?.labels)
-            ? payload.issue.labels.map((l) => String(l?.name || ""))
-            : [];
-          const hasReiLabel = labels.some((l) => l === "agent:rei" || l.startsWith("mode:"));
-          if (hasReiLabel) {
-            await signalWorkerWake();
-          }
-        }
-
-        writeJson(response, 200, { received: true, event, action });
+        writeJson(response, 200, {
+          triggered: result.triggered,
+          event: eventType,
+          reason: result.reason ?? null
+        });
       } catch (error) {
         writeJson(response, error?.statusCode || 500, {
           error: "Gagal proses webhook",

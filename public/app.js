@@ -59,6 +59,7 @@ import {
 } from "./execute-agent-view.js";
 import { buildTaskQueueViewModel, buildWorkerStatusBadge } from "./execute-queue-panel.js";
 import { pollArtifacts } from "./execute-artifacts-panel.js";
+import { pollMetrics } from "./execute-metrics-panel.js";
 import {
   buildSceneHotspots,
   describeSceneSelection,
@@ -1679,7 +1680,7 @@ async function refreshExecuteService() {
     };
   }
 
-  // Refresh artifact panel when a run just completed (lastResult changed)
+  // Refresh artifact + metrics panels when a run just completed (lastResult changed)
   const newLastResult = renderState.executeService?.lastResult;
   if (
     newLastResult &&
@@ -1687,6 +1688,7 @@ async function refreshExecuteService() {
     (newLastResult.status === "completed" || newLastResult.status === "blocked" || newLastResult.status === "failed")
   ) {
     void pollArtifacts();
+    void pollMetrics();
   }
 
   renderExecuteAgent();
