@@ -218,7 +218,8 @@ const elements = {
   editorSave: document.getElementById("editor-save"),
   editorReset: document.getElementById("editor-reset"),
   editorExport: document.getElementById("editor-export"),
-  editorImport: document.getElementById("editor-import")
+  editorImport: document.getElementById("editor-import"),
+  demoBanner: document.getElementById("demo-banner")
 };
 
 const renderState = {
@@ -1382,7 +1383,15 @@ function renderCrewList(agents, workstreams) {
   });
 }
 
+let demoBannerShown = false;
+
 function applyStatus(data) {
+  // Show demo banner once when server reports demo: true
+  if (data.demo && !demoBannerShown && elements.demoBanner) {
+    elements.demoBanner.hidden = false;
+    demoBannerShown = true;
+  }
+
   const previousPhase = renderState.data?.room?.phase || null;
   const previousSubstate = renderState.data?.room?.substate || null;
   renderState.data = data;

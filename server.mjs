@@ -2355,5 +2355,17 @@ export function startServer(listenPort = port) {
 }
 
 if (process.argv[1] && fileURLToPath(import.meta.url) === path.resolve(process.argv[1])) {
-  startServer();
+  const isDemoMode = process.env.DEMO_MODE === "true" || process.argv.includes("--demo");
+
+  if (isDemoMode) {
+    const { createDemoServer } = await import("./tools/demo-server.mjs");
+    const server = createDemoServer();
+    server.listen(port, () => {
+      console.log(`Pixel agent viewer ready at http://localhost:${port}`);
+      console.log(`\u{1F3AD} Demo mode enabled — no GitHub auth or AI runtime needed`);
+      console.log(`   Showing simulated data for demonstration purposes`);
+    });
+  } else {
+    startServer();
+  }
 }

@@ -22,6 +22,41 @@
   box-sizing: border-box;
 }
 
+/* ─── Demo banner ──────────────────────────────────────────────────────────── */
+.demo-banner {
+  position: sticky;
+  top: 0;
+  z-index: 100;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 16px;
+  background: rgba(184, 162, 255, 0.13);
+  border-bottom: 1px solid rgba(184, 162, 255, 0.28);
+  color: var(--violet);
+  font-family: var(--mono-font);
+  font-size: 0.78rem;
+  letter-spacing: 0.01em;
+}
+
+.demo-banner[hidden] {
+  display: none;
+}
+
+.demo-banner code {
+  font-family: var(--mono-font);
+  font-size: 0.75rem;
+  color: var(--cyan);
+  background: rgba(101, 228, 255, 0.1);
+  border-radius: 3px;
+  padding: 0 4px;
+}
+
+.demo-banner-icon {
+  flex-shrink: 0;
+  font-size: 0.9rem;
+}
+
 html,
 body {
   margin: 0;
