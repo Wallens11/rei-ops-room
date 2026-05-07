@@ -2,4 +2,4 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-exec node "$SCRIPT_DIR/tools/agent-pixel-cli.mjs" "$@"
+exec node "$SCRIPT_DIR/tools/rei-cli.mjs" "$@"

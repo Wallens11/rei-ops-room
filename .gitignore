@@ -1,4 +1,6 @@
 node_modules/
+.rei-server.log
+.rei-server.pid
 .agent-pixel.log
 .agent-pixel.pid
 .report-only-worker.log

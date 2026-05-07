@@ -1,151 +1,170 @@
 # Rei Ops Room
 
-Viewer kecil buat nampilin repo/thread Codex terbaru dengan `pixel room`, squad mini-Rei, mode room/widget, dan state kerja vs istirahat.
+Autonomous agent ops room built on vanilla Node.js. Rei watches your GitHub issues, picks the right AI runtime, executes tasks, and reports back — all visible through a real-time web UI.
 
-## Office Editor
+No framework. No heavy dependencies. Pure ESM.
 
-Di mode `room`, klik `Layout Edit` buat masuk ke editor layout lokal.
+---
 
-- pilih desk / prop / rest corner yang mau digeser
-- geser pakai tombol panah atau keyboard arrow key
-- `Save Local` buat simpan layout ke browser/device itu
-- `Reset` buat balik ke schema default
-- `Export JSON` / `Import JSON` buat pindah layout antar device
+## What Rei Does
 
-## Jalankan
+- **Picks up GitHub issues** labeled `agent:rei` + `mode:execute` and runs them autonomously
+- **Routes to the right runtime** — Claude Code for frontend/docs, Codex for backend/scraping — configurable per task type
+- **Falls back automatically** when a runtime hits rate limits
+- **Resumes sessions** after crashes using Claude Code's `--resume` flag
+- **Learns from history** — adaptive runtime selection based on actual success rates
+- **Reacts to human corrections** — comments on an issue mid-run get injected into the next prompt
+- **Generates visual artifacts** — HTML diagrams via the visual-explainer skill, surfaced in the UI
+- **Wakes up instantly** on GitHub webhook events instead of waiting for the poll interval
+
+---
+
+## Quick Start
 
 ```bash
-cd /Users/funtoco/workSpace/codex-pixel-agent
-npm install
+# 1. Clone and run the setup wizard
+git clone https://github.com/your-org/rei-ops-room
+cd rei-ops-room
+node setup.mjs
+
+# 2. Start the ops room server
 npm start
+# → http://localhost:4317
+
+# 3. Start the execute worker (in another terminal)
+npm run execute-service -- start
 ```
 
-Buka `http://localhost:4317`.
-
-Atau pakai launcher lokal di dalam repo:
+### Alternative launcher
 
 ```bash
-cd /Users/funtoco/workSpace/codex-pixel-agent
-./agent-pixel room
-./agent-pixel widget
-./agent-pixel status
-./agent-pixel stop
+./rei room     # open ops room in browser
+./rei status   # check if the server is running
+./rei stop     # stop the server
 ```
 
-Kalau masih pakai wrapper dari workspace root:
+---
+
+## Requirements
+
+- Node.js 20+
+- `gh` CLI — authenticated (`gh auth login`)
+- At least one AI runtime:
+  - [Claude Code](https://github.com/anthropics/claude-code) (`claude` in PATH)
+  - [Codex](https://github.com/openai/codex) (`codex` in PATH or via `CODEX_BIN`)
+
+---
+
+## Configuration
+
+Copy the example config and edit:
 
 ```bash
-/Users/funtoco/workSpace/agent-pixel room
-/Users/funtoco/workSpace/agent-pixel widget
-/Users/funtoco/workSpace/agent-pixel status
-/Users/funtoco/workSpace/agent-pixel stop
+cp rei.config.example.json rei.config.json
 ```
 
-## Sumber data
+`rei.config.json` (gitignored):
 
-- `~/.codex/state_5.sqlite`: thread terbaru, cwd, branch
-- `~/.codex/logs_1.sqlite`: activity log terbaru buat state busy/idle
+```json
+{
+  "repo": "owner/repo",
+  "workspacePath": "/path/to/your/workspace",
+  "port": 4317,
+  "claudeBin": "claude",
+  "codexBin": "codex",
+  "githubWebhookSecret": "",
+  "dailyHandoffPath": null
+}
+```
 
-## GitHub Inbox MVP
+All fields can also be set via environment variables — env vars take priority over the config file.
 
-Viewer sekarang juga punya endpoint inbox ringan buat baca issue GitHub repo ini:
+### Runtime Routing
+
+Create `.rei-runtimes.json` in the repo root to configure which runtime handles which task type:
+
+```json
+{
+  "preferences": {
+    "frontend": ["claude-code", "codex"],
+    "backend":  ["codex", "claude-code"],
+    "scraping": ["codex"],
+    "docs":     ["claude-code", "codex"],
+    "general":  ["codex", "claude-code"]
+  },
+  "rateLimitFallback": true
+}
+```
+
+If the file is absent, the defaults above are used.
+
+---
+
+## GitHub Webhook (optional)
+
+Point your GitHub repo's webhook to `http://your-server:4317/api/github/webhook`.
+
+Set `githubWebhookSecret` in `rei.config.json` (or `GITHUB_WEBHOOK_SECRET` env var) to the same secret you set in GitHub. Leave it empty to skip signature verification in dev.
+
+Rei wakes up the worker immediately on:
+- Issue labeled with `agent:rei` or `mode:*`
+- Issue assigned / unlabeled
+- Issue comment created
+- Any push
+- Pull request merged
+
+---
+
+## GitHub Labels
+
+Rei uses these labels to manage issue state:
+
+| Label | Meaning |
+|---|---|
+| `agent:rei` | Issue belongs to Rei |
+| `mode:execute` | Run code autonomously |
+| `mode:report_only` | Post a plan comment only |
+| `status:todo` | Queued, waiting to run |
+| `status:in_progress` | Currently running |
+| `status:blocked` | Run completed but needs human review |
+| `status:done` | Completed successfully |
+
+Run the setup wizard to create these labels automatically:
 
 ```bash
-curl http://localhost:4317/api/github/issues
+node setup.mjs
 ```
 
-Di mode `room`, panel `GitHub Inbox` juga akan poll endpoint ini otomatis setiap `30s` buat nampilin antrean issue remote langsung di viewer.
+---
 
-Panel inbox sekarang juga punya planner konservatif:
-
-- `Active Queue` diambil dari issue berlabel `status:in_progress`
-- `Suggested Next` fallback ke issue `status:todo` terbaru kalau belum ada yang aktif
-- `Report-only Bridge` preview menampilkan issue aktif yang siap dikomentari
-- `Execute Agent` menampilkan antrean `mode:execute` dan bisa start/stop executor lokal
-- `Autopilot` bisa diaktifkan manual dari viewer untuk auto-post sekali per issue aktif
-- `Service` menampilkan apakah background report-only worker sedang hidup di device ini
-
-Perilaku default:
-
-- repo diambil dari `git remote get-url origin`
-- state default `open`
-- label default `agent:rei`
-- limit default `20`
-
-Query yang didukung:
-
-- `repo=owner/name`
-- `state=open|closed|all`
-- `labels=agent:rei,status:in_progress`
-- `limit=50`
-
-Contoh:
+## Execute Service
 
 ```bash
-curl "http://localhost:4317/api/github/issues?labels=agent:rei,status:todo&limit=10"
+npm run execute-service -- start    # start background worker
+npm run execute-service -- status   # check worker status
+npm run execute-service -- stop     # stop worker
 ```
 
-Catatan:
+The worker:
+- polls GitHub every 60s (or wakes immediately on webhook events)
+- claims the next `status:todo` issue, transitions it to `status:in_progress`
+- launches Claude Code or Codex with the issue body + daily handoff as context
+- posts a completion comment and transitions the label when done
+- falls back to the next runtime if rate-limited
+- resumes the last Claude Code session on the same issue after a crash
 
-- endpoint ini butuh `gh` CLI yang sudah login
-- response sudah merangkum jumlah `todo`, `inProgress`, dan `blocked` supaya nanti gampang dipakai buat panel inbox / automation
+State files (all gitignored):
+- `.execute-worker-state.json` — current worker state
+- `.execute-queue.json` — task queue
+- `.execute-learning.json` — run history for adaptive selection
+- `.execute-sessions.json` — Claude Code session pins for crash recovery
+- `.execute-runs/` — per-run artifacts (prompt, events, last message)
 
-## Report-only Bridge
+---
 
-Bridge konservatif buat issue aktif `status:in_progress`:
+## Report-Only Service
 
-```bash
-npm run report-only
-```
-
-Kalau mau langsung post comment plan ke issue aktif:
-
-```bash
-npm run report-only -- --comment
-```
-
-Perilaku default:
-
-- hanya ambil issue aktif yang punya `agent:rei` + `mode:report_only`
-- comment diberi marker dedupe supaya tidak spam issue yang sama
-- output tetap berhenti di draft / report, bukan auto-eksekusi code
-
-Di viewer:
-
-- tombol `Post Plan Comment` akan post comment sekali lalu pindah ke state `Already Posted`
-- tombol `Enable Autopilot` bersifat opt-in dan hanya auto-post untuk issue aktif yang masih `ready`
-- status autopilot disimpan per session browser supaya reload tidak langsung kehilangan state device itu
-
-## Report-only Worker
-
-Kalau viewer lagi tidak terbuka tapi tetap mau pickup issue aktif secara konservatif:
-
-```bash
-npm run report-only-worker -- --once
-```
-
-Untuk mode background polling:
-
-```bash
-npm run report-only-worker
-```
-
-Flag yang didukung:
-
-- `--once` untuk satu kali cek lalu keluar
-- `--repo owner/name` untuk override repo target
-- `--interval-seconds 90` untuk interval custom
-
-Perilaku default:
-
-- interval minimum dijaga konservatif (`30s`), default `60s`
-- worker hanya reuse bridge `report-only` yang sama
-- log hanya keluar saat status berubah, jadi skip yang sama tidak spam terus
-- dedupe issue tetap ditentukan marker comment yang sudah ada
-
-## Report-only Service
-
-Kalau mau worker background-nya gampang dikelola lintas shell / device session:
+For issues that should get a plan comment but not run code:
 
 ```bash
 npm run report-only-service -- start
@@ -153,131 +172,78 @@ npm run report-only-service -- status
 npm run report-only-service -- stop
 ```
 
-Catatan:
+---
 
-- service ini cuma wrapper lokal untuk `report-only-worker`
-- pid disimpan di `.report-only-worker.pid`
-- log append ke `.report-only-worker.log`
-- `status` akan bilang kalau pid file-nya stale, jadi tidak pura-pura worker masih hidup
+## Visual Artifacts
 
-## Execute Agent
+When Claude Code uses the bundled `visual-explainer` skill, it generates self-contained HTML files in `~/.agent/diagrams/`. Rei scans for these after each run and surfaces them in the **Visual Outputs** panel in the UI.
 
-Mode ini buat issue yang memang boleh dijalankan agent secara lokal.
+Access directly:
+```
+GET /api/execute/artifacts
+GET /api/execute/artifacts/:filename.html
+```
 
-Label yang dipakai:
+---
 
-- `agent:rei`
-- `mode:execute`
-- `status:todo` untuk antrean baru
-- `status:in_progress` saat sudah diklaim executor
-- `status:blocked` kalau run gagal dan butuh intervensi
+## API Reference
 
-Perilaku default:
+| Endpoint | Description |
+|---|---|
+| `GET /api/status` | Server health |
+| `GET /api/github/issues` | GitHub inbox |
+| `GET /api/github/execute` | Execute queue preview |
+| `GET /api/github/execute/service` | Worker status |
+| `POST /api/github/execute/service` | Start / stop worker |
+| `GET /api/execute/queue` | Direct task queue |
+| `POST /api/execute/submit` | Submit a direct task |
+| `GET /api/execute/metrics` | Agent performance metrics |
+| `GET /api/execute/artifacts` | List HTML artifacts |
+| `GET /api/execute/artifacts/:file` | Serve artifact HTML |
+| `POST /api/github/webhook` | GitHub webhook receiver |
+| `POST /api/inquiry/intake` | External inquiry intake |
 
-- execute queue hanya melihat issue `mode:execute`
-- kalau tidak ada `mode:execute` yang siap, executor akan cek roadmap parent `agent:rei` tanpa mode label lalu auto-pick child issue open berikutnya dari daftar child issue di body/comment roadmap
-- saat service hidup, issue `status:todo` berikutnya akan diklaim ke `status:in_progress`
-- child issue roadmap yang masih `mode:report_only` akan dipromote ke `mode:execute` saat benar-benar diklaim untuk run
-- worker akan pilih runtime sesuai task type, lalu launch `Claude Code` atau `codex exec` dari repo ini dengan issue body + daily handoff sebagai context awal
-- kalau runtime utama kena rate limit / overload, worker akan fallback otomatis ke runtime berikutnya di routing yang aktif
-- worker hanya akan auto-close issue kalau run meninggalkan perubahan repo yang benar-benar baru dan bermakna
-- kalau run selesai bersih tapi hasilnya cuma analisis / tidak meninggalkan perubahan repo, issue akan tetap open dan dipindahkan ke `status:blocked` untuk review manual
-- saat gagal, worker akan comment hasil terakhir lalu pindahkan issue ke `status:blocked`
+---
 
-Di viewer:
+## Architecture
 
-- panel `Execute Agent` akan bilang apakah queue siap jalan, lagi running, atau idle
-- kalau queue datang dari roadmap parent, panel akan bilang child issue mana yang dipilih dari roadmap itu
-- execute preview juga akan menampilkan specialist profile yang kepilih dari isi issue, misalnya frontend, backend, scraping, atau docs
-- repo ini sekarang punya root `DESIGN.md` (preset `cursor` via `getdesign.md`), dan execute prompt akan menyuruh agent baca file itu dulu kalau task menyentuh UI/layout/copy
-- tombol `Start Agent` menyalakan executor lokal
-- tombol `Stop Agent` menghentikan watcher lokal setelah sinyal stop dikirim ke worker aktif
+```
+rei-ops-room/
+├── server.mjs              # HTTP server (all routes)
+├── setup.mjs               # Interactive setup wizard
+├── rei                     # Bash launcher (start/stop/status)
+├── public/                 # Frontend (vanilla JS, no bundler)
+│   ├── app.js
+│   ├── execute-agent-view.js
+│   ├── execute-metrics-panel.js
+│   ├── execute-artifacts-panel.js
+│   └── ...
+├── tools/
+│   ├── execute-worker.mjs      # Core execution loop
+│   ├── execute-bridge.mjs      # GitHub → prompt builder
+│   ├── execute-queue.mjs       # Multi-worker queue
+│   ├── execute-learning.mjs    # Adaptive learning + metrics
+│   ├── execute-sessions.mjs    # Claude session pinning
+│   ├── execute-artifacts.mjs   # HTML artifact scanner
+│   ├── inject-skills.mjs       # Skill installer for Claude Code
+│   ├── rei-cli.mjs             # Server start/stop/status CLI
+│   ├── rei-config.mjs          # Centralized config loader
+│   ├── runtimes/               # Runtime adapters (claude-code, codex)
+│   └── skills/                 # Bundled Claude Code skills
+│       └── visual-explainer/
+└── tests/                  # Node built-in test runner (409 tests)
+```
 
-### Repo Design Brief
+---
 
-`rei-ops-room` sekarang menyimpan `DESIGN.md` di root repo sebagai visual authority lokal.
-
-- source preset: `cursor`
-- refresh command:
+## Development
 
 ```bash
-npx getdesign@latest add cursor --force --out DESIGN.md
+# Run tests
+npm test
+
+# Run tests in watch mode (Node 22+)
+node --test --watch tests/*.test.mjs
 ```
 
-- execute flow akan surface profile ini di preview note kalau issue yang dipilih condong ke frontend/UI work
-
-## Execute Service
-
-Kalau mau executor queue dikelola lintas shell / device session:
-
-```bash
-npm run execute-service -- start
-npm run execute-service -- status
-npm run execute-service -- stop
-```
-
-Catatan:
-
-- service ini wrapper lokal untuk `execute-worker`
-- pid disimpan di `.execute-worker.pid`
-- log append ke `.execute-worker.log`
-- state aktif disimpan di `.execute-worker-state.json`
-- artifact per run ditulis ke `.execute-runs/`
-- saat worker boot, log akan menulis runtime yang tersedia, routing aktif per task type, dan status rate-limit fallback
-
-### Runtime Routing
-
-Default routing:
-
-- `frontend`: `claude-code -> codex`
-- `backend`: `codex -> claude-code`
-- `scraping`: `codex`
-- `docs`: `claude-code -> codex`
-- `general`: `codex -> claude-code`
-
-Kalau perlu override per repo, tambahkan file `.rei-runtimes.json` di root:
-
-```json
-{
-  "preferences": {
-    "frontend": ["claude-code", "codex"],
-    "backend": ["codex", "claude-code"],
-    "scraping": ["codex"],
-    "docs": ["claude-code", "codex"],
-    "general": ["codex", "claude-code"]
-  },
-  "rateLimitFallback": true
-}
-```
-
-Kalau file tidak ada, worker pakai default di atas.
-
-## Jalan Di Laptop Lain
-
-1. Clone repo ini.
-2. Pastikan ada `node` dan CLI `sqlite3`.
-3. Pastikan mesin itu juga punya folder `~/.codex/` dengan `state_5.sqlite` dan `logs_1.sqlite`.
-4. Masuk ke repo lalu jalankan:
-
-```bash
-npm install
-./agent-pixel room
-```
-
-Kalau file Codex atau Claude ada di lokasi lain, set env sebelum jalan:
-
-```bash
-CODEX_HOME=/path/to/.codex \
-CODEX_BIN=/path/to/codex \
-CLAUDE_BIN=/path/to/claude \
-./agent-pixel room
-```
-
-## Catatan
-
-- Kalau workspace aktif masih root `/Users/funtoco/workSpace`, panel `Last Specific Repo` bantu nunjukin repo terakhir yang lebih spesifik.
-- Zona fokus room dipilih dari thread title, cwd, branch, dan activity terbaru yang lolos filter observer.
-- Office editor sekarang cuma ngubah posisi zone/prop/rest secara aman di atas schema layout; movement logic tetap ngikut anchor yang ikut bergeser.
-- Tool observasi seperti Playwright viewer check tidak dihitung sebagai kerja utama.
-- `Scout Rei` cuma bergerak saat ada handoff yang berarti.
-- Skill Codex tidak otomatis “ter-update” dari app ini; app ini membaca runtime Codex, bukan menulis balik ke skill.
+No build step. No transpilation. Edit and reload.

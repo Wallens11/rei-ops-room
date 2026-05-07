@@ -8,7 +8,7 @@ import {
   normalizeMode,
   parseCliArgs,
   selectAgentProcessPid
-} from "../tools/agent-pixel-cli.mjs";
+} from "../tools/rei-cli.mjs";
 
 test("normalizeMode falls back to room", () => {
   assert.equal(normalizeMode("room"), "room");

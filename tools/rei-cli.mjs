@@ -7,8 +7,8 @@ import { promisify } from "node:util";
 const execFileAsync = promisify(execFile);
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const projectRoot = path.resolve(__dirname, "..");
-const pidFile = path.join(projectRoot, ".agent-pixel.pid");
-const logFile = path.join(projectRoot, ".agent-pixel.log");
+const pidFile = path.join(projectRoot, ".rei-server.pid");
+const logFile = path.join(projectRoot, ".rei-server.log");
 const defaultPort = 4317;
 
 export function normalizeMode(mode) {
@@ -451,9 +451,9 @@ async function main() {
   }
 
   if (parsed.command === "help") {
-    console.log("usage: agent-pixel [activate] [room|widget] [--no-open] [--port 4317]");
-    console.log("       agent-pixel stop");
-    console.log("       agent-pixel status");
+    console.log("usage: rei [activate] [room|widget] [--no-open] [--port 4317]");
+    console.log("       rei stop");
+    console.log("       rei status");
     return;
   }
 
