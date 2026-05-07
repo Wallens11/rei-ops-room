@@ -58,6 +58,7 @@ import {
   createEmptyExecuteServiceState
 } from "./execute-agent-view.js";
 import { buildTaskQueueViewModel, buildWorkerStatusBadge } from "./execute-queue-panel.js";
+import { pollArtifacts } from "./execute-artifacts-panel.js";
 import {
   buildSceneHotspots,
   describeSceneSelection,
@@ -1656,6 +1657,8 @@ async function refreshExecuteService() {
     return;
   }
 
+  const prevLastResult = renderState.executeService?.lastResult;
+
   try {
     const response = await fetch("/api/github/execute/service", {
       cache: "no-store"
@@ -1674,6 +1677,16 @@ async function refreshExecuteService() {
       detail: payload?.detail || (error instanceof Error ? error.message : String(error)),
       currentTarget: payload?.currentTarget || null
     };
+  }
+
+  // Refresh artifact panel when a run just completed (lastResult changed)
+  const newLastResult = renderState.executeService?.lastResult;
+  if (
+    newLastResult &&
+    newLastResult.finishedAt !== prevLastResult?.finishedAt &&
+    (newLastResult.status === "completed" || newLastResult.status === "blocked" || newLastResult.status === "failed")
+  ) {
+    void pollArtifacts();
   }
 
   renderExecuteAgent();

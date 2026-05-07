@@ -1240,3 +1240,90 @@ test("createServer GET /api/execute/ledger returns run summary", async (t) => {
   assert.ok(body.byRuntime);
   assert.ok(typeof body.costNote === "string");
 });
+
+// ─── GET /api/execute/artifacts ──────────────────────────────────────────────
+
+test("createServer GET /api/execute/artifacts returns artifact list", async (t) => {
+  const fakeArtifacts = [
+    { filename: "arch.html", filePath: "/tmp/arch.html", issueNumber: 5, runtimeId: "claude-code", createdAt: "2026-05-07T00:00:00.000Z", size: 1000 }
+  ];
+  const server = createServer({
+    getStatus: async () => ({ ok: true }),
+    listArtifacts: async () => fakeArtifacts
+  });
+
+  server.listen(0);
+  await once(server, "listening");
+  t.after(() => server.close());
+
+  const { port } = server.address();
+  const response = await fetch(`http://127.0.0.1:${port}/api/execute/artifacts`);
+  const body = await response.json();
+
+  assert.equal(response.status, 200);
+  assert.ok(Array.isArray(body.artifacts));
+  assert.equal(body.artifacts.length, 1);
+  assert.equal(body.artifacts[0].filename, "arch.html");
+});
+
+test("createServer GET /api/execute/artifacts?issue=5 filters by issue", async (t) => {
+  const server = createServer({
+    getStatus: async () => ({ ok: true }),
+    listArtifacts: async ({ issueNumber }) => {
+      assert.equal(issueNumber, 5);
+      return [];
+    }
+  });
+
+  server.listen(0);
+  await once(server, "listening");
+  t.after(() => server.close());
+
+  const { port } = server.address();
+  const response = await fetch(`http://127.0.0.1:${port}/api/execute/artifacts?issue=5`);
+  const body = await response.json();
+
+  assert.equal(response.status, 200);
+  assert.ok(Array.isArray(body.artifacts));
+});
+
+test("createServer GET /api/execute/artifacts/:filename serves HTML artifact", async (t) => {
+  const htmlContent = Buffer.from("<html><body>diagram</body></html>");
+  const server = createServer({
+    getStatus: async () => ({ ok: true }),
+    readArtifact: async (filename) => {
+      if (filename === "diagram.html") {
+        return { content: htmlContent, contentType: "text/html; charset=utf-8", filename: "diagram.html" };
+      }
+      return null;
+    }
+  });
+
+  server.listen(0);
+  await once(server, "listening");
+  t.after(() => server.close());
+
+  const { port } = server.address();
+  const response = await fetch(`http://127.0.0.1:${port}/api/execute/artifacts/diagram.html`);
+
+  assert.equal(response.status, 200);
+  assert.ok(response.headers.get("content-type").startsWith("text/html"));
+  const text = await response.text();
+  assert.ok(text.includes("diagram"));
+});
+
+test("createServer GET /api/execute/artifacts/:filename returns 404 for missing artifact", async (t) => {
+  const server = createServer({
+    getStatus: async () => ({ ok: true }),
+    readArtifact: async () => null
+  });
+
+  server.listen(0);
+  await once(server, "listening");
+  t.after(() => server.close());
+
+  const { port } = server.address();
+  const response = await fetch(`http://127.0.0.1:${port}/api/execute/artifacts/missing.html`);
+
+  assert.equal(response.status, 404);
+});

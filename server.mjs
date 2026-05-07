@@ -15,6 +15,7 @@ import {
   removeQueueTask,
   signalWorkerWake
 } from "./tools/execute-queue.mjs";
+import { readArtifactFile, readArtifacts } from "./tools/execute-artifacts.mjs";
 
 const execFileAsync = promisify(execFile);
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -1648,6 +1649,8 @@ export function createServer({
   listRuntimes: listRuntimesImpl = defaultListRuntimes,
   getRunLedger: getRunLedgerImpl = defaultGetRunLedger,
   approveIssue: approveIssueImpl = defaultApproveIssue,
+  listArtifacts: listArtifactsImpl = readArtifacts,
+  readArtifact: readArtifactImpl = readArtifactFile,
   serveStatic: serveStaticImpl = serveStatic
 } = {}) {
   return http.createServer(async (request, response) => {
@@ -2059,6 +2062,41 @@ export function createServer({
           detail: error instanceof Error ? error.message : String(error)
         });
       }
+      return;
+    }
+
+    // ─── Artifacts API ────────────────────────────────────────────────────────
+    // GET  /api/execute/artifacts            — list all artifacts
+    // GET  /api/execute/artifacts?issue=42   — filter by issue number
+    // GET  /api/execute/artifacts/:filename  — serve HTML artifact file
+
+    if (url.pathname === "/api/execute/artifacts" && request.method === "GET") {
+      try {
+        const issueParam = url.searchParams.get("issue");
+        const issueNumber = issueParam ? Number(issueParam) : null;
+        const artifacts = await listArtifactsImpl({ issueNumber: Number.isFinite(issueNumber) ? issueNumber : null });
+        writeJson(response, 200, { artifacts });
+      } catch (error) {
+        writeJson(response, 500, { error: "Gagal baca artifacts", detail: String(error) });
+      }
+      return;
+    }
+
+    const artifactMatch = url.pathname.match(/^\/api\/execute\/artifacts\/([^/]+\.html)$/);
+    if (artifactMatch && request.method === "GET") {
+      const filename = artifactMatch[1];
+      const artifact = await readArtifactImpl(filename);
+      if (!artifact) {
+        writeJson(response, 404, { error: "Artifact not found" });
+        return;
+      }
+      response.writeHead(200, {
+        "Content-Type": artifact.contentType,
+        "Content-Length": artifact.content.length,
+        "Cache-Control": "public, max-age=3600",
+        "X-Content-Type-Options": "nosniff"
+      });
+      response.end(artifact.content);
       return;
     }
 

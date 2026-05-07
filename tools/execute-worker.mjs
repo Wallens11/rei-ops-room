@@ -34,6 +34,8 @@ import {
 } from "./execute-queue.mjs";
 import { getLearningEntries, recordRunInsight } from "./execute-learning.mjs";
 import { clearSessionPin, readSessionPin, writeSessionPin } from "./execute-sessions.mjs";
+import { injectSkills } from "./inject-skills.mjs";
+import { scanRunArtifacts } from "./execute-artifacts.mjs";
 import {
   buildRuntimeStartupSummary,
   getRuntime,
@@ -824,6 +826,13 @@ export async function executeNextIssue({
     newChanges
   });
 
+  // Scan for HTML artifacts generated during this run (visual-explainer skill output)
+  const artifacts = await scanRunArtifacts({
+    issueNumber: preview.target.number,
+    runDir: activeRunDir,
+    runtimeId: activeRuntimeId
+  }).catch(() => []);
+
   // Catat insight ke learning log — best-effort, tidak crash worker kalau gagal
   await recordRunInsight({
     issueNumber: preview.target.number,
@@ -885,7 +894,8 @@ export async function executeNextIssue({
       target: preview.target,
       runtimeId: activeRuntimeId,
       detail: `Completed execute issue #${preview.target.number}.`,
-      runDir: activeRunDir
+      runDir: activeRunDir,
+      artifacts
     };
 
     await onStateChange({
@@ -1045,6 +1055,17 @@ export async function runExecuteWorker({
   stdout.write(`[${timestamp()}] execute worker ${startupSummary.availableLine}\n`);
   stdout.write(`[${timestamp()}] execute worker ${startupSummary.routingLine}\n`);
   stdout.write(`[${timestamp()}] execute worker ${startupSummary.fallbackLine}\n`);
+
+  // Inject bundled skills into ~/.claude/skills/ so Claude Code can use them
+  if (availableRuntimes.includes("claude-code")) {
+    const skillResult = await injectSkills().catch(err => ({ installed: [], skipped: [], errors: [err.message] }));
+    if (skillResult.installed.length > 0) {
+      stdout.write(`[${timestamp()}] execute worker skills injected: ${skillResult.installed.join(", ")}\n`);
+    }
+    if (skillResult.errors.length > 0) {
+      stdout.write(`[${timestamp()}] execute worker skill injection warnings: ${skillResult.errors.join(", ")}\n`);
+    }
+  }
 
   // ID unik per worker instance — untuk multi-worker registry
   const workerId = crypto.randomUUID().slice(0, 8);

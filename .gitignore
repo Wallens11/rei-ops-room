@@ -15,3 +15,4 @@ node_modules/
 .DS_Store
 rei.config.json
 .execute-sessions.json
+.execute-artifacts.json
