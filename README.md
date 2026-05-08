@@ -31,9 +31,9 @@ DEMO_MODE=true npm start
 
 ```bash
 # 1. Clone and run the setup wizard
-git clone https://github.com/your-org/rei-ops-room
+git clone https://github.com/Wallens11/rei-ops-room
 cd rei-ops-room
-node setup.mjs
+./rei init       # interactive setup: config, GitHub labels, test connection
 
 # 2. Start the ops room server
 npm start
@@ -43,12 +43,26 @@ npm start
 npm run execute-service -- start
 ```
 
-### Alternative launcher
+### Launcher shortcuts
 
 ```bash
 ./rei room     # open ops room in browser
 ./rei status   # check if the server is running
 ./rei stop     # stop the server
+./rei init     # run setup wizard again
+```
+
+### Docker
+
+```bash
+# Demo mode — no setup needed
+docker run -p 4317:4317 -e DEMO_MODE=true ghcr.io/wallens11/rei-ops-room
+
+# Live mode
+docker run -p 4317:4317 \
+  -e GITHUB_TOKEN=ghp_xxx \
+  -e REI_REPO=owner/repo \
+  ghcr.io/wallens11/rei-ops-room
 ```
 
 ---
