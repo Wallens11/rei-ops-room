@@ -696,10 +696,11 @@ async function getExecuteServiceStatus() {
   };
 }
 
-async function controlExecuteService({ action }) {
+async function controlExecuteService({ action, workerIndex = 1 }) {
   const module = await import("./tools/execute-worker-cli.mjs");
   return module.controlExecuteService({
     action,
+    workerIndex: Number.isFinite(Number(workerIndex)) && Number(workerIndex) >= 1 ? Math.round(Number(workerIndex)) : 1,
     logger: () => {}
   });
 }
@@ -1884,6 +1885,9 @@ export function createServer({
         try {
           const body = await readJsonRequestBody(request);
           action = String(body?.action || "").trim();
+          const workerIndex = Number.isFinite(Number(body?.workerIndex)) && Number(body?.workerIndex) >= 1
+            ? Math.round(Number(body.workerIndex))
+            : 1;
 
           if (action !== "start" && action !== "stop") {
             writeJson(response, 400, {
@@ -1894,7 +1898,8 @@ export function createServer({
           }
 
           const payload = await controlExecuteServiceImpl({
-            action
+            action,
+            workerIndex
           });
           writeJson(response, 200, payload);
         } catch (error) {

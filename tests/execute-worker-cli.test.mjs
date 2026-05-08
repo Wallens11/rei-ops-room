@@ -5,7 +5,9 @@ import {
   buildExecuteWorkerStatusLine,
   inferExecuteWorkerAction,
   inferExecuteWorkerRuntime,
-  parseExecuteWorkerCliArgs
+  parseExecuteWorkerCliArgs,
+  workerPidFile,
+  workerLogFile
 } from "../tools/execute-worker-cli.mjs";
 
 test("parseExecuteWorkerCliArgs understands start interval and repo overrides", () => {
@@ -20,8 +22,36 @@ test("parseExecuteWorkerCliArgs understands start interval and repo overrides", 
   assert.deepEqual(parsed, {
     command: "start",
     repo: "Wallens11/rei-ops-room",
-    intervalMs: 90_000
+    intervalMs: 90_000,
+    workerIndex: 1
   });
+});
+
+test("parseExecuteWorkerCliArgs parses --worker flag", () => {
+  const parsed = parseExecuteWorkerCliArgs(["start", "--worker", "2"]);
+  assert.equal(parsed.workerIndex, 2);
+  assert.equal(parsed.command, "start");
+});
+
+test("parseExecuteWorkerCliArgs defaults workerIndex to 1 when --worker is omitted", () => {
+  const parsed = parseExecuteWorkerCliArgs(["stop"]);
+  assert.equal(parsed.workerIndex, 1);
+});
+
+test("workerPidFile returns canonical path for worker 1 and indexed path for worker 2", () => {
+  const pid1 = workerPidFile(1);
+  const pid2 = workerPidFile(2);
+  assert.ok(pid1.endsWith(".execute-worker.pid"), `worker 1 pid file should end with .execute-worker.pid, got ${pid1}`);
+  assert.ok(pid2.endsWith(".execute-worker-2.pid"), `worker 2 pid file should end with .execute-worker-2.pid, got ${pid2}`);
+  assert.notEqual(pid1, pid2);
+});
+
+test("workerLogFile returns canonical path for worker 1 and indexed path for worker 2", () => {
+  const log1 = workerLogFile(1);
+  const log2 = workerLogFile(2);
+  assert.ok(log1.endsWith(".execute-worker.log"), `worker 1 log file should end with .execute-worker.log, got ${log1}`);
+  assert.ok(log2.endsWith(".execute-worker-2.log"), `worker 2 log file should end with .execute-worker-2.log, got ${log2}`);
+  assert.notEqual(log1, log2);
 });
 
 test("inferExecuteWorkerRuntime treats a live worker pid as running", () => {

@@ -129,14 +129,16 @@ async function saveQueue(tasks) {
 /**
  * Tambah task baru ke queue.
  *
- * @param task      — deskripsi task (required)
- * @param context   — konteks tambahan (optional, misal "ini untuk repo X")
- * @param runtimeId — override runtime: "codex" | "claude-code" | null (auto-select)
- * @param priority  — angka prioritas: lebih tinggi = dijalankan lebih dulu (default 0)
+ * @param task              — deskripsi task (required)
+ * @param context           — konteks tambahan (optional, misal "ini untuk repo X")
+ * @param runtimeId         — override runtime: "codex" | "claude-code" | null (auto-select)
+ * @param priority          — angka prioritas: lebih tinggi = dijalankan lebih dulu (default 0)
+ * @param parentIssueNumber — GitHub issue number yang menjadi asal spawn (optional)
+ * @param spawnedBy         — identifier siapa yang spawn task ini (optional, misal "agent")
  *
  * Return: task entry yang baru dibuat.
  */
-export async function enqueueTask({ task, context = null, runtimeId = null, priority = 0 } = {}) {
+export async function enqueueTask({ task, context = null, runtimeId = null, priority = 0, parentIssueNumber = null, spawnedBy = null } = {}) {
   const tasks = await readQueue();
 
   const entry = {
@@ -145,6 +147,8 @@ export async function enqueueTask({ task, context = null, runtimeId = null, prio
     context: context ? String(context).trim() : null,
     runtimeId: runtimeId || null,
     priority: Number.isFinite(Number(priority)) ? Number(priority) : 0,
+    parentIssueNumber: parentIssueNumber ? Number(parentIssueNumber) : null,
+    spawnedBy: spawnedBy ? String(spawnedBy) : null,
     submittedAt: new Date().toISOString(),
     status: "queued",
     startedAt: null,
@@ -158,6 +162,28 @@ export async function enqueueTask({ task, context = null, runtimeId = null, prio
   tasks.push(entry);
   await saveQueue(tasks);
   return entry;
+}
+
+/**
+ * Submit a task from an agent spawn request.
+ * Maps the spawn-request fields to the queue task format.
+ *
+ * @param title             — task title (used as `task`)
+ * @param body              — full instructions (used as `context`)
+ * @param runtimeId         — runtime override (optional)
+ * @param parentIssueNumber — parent GitHub issue number (optional)
+ * @param spawnedBy         — origin identifier, e.g. "agent" (optional)
+ *
+ * Return: task entry that was created.
+ */
+export async function submitQueueTask({ title, body = null, runtimeId = null, parentIssueNumber = null, spawnedBy = null } = {}) {
+  return enqueueTask({
+    task: String(title || "").trim(),
+    context: body ? String(body).trim() : null,
+    runtimeId: runtimeId || null,
+    parentIssueNumber,
+    spawnedBy
+  });
 }
 
 /**

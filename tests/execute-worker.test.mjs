@@ -14,6 +14,7 @@ import {
   recoverStuckTasks,
   resolveCodexCommand
 } from "../tools/execute-worker.mjs";
+import { submitQueueTask, readQueue, executeQueueFile } from "../tools/execute-queue.mjs";
 
 test("resolveCodexCommand prefers CODEX_BIN when provided", async () => {
   const command = await resolveCodexCommand({
@@ -335,6 +336,103 @@ test("executeNextIssue passes composed timeout signal even without outer signal"
     // Even without outer signal, mission should receive a timeout AbortSignal
     assert.ok(receivedSignal instanceof AbortSignal, "runMission should always receive an AbortSignal for timeout");
     assert.ok(!receivedSignal.aborted, "Signal should not be aborted yet on fast completion");
+  } finally {
+    await fs.rm(tempDir, { recursive: true, force: true });
+  }
+});
+
+test("executeNextIssue picks up .spawn-request.json and queues sub-task", async () => {
+  const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "rei-spawn-test-"));
+
+  try {
+    // Write a spawn request that the agent would have created
+    const spawnRequest = {
+      title: "Write tests for the new feature",
+      body: "Implement comprehensive tests for tools/feature.mjs.",
+      runtimeId: "claude-code",
+      parentIssueNumber: 77
+    };
+    await fs.writeFile(path.join(tempDir, ".spawn-request.json"), JSON.stringify(spawnRequest), "utf8");
+
+    let spawnTaskQueued = null;
+
+    await executeNextIssue({
+      cwd: tempDir,
+      repo: "Wallens11/rei-ops-room",
+      availableRuntimes: ["codex"],
+      previewAction: async () => ({
+        repo: "Wallens11/rei-ops-room",
+        status: "ready",
+        target: { number: 77, title: "spawn test issue", url: "https://github.com/Wallens11/rei-ops-room/issues/77", status: "todo" },
+        issue: { number: 77, title: "spawn test issue", body: "test spawn", url: "https://github.com/Wallens11/rei-ops-room/issues/77", labels: [] },
+        skillProfile: { id: "general", label: "General" },
+        prompt: "Do spawn test."
+      }),
+      listWorktreePaths: async ({ stage }) => stage === "after" ? ["tools/feature.mjs"] : [],
+      loadRuntimeConfig: async () => ({ preferences: {}, rateLimitFallback: true }),
+      runMission: async ({ runDir }) => {
+        await fs.mkdir(runDir, { recursive: true });
+        return { exitCode: 0, aborted: false, outputLastMessageFile: null };
+      },
+      transitionIssueToInProgress: async () => {},
+      transitionIssueToDone: async () => {},
+      transitionIssueToBlocked: async () => {},
+      postIssueComment: async () => {},
+      onStateChange: async () => {}
+    });
+
+    // The spawn request file should have been consumed
+    let spawnFileExists = true;
+    try {
+      await fs.access(path.join(tempDir, ".spawn-request.json"));
+    } catch {
+      spawnFileExists = false;
+    }
+    assert.ok(!spawnFileExists, ".spawn-request.json should be removed after detection");
+
+    // A task should have been queued
+    const queue = await readQueue();
+    const spawned = queue.find((t) => t.task === spawnRequest.title);
+    assert.ok(spawned, "spawned task should appear in the queue");
+    assert.equal(spawned.spawnedBy, "agent");
+    assert.equal(spawned.parentIssueNumber, 77);
+
+    // Clean up the spawned task from the real queue so tests are idempotent
+    const { removeQueueTask } = await import("../tools/execute-queue.mjs");
+    if (spawned) await removeQueueTask(spawned.id).catch(() => {});
+  } finally {
+    await fs.rm(tempDir, { recursive: true, force: true });
+  }
+});
+
+test("executeNextIssue ignores missing .spawn-request.json gracefully", async () => {
+  const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "rei-no-spawn-"));
+
+  try {
+    await assert.doesNotReject(executeNextIssue({
+      cwd: tempDir,
+      repo: "Wallens11/rei-ops-room",
+      availableRuntimes: ["codex"],
+      previewAction: async () => ({
+        repo: "Wallens11/rei-ops-room",
+        status: "ready",
+        target: { number: 78, title: "no spawn test", url: "https://github.com/Wallens11/rei-ops-room/issues/78", status: "todo" },
+        issue: { number: 78, title: "no spawn test", body: "no spawn", url: "https://github.com/Wallens11/rei-ops-room/issues/78", labels: [] },
+        skillProfile: { id: "general", label: "General" },
+        prompt: "No spawn."
+      }),
+      listWorktreePaths: async () => [],
+      loadRuntimeConfig: async () => ({ preferences: {}, rateLimitFallback: true }),
+      runMission: async ({ runDir }) => {
+        await fs.mkdir(runDir, { recursive: true });
+        return { exitCode: 0, aborted: false, outputLastMessageFile: null };
+      },
+      transitionIssueToInProgress: async () => {},
+      transitionIssueToDone: async () => {},
+      transitionIssueToBlocked: async () => {},
+      postIssueComment: async () => {},
+      onStateChange: async () => {}
+    }));
   } finally {
     await fs.rm(tempDir, { recursive: true, force: true });
   }

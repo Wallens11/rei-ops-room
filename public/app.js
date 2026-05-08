@@ -188,6 +188,8 @@ const elements = {
   githubExecuteNote: document.getElementById("github-execute-note"),
   githubExecuteTrust: document.getElementById("github-execute-trust"),
   githubExecuteButton: document.getElementById("github-execute-button"),
+  githubExecuteWorker2Button: document.getElementById("github-execute-worker2-button"),
+  githubExecuteWorker2Badge: document.getElementById("github-execute-worker2-badge"),
   githubInboxList: document.getElementById("github-inbox-list"),
   taskQueueTitle: document.getElementById("task-queue-title"),
   taskQueueChip: document.getElementById("task-queue-chip"),
@@ -246,6 +248,7 @@ const renderState = {
   reportOnlyService: createEmptyReportOnlyServiceState(),
   executePreview: createEmptyExecutePreviewState(),
   executeService: createEmptyExecuteServiceState(),
+  executeServiceWorker2: createEmptyExecuteServiceState(),
   taskQueue: { tasks: [], submitting: false },
   autopilot: loadReportOnlyAutopilotState(),
   reducedMotion: false,
@@ -1235,6 +1238,17 @@ function renderExecuteAgent() {
       elements.githubExecuteTrust.appendChild(item);
     }
   }
+
+  // Worker 2 badge + button
+  if (elements.githubExecuteWorker2Badge && elements.githubExecuteWorker2Button) {
+    const w2 = renderState.executeServiceWorker2;
+    const w2Running = w2?.running === true;
+    elements.githubExecuteWorker2Badge.textContent = w2Running ? "running" : "stopped";
+    elements.githubExecuteWorker2Badge.style.opacity = w2Running ? "1" : "0.5";
+    elements.githubExecuteWorker2Button.textContent = w2Running ? "Stop Worker 2" : "Start Worker 2";
+    elements.githubExecuteWorker2Button.dataset.action = w2Running ? "stop" : "start";
+    elements.githubExecuteWorker2Button.disabled = w2?.pendingAction === "start" || w2?.pendingAction === "stop";
+  }
 }
 
 async function readJsonResponseOrThrow(response) {
@@ -1764,6 +1778,43 @@ async function controlExecuteService(action) {
   renderExecuteAgent();
   await refreshGithubInbox();
   await refreshExecutePreview();
+}
+
+async function controlExecuteServiceWorker2(action) {
+  if (!action || (action !== "start" && action !== "stop")) return;
+
+  renderState.executeServiceWorker2 = {
+    ...renderState.executeServiceWorker2,
+    pendingAction: action
+  };
+  renderExecuteAgent();
+
+  try {
+    const response = await fetch("/api/github/execute/service", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ action, workerIndex: 2 })
+    });
+
+    const payload = await readJsonResponseOrThrow(response);
+    renderState.executeServiceWorker2 = {
+      ...payload,
+      status: payload.running ? "running" : "idle"
+    };
+  } catch (error) {
+    const payload = error?.payload || null;
+    renderState.executeServiceWorker2 = {
+      status: "error",
+      running: false,
+      pid: null,
+      source: payload?.source || "control_error",
+      action: payload?.action || action,
+      detail: payload?.detail || (error instanceof Error ? error.message : String(error)),
+      currentTarget: null
+    };
+  }
+
+  renderExecuteAgent();
 }
 
 async function controlReportOnlyService(action) {
@@ -3442,6 +3493,9 @@ elements.githubServiceButton?.addEventListener("click", () => {
 });
 elements.githubExecuteButton?.addEventListener("click", () => {
   void controlExecuteService(elements.githubExecuteButton.dataset.action || "");
+});
+elements.githubExecuteWorker2Button?.addEventListener("click", () => {
+  void controlExecuteServiceWorker2(elements.githubExecuteWorker2Button.dataset.action || "");
 });
 elements.taskQueueSubmit?.addEventListener("click", () => {
   void submitDirectTask();

@@ -824,6 +824,32 @@ export async function executeNextIssue({
 
   clearTimeout(timeoutHandle);
 
+  // Check for spawn requests written by the agent during its run
+  const spawnRequestPath = path.join(cwd, ".spawn-request.json");
+  let spawnedTask = null;
+  try {
+    const spawnRaw = await fs.readFile(spawnRequestPath, "utf8");
+    const spawnReq = JSON.parse(spawnRaw);
+    // Validate required fields
+    if (spawnReq.title && spawnReq.body) {
+      // Remove the file so it doesn't trigger again
+      await fs.rm(spawnRequestPath, { force: true });
+      // Submit to the direct task queue
+      const { submitQueueTask } = await import("./execute-queue.mjs");
+      spawnedTask = await submitQueueTask({
+        title: spawnReq.title,
+        body: spawnReq.body,
+        runtimeId: spawnReq.runtimeId || null,
+        parentIssueNumber: spawnReq.parentIssueNumber || preview.target.number,
+        spawnedBy: "agent"
+      });
+      const tsMid = timestamp();
+      process.stdout.write(`[${tsMid}] execute worker spawned sub-task: "${spawnReq.title}"\n`);
+    }
+  } catch {
+    // No spawn request, or invalid JSON — ignore
+  }
+
   const nextWorktreePaths = await listWorktreePaths({
     stage: "after",
     cwd,

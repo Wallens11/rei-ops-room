@@ -15,11 +15,30 @@ const execFileAsync = promisify(execFile);
 const defaultIntervalMs = 60_000;
 const minIntervalMs = 30_000;
 
+/**
+ * Return the PID file path for a given worker index.
+ * Worker 1 uses the canonical .execute-worker.pid for backward compat.
+ */
+export function workerPidFile(workerIndex = 1) {
+  if (workerIndex === 1) return executeWorkerPidFile;
+  return path.join(path.dirname(executeWorkerPidFile), `.execute-worker-${workerIndex}.pid`);
+}
+
+/**
+ * Return the log file path for a given worker index.
+ * Worker 1 uses the canonical .execute-worker.log for backward compat.
+ */
+export function workerLogFile(workerIndex = 1) {
+  if (workerIndex === 1) return executeWorkerLogFile;
+  return path.join(path.dirname(executeWorkerLogFile), `.execute-worker-${workerIndex}.log`);
+}
+
 export function parseExecuteWorkerCliArgs(argv) {
   const args = [...argv];
   let command = "status";
   let repo = null;
   let intervalMs = defaultIntervalMs;
+  let workerIndex = 1;
 
   if (args[0] && !args[0].startsWith("--")) {
     command = args.shift();
@@ -35,13 +54,20 @@ export function parseExecuteWorkerCliArgs(argv) {
 
     if (current === "--interval-seconds") {
       intervalMs = Math.max(Number(args.shift() || 60) * 1000, minIntervalMs);
+      continue;
+    }
+
+    if (current === "--worker") {
+      const n = Number(args.shift() || 1);
+      workerIndex = Number.isFinite(n) && n >= 1 ? Math.round(n) : 1;
     }
   }
 
   return {
     command,
     repo,
-    intervalMs
+    intervalMs,
+    workerIndex
   };
 }
 
@@ -120,9 +146,9 @@ function defaultLogger(message) {
   console.log(message);
 }
 
-async function readPidFile() {
+async function readPidFile(workerIndex = 1) {
   try {
-    const pidText = await fs.readFile(executeWorkerPidFile, "utf8");
+    const pidText = await fs.readFile(workerPidFile(workerIndex), "utf8");
     const pid = Number(pidText.trim());
     return Number.isFinite(pid) && pid > 0 ? pid : null;
   } catch {
@@ -156,8 +182,8 @@ async function readProcessCommand(pid) {
   }
 }
 
-export async function inspectExecuteWorkerRuntime() {
-  const pidFilePid = await readPidFile();
+export async function inspectExecuteWorkerRuntime({ workerIndex = 1 } = {}) {
+  const pidFilePid = await readPidFile(workerIndex);
   const pidFileAlive = isProcessAlive(pidFilePid);
   const pidFileCommand = await readProcessCommand(pidFilePid);
   const state = await readExecuteWorkerState();
@@ -171,21 +197,22 @@ export async function inspectExecuteWorkerRuntime() {
     pidFilePid,
     pidFileAlive,
     pidFileCommand,
+    workerIndex,
     status: state?.status || "idle",
     currentTarget: state?.currentTarget || null,
     lastResult: state?.lastResult || null
   };
 }
 
-async function cleanupPidFile() {
-  await fs.rm(executeWorkerPidFile, {
+async function cleanupPidFile(workerIndex = 1) {
+  await fs.rm(workerPidFile(workerIndex), {
     force: true
   });
 }
 
-async function ensureCleanPidFile(runtime) {
+async function ensureCleanPidFile(runtime, workerIndex = 1) {
   if (runtime.source === "stale_pid" || runtime.source === "foreign_pid") {
-    await cleanupPidFile();
+    await cleanupPidFile(workerIndex);
   }
 }
 
@@ -201,12 +228,14 @@ async function waitForWorkerStart(pid, attempts = 12) {
   return false;
 }
 
-async function startDetachedWorker({ repo = null, intervalMs = defaultIntervalMs }) {
+async function startDetachedWorker({ repo = null, intervalMs = defaultIntervalMs, workerIndex = 1 }) {
   await fs.mkdir(projectRoot, {
     recursive: true
   });
   const isWin = process.platform === "win32";
-  const logHandle = isWin ? null : await fs.open(executeWorkerLogFile, "a");
+  const logPath = workerLogFile(workerIndex);
+  const pidPath = workerPidFile(workerIndex);
+  const logHandle = isWin ? null : await fs.open(logPath, "a");
   const args = ["tools/execute-worker.mjs"];
 
   if (repo) {
@@ -224,7 +253,7 @@ async function startDetachedWorker({ repo = null, intervalMs = defaultIntervalMs
   });
 
   child.unref();
-  await fs.writeFile(executeWorkerPidFile, `${child.pid}\n`, "utf8");
+  await fs.writeFile(pidPath, `${child.pid}\n`, "utf8");
   if (logHandle) await logHandle.close();
 
   const alive = await waitForWorkerStart(child.pid);
@@ -236,25 +265,25 @@ async function startDetachedWorker({ repo = null, intervalMs = defaultIntervalMs
 }
 
 export async function startExecuteWorker(options = {}) {
-  const { logger = defaultLogger, ...workerOptions } = options;
-  const runtime = await inspectExecuteWorkerRuntime();
+  const { logger = defaultLogger, workerIndex = 1, ...workerOptions } = options;
+  const runtime = await inspectExecuteWorkerRuntime({ workerIndex });
   const action = inferExecuteWorkerAction({
     runtime
   });
 
   if (action.type === "reuse") {
-    logger(`execute worker already running (pid ${action.pid})`);
+    logger(`execute worker ${workerIndex} already running (pid ${action.pid})`);
     return runtime;
   }
 
-  await ensureCleanPidFile(runtime);
-  const pid = await startDetachedWorker(workerOptions);
-  logger(`execute worker started (pid ${pid})`);
-  return inspectExecuteWorkerRuntime();
+  await ensureCleanPidFile(runtime, workerIndex);
+  const pid = await startDetachedWorker({ ...workerOptions, workerIndex });
+  logger(`execute worker ${workerIndex} started (pid ${pid})`);
+  return inspectExecuteWorkerRuntime({ workerIndex });
 }
 
-export async function stopExecuteWorker({ logger = defaultLogger } = {}) {
-  const runtime = await inspectExecuteWorkerRuntime();
+export async function stopExecuteWorker({ logger = defaultLogger, workerIndex = 1 } = {}) {
+  const runtime = await inspectExecuteWorkerRuntime({ workerIndex });
 
   if (runtime.running && runtime.pid) {
     try {
@@ -265,26 +294,28 @@ export async function stopExecuteWorker({ logger = defaultLogger } = {}) {
       }
     }
 
-    await cleanupPidFile();
-    logger("execute worker stopped");
-    return inspectExecuteWorkerRuntime();
+    await cleanupPidFile(workerIndex);
+    logger(`execute worker ${workerIndex} stopped`);
+    return inspectExecuteWorkerRuntime({ workerIndex });
   }
 
-  await ensureCleanPidFile(runtime);
+  await ensureCleanPidFile(runtime, workerIndex);
   logger(buildExecuteWorkerStatusLine(runtime));
-  return inspectExecuteWorkerRuntime();
+  return inspectExecuteWorkerRuntime({ workerIndex });
 }
 
 export async function controlExecuteService({
   action,
   repo = null,
   intervalMs = defaultIntervalMs,
+  workerIndex = 1,
   logger = () => {}
 } = {}) {
   if (action === "start") {
     const runtime = await startExecuteWorker({
       repo,
       intervalMs,
+      workerIndex,
       logger
     });
 
@@ -296,6 +327,7 @@ export async function controlExecuteService({
 
   if (action === "stop") {
     const runtime = await stopExecuteWorker({
+      workerIndex,
       logger
     });
 
@@ -305,15 +337,15 @@ export async function controlExecuteService({
     };
   }
 
-  const runtime = await inspectExecuteWorkerRuntime();
+  const runtime = await inspectExecuteWorkerRuntime({ workerIndex });
   return {
     ...runtime,
     detail: buildExecuteWorkerStatusLine(runtime)
   };
 }
 
-async function printStatus({ logger = defaultLogger } = {}) {
-  const runtime = await inspectExecuteWorkerRuntime();
+async function printStatus({ logger = defaultLogger, workerIndex = 1 } = {}) {
+  const runtime = await inspectExecuteWorkerRuntime({ workerIndex });
   logger(buildExecuteWorkerStatusLine(runtime));
   return runtime;
 }
@@ -327,18 +359,18 @@ async function main() {
   }
 
   if (parsed.command === "stop") {
-    await stopExecuteWorker();
+    await stopExecuteWorker({ workerIndex: parsed.workerIndex });
     return;
   }
 
   if (parsed.command === "help") {
-    console.log("usage: execute-service start [--repo owner/name] [--interval-seconds 60]");
-    console.log("       execute-service stop");
-    console.log("       execute-service status");
+    console.log("usage: execute-service start [--repo owner/name] [--interval-seconds 60] [--worker N]");
+    console.log("       execute-service stop [--worker N]");
+    console.log("       execute-service status [--worker N]");
     return;
   }
 
-  await printStatus();
+  await printStatus({ workerIndex: parsed.workerIndex });
 }
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
