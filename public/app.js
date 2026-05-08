@@ -2440,6 +2440,17 @@ function drawRoomBase(tone = "calm") {
   context.fillStyle = wallGradient;
   context.fillRect(0, 0, CANVAS_WIDTH, layout.canvas.wall_height);
 
+  // Ceiling overhead light strip (centered top)
+  const lightIntensity = tone === "busy" ? 0.28 : tone === "steady" ? 0.22 : 0.16;
+  const lightGrad = context.createRadialGradient(320, 0, 0, 320, 0, 180);
+  lightGrad.addColorStop(0, `rgba(200, 230, 255, ${lightIntensity})`);
+  lightGrad.addColorStop(1, "rgba(200, 230, 255, 0)");
+  context.fillStyle = lightGrad;
+  context.fillRect(0, 0, CANVAS_WIDTH, layout.canvas.wall_height);
+  // Light fixture pixel art
+  drawPixelRect(240, 0, 160, 2, "rgba(255,255,255,0.15)");
+  drawPixelRect(260, 0, 120, 5, "rgba(220,240,255,0.22)");
+
   // Decorative bookshelf on left wall
   drawBookshelf(12, 30);
 
@@ -2450,7 +2461,7 @@ function drawRoomBase(tone = "calm") {
   drawClock(590, 52, renderState.frame);
 
   // Warm lamp glow (right side of room)
-  drawWarmLamp(560, 130, renderState.frame);
+  drawWarmLamp(555, 125, renderState.frame);
 
   // Floor
   context.fillStyle = COLORS.bg2;
@@ -3050,10 +3061,262 @@ function drawActivityCue(actor, activity, accent, pose = "stand") {
   }
 }
 
+// ─── Pixel art character renderer ────────────────────────────────────────────
+
+// Palette per actor type (hair, shirt, pants, skin, shoe)
+const ACTOR_COSTUMES = {
+  lead:    { hair: "#2a1a3e", shirt: "#b8a2ff", pants: "#1a1a3a", skin: "#f5cfa0", shoe: "#1a1010" },
+  api:     { hair: "#0a3020", shirt: "#3effb0", pants: "#0d2a20", skin: "#f5cfa0", shoe: "#101a14" },
+  db:      { hair: "#3a2000", shirt: "#ffcc66", pants: "#2a1800", skin: "#f5cfa0", shoe: "#1a1000" },
+  docs:    { hair: "#3a0010", shirt: "#ff907c", pants: "#2a0010", skin: "#f5cfa0", shoe: "#1a0808" },
+  scout:   { hair: "#1a1050", shirt: "#a070ff", pants: "#0d0830", skin: "#f5cfa0", shoe: "#100818" },
+  default: { hair: "#102030", shirt: "#65e4ff", pants: "#0d1f31", skin: "#f5cfa0", shoe: "#080c10" },
+};
+
+function actorCostume(actorId) {
+  return ACTOR_COSTUMES[actorId] || ACTOR_COSTUMES.default;
+}
+
+// PX = 2px pixel size — feels crisp at canvas scale
+const PX = 2;
+
+/**
+ * Draw a detailed pixel art character.
+ * cx = horizontal center, ty = top of character (head top).
+ * Total height: ~44px (22 "pixels" tall at PX=2).
+ */
+function drawCharacterSprite(cx, ty, {
+  costume,
+  direction = 1,       // 1=right, -1=left
+  pose = "stand",      // stand | walk | sit | type | read
+  walkFrame = 0,       // 0-3 for 4-frame walk cycle
+  isBlink = false,
+  isPrimary = false,
+  accent = "#65e4ff",
+  idleSway = 0,        // small float for idle head sway
+}) {
+  const c = costume;
+  const flip = direction === -1;
+
+  // Helper: draw pixel block, flipped if facing left
+  function dpx(rx, ry, w, h, color) {
+    const drawX = flip ? cx + (-(rx + w) * PX) : cx + rx * PX;
+    context.fillStyle = color;
+    context.fillRect(drawX, ty + ry * PX, w * PX, h * PX);
+  }
+
+  // ── Shadow ──────────────────────────────────────────────────────────────────
+  context.save();
+  context.globalAlpha = 0.25;
+  context.fillStyle = "#000";
+  context.beginPath();
+  if (pose === "sit" || pose === "type" || pose === "read") {
+    context.ellipse(cx, ty + 36 * PX, 14, 4, 0, 0, Math.PI * 2);
+  } else {
+    context.ellipse(cx, ty + 22 * PX, 14, 4, 0, 0, Math.PI * 2);
+  }
+  context.fill();
+  context.restore();
+
+  // ── Primary agent halo ───────────────────────────────────────────────────────
+  if (isPrimary) {
+    const haloPulse = 0.25 + Math.abs(Math.sin(renderState.frame * 0.05)) * 0.25;
+    context.save();
+    context.globalAlpha = haloPulse;
+    context.fillStyle = accent;
+    context.beginPath();
+    const haloY = (pose === "sit" || pose === "type" || pose === "read") ? ty + 36 * PX : ty + 22 * PX;
+    context.ellipse(cx, haloY, 18, 5, 0, 0, Math.PI * 2);
+    context.fill();
+    context.restore();
+  }
+
+  // ── SEATED POSE ─────────────────────────────────────────────────────────────
+  if (pose === "sit" || pose === "type" || pose === "read") {
+    // Chair / seat suggestion
+    context.fillStyle = "rgba(255,255,255,0.08)";
+    context.fillRect(cx - 12, ty + 24 * PX, 24, 1);
+
+    // Lower body (lap)
+    dpx(-7, 16, 14, 5, c.pants);
+    dpx(-8, 19, 4, 4, c.pants);  // left thigh
+    dpx( 4, 19, 4, 4, c.pants);  // right thigh
+
+    // Shoes (visible when seated)
+    dpx(-8, 22, 4, 3, c.shoe);
+    dpx( 4, 22, 4, 3, c.shoe);
+
+    // Torso / shirt
+    dpx(-6, 9, 12, 8, c.shirt);
+    // Shirt collar/neckline
+    dpx(-2, 9, 4, 2, "#fff");
+
+    // Belt
+    dpx(-7, 16, 14, 2, "#333");
+
+    // Arms based on pose
+    if (pose === "type") {
+      // Arms forward on keyboard
+      dpx(-11, 13, 5, 5, c.shirt);
+      dpx( 6,  13, 5, 5, c.shirt);
+      dpx(-11, 17, 5, 3, c.skin); // hands
+      dpx( 6,  17, 5, 3, c.skin);
+    } else if (pose === "read") {
+      // Arms up holding something
+      dpx(-12, 11, 5, 7, c.shirt);
+      dpx(  7, 11, 5, 7, c.shirt);
+      dpx(-12, 17, 5, 3, c.skin);
+      dpx(  7, 17, 5, 3, c.skin);
+    } else {
+      dpx(-11, 14, 5, 6, c.shirt);
+      dpx( 6,  14, 5, 6, c.shirt);
+      dpx(-11, 19, 5, 3, c.skin);
+      dpx( 6,  19, 5, 3, c.skin);
+    }
+
+    // Neck
+    dpx(-2, 7, 4, 3, c.skin);
+
+    // Head
+    const hx = Math.round(idleSway);
+    dpx(-6 + hx, 0, 12, 8, c.skin);
+    // Hair
+    dpx(-6 + hx, 0, 12, 3, c.hair);
+    dpx(-7 + hx, 1, 2, 4, c.hair); // left sideburn
+    dpx( 5 + hx, 1, 2, 4, c.hair); // right sideburn
+    // Ears
+    dpx(-7 + hx, 3, 1, 3, c.skin);
+    dpx( 6 + hx, 3, 1, 3, c.skin);
+
+    // Eyes
+    if (!isBlink) {
+      dpx(-5 + hx, 3, 3, 2, "#fff");
+      dpx( 2 + hx, 3, 3, 2, "#fff");
+      // Pupils
+      const pupilOffset = direction === -1 ? -1 : 1;
+      dpx(-4 + hx + pupilOffset, 3, 1, 2, "#111");
+      dpx( 3 + hx + pupilOffset, 3, 1, 2, "#111");
+      // Focused dot when typing
+      if (pose === "type") {
+        dpx(hx, 5, 2, 1, withAlpha(accent, 0.7));
+      }
+    } else {
+      // Blink — just a line
+      dpx(-5 + hx, 4, 3, 1, "#555");
+      dpx( 2 + hx, 4, 3, 1, "#555");
+    }
+    // Nose
+    dpx(-1 + hx, 5, 2, 1, withAlpha(c.skin, 0.6));
+    // Mouth — smile when primary, neutral otherwise
+    if (isPrimary) {
+      dpx(-3 + hx, 7, 2, 1, "#c07060");
+      dpx(-1 + hx, 8, 4, 1, "#c07060");
+      dpx( 3 + hx, 7, 2, 1, "#c07060");
+    } else {
+      dpx(-2 + hx, 7, 4, 1, "#c07060");
+    }
+
+    return; // seated done
+  }
+
+  // ── STANDING / WALKING POSE ──────────────────────────────────────────────────
+
+  // 4-frame walk animation: compute leg/arm positions
+  // walkFrame 0-3: 0=neutral, 1=left fwd, 2=neutral, 3=right fwd
+  let leftLegDY = 0, rightLegDY = 0, leftArmDX = 0, rightArmDX = 0;
+  let leftLegDX = 0, rightLegDX = 0;
+
+  if (pose === "walk") {
+    const walkCycle = [
+      { ll: 0, rl: 0, la: 0, ra: 0 },   // neutral
+      { ll: -2, rl: 2, la: 2, ra: -2 }, // left fwd
+      { ll: 0, rl: 0, la: 0, ra: 0 },   // neutral
+      { ll: 2, rl: -2, la: -2, ra: 2 }, // right fwd
+    ][walkFrame % 4];
+    leftLegDY  = walkCycle.ll;
+    rightLegDY = walkCycle.rl;
+    leftArmDX  = walkCycle.la;
+    rightArmDX = walkCycle.ra;
+    leftLegDX  = walkCycle.ll > 0 ? 1 : 0;
+    rightLegDX = walkCycle.rl > 0 ? 1 : 0;
+  }
+
+  // Shoes
+  dpx(-7,        19 + leftLegDY,  7, 3, c.shoe);
+  dpx( 0,        19 + rightLegDY, 7, 3, c.shoe);
+
+  // Pants / legs
+  dpx(-6,        12 + leftLegDY,  5, 8, c.pants);
+  dpx( 1,        12 + rightLegDY, 5, 8, c.pants);
+
+  // Belt
+  dpx(-7, 11, 14, 2, "#333");
+
+  // Torso / shirt
+  dpx(-6, 3, 12, 9, c.shirt);
+  // Shirt collar
+  dpx(-2, 3, 4, 2, "#fff");
+
+  // Arms (swing with walk)
+  dpx(-11 + leftArmDX,  4, 5, 8, c.shirt);
+  dpx(  6 + rightArmDX, 4, 5, 8, c.shirt);
+  // Hands
+  dpx(-11 + leftArmDX,  11, 5, 3, c.skin);
+  dpx(  6 + rightArmDX, 11, 5, 3, c.skin);
+
+  // Neck
+  dpx(-2, 1, 4, 3, c.skin);
+
+  // Head (with idle sway)
+  const hx = Math.round(idleSway);
+  dpx(-6 + hx, -8, 12, 10, c.skin);
+
+  // Hair
+  dpx(-6 + hx, -8, 12, 4, c.hair);
+  dpx(-7 + hx, -6, 2, 5, c.hair); // left sideburn
+  dpx( 5 + hx, -6, 2, 5, c.hair); // right sideburn
+  // Hair spikes / style detail (distinctive per agent)
+  dpx(-4 + hx, -9, 3, 2, c.hair);
+  dpx( 1 + hx, -9, 3, 2, c.hair);
+
+  // Ears
+  dpx(-7 + hx, -4, 1, 3, c.skin);
+  dpx( 6 + hx, -4, 1, 3, c.skin);
+
+  // Eyes (open or blink)
+  if (!isBlink) {
+    dpx(-5 + hx, -4, 3, 2, "#fff");
+    dpx( 2 + hx, -4, 3, 2, "#fff");
+    const pupilOffset = direction === -1 ? -1 : 1;
+    dpx(-4 + hx + pupilOffset, -4, 1, 2, "#111");
+    dpx( 3 + hx + pupilOffset, -4, 1, 2, "#111");
+    // Eye shine
+    dpx(-4 + hx, -5, 1, 1, "rgba(255,255,255,0.5)");
+    dpx( 3 + hx, -5, 1, 1, "rgba(255,255,255,0.5)");
+  } else {
+    dpx(-5 + hx, -3, 3, 1, "#555");
+    dpx( 2 + hx, -3, 3, 1, "#555");
+  }
+
+  // Nose
+  dpx(hx, -2, 2, 1, withAlpha(c.skin, 0.55));
+
+  // Mouth
+  if (isPrimary) {
+    dpx(-3 + hx, 0, 2, 1, "#c07060");
+    dpx(-1 + hx, 1, 4, 1, "#c07060");
+    dpx( 3 + hx, 0, 2, 1, "#c07060");
+  } else {
+    dpx(-2 + hx, 0, 4, 1, "#c07060");
+  }
+}
+
 function drawAgent(actor, agentState, isPrimary) {
   const zone = zoneById(agentState.assigned_zone === "between_zones" ? "lab" : actor.currentZone);
   const frame = renderState.frame;
-  const { body, accent } = actorPalette(actor.id, zone.color);
+  const { accent } = actorPalette(actor.id, zone.color);
+  const costume = actorCostume(actor.id);
+
   const pose =
     actor.pose ||
     (["coding", "debugging"].includes(agentState.activity)
@@ -3063,146 +3326,98 @@ function drawAgent(actor, agentState, isPrimary) {
         : actor.moving
           ? "walk"
           : "stand");
-  const seated = actor.motionState === "SEATED" || actor.motionState === "REST" || ["sit", "type", "read"].includes(pose);
-  // Natural breathing / idle bob — smooth sine wave instead of hard step
+
+  const seated = ["sit", "type", "read"].includes(pose) ||
+    actor.motionState === "SEATED" || actor.motionState === "REST";
+
+  // Smooth breathing — sine wave, not hard step
   const breathe = seated
-    ? Math.sin(frame * 0.06) * 1.2  // gentle seated sway
-    : Math.sin(frame * 0.04 + (actor.patrolIndex || 0)) * 0.8; // standing breathe
-  const y = actor.y + (seated ? -8 + breathe : breathe);
+    ? Math.sin(frame * 0.055) * 1.5
+    : Math.sin(frame * 0.038 + (actor.patrolIndex || 0)) * 1.0;
+
+  // Actual canvas Y (top of character)
+  const ty = actor.y + (seated ? -8 : 0) + breathe - (seated ? 0 : 20);
+
   const direction = actor.facing || 1;
-  // Smooth arm swing using sine instead of binary flip
-  const swingPhase = (frame + (actor.patrolIndex || 0) * 3) * 0.18;
-  const armSwing = actor.moving
-    ? Math.round(Math.sin(swingPhase) * 3)
-    : seated ? 1 : Math.round(Math.sin(frame * 0.05) * 0.5); // tiny idle arm sway
-  const legSwing = actor.moving
-    ? Math.round(Math.sin(swingPhase) * 2.5)
+
+  // 4-frame walk cycle (changes every 8 frames = ~4 steps/sec at 30fps)
+  const walkFrame = Math.floor(frame / 8) % 4;
+
+  // Idle head sway when standing still
+  const idleSway = (!actor.moving && !seated)
+    ? Math.sin(frame * 0.022) * 2.5
     : 0;
-  // Idle look-around: slight head tilt offset
-  const idleLook = (!actor.moving && !seated)
-    ? Math.round(Math.sin(frame * 0.022) * 1.5)
-    : 0;
-  // Eye direction: gaze follows movement direction
-  const eyeDir = direction === -1 ? -3 : 3;
 
-  drawPixelRect(actor.x - (seated ? 16 : 18), y + (seated ? 28 : 34), seated ? 32 : 36, 8, "rgba(0, 0, 0, 0.24)");
+  // Blink every ~3s
+  const isBlink = (frame % 90 < 3);
 
-  if (isPrimary) {
-    // Animated halo
-    const haloPulse = 0.3 + Math.abs(Math.sin(frame * 0.05)) * 0.3;
-    context.save();
-    context.globalAlpha = haloPulse;
-    context.fillStyle = accent;
-    context.beginPath();
-    context.ellipse(actor.x, y + (seated ? 32 : 40), seated ? 20 : 24, 5, 0, 0, Math.PI * 2);
-    context.fill();
-    context.restore();
-    drawPixelRect(actor.x - 16, y - 2, 32, 4, accent);
-  }
+  drawCharacterSprite(actor.x, ty, {
+    costume,
+    direction,
+    pose: seated ? (pose === "type" ? "type" : pose === "read" ? "read" : "sit") : (actor.moving ? "walk" : "stand"),
+    walkFrame,
+    isBlink,
+    isPrimary,
+    accent,
+    idleSway,
+  });
 
-  if (seated) {
-    drawPixelRect(actor.x - 9, y + 20, 18, 8, COLORS.bg2);
-    drawPixelRect(actor.x - 12, y + 24, 24, 5, "rgba(7, 17, 26, 0.55)");
-    drawPixelRect(actor.x - 10, y, 20, 20, body);
-    // Face — blink every ~3s (180 frames at 60fps or ~90 at 30fps)
-    const isBlink = (frame % 90 < 3);
-    drawPixelRect(actor.x - 6, y + 4, 12, isBlink ? 2 : 8, COLORS.white);
-    drawPixelRect(actor.x - 4, y + 6, 8, isBlink ? 1 : 4, COLORS.bg1);
-    // Focused expression dot when typing
-    if (pose === "type" && !isBlink) {
-      drawPixelRect(actor.x - 1, y + 9, 2, 2, accent);
-    }
-    // Eye direction highlight — subtle pixel showing gaze direction
-    if (!isBlink) {
-      drawPixelRect(actor.x + eyeDir - 1, y + 7, 2, 2, withAlpha(accent, 0.5));
-    }
-    drawPixelRect(actor.x - 7, y + 20, 14, 8, body);
-    drawPixelRect(actor.x - 8, y + 17, 16, 4, accent);
+  // Activity cue (mini icon next to character)
+  drawActivityCue({ x: actor.x, y: ty + (seated ? 10 : -10) }, agentState.activity, accent, pose);
 
-    if (pose === "type") {
-      drawPixelRect(actor.x - 14, y + 20, 6, 7, body);
-      drawPixelRect(actor.x + 8, y + 20, 6, 7, body);
-      drawPixelRect(actor.x - 8, y + 28, 6, 4, body);
-      drawPixelRect(actor.x + 2, y + 28, 6, 4, body);
-    } else if (pose === "read") {
-      drawPixelRect(actor.x - 14, y + 19, 6, 8, body);
-      drawPixelRect(actor.x + 8, y + 21, 6, 6, body);
-      drawPixelRect(actor.x - 8, y + 28, 6, 4, body);
-      drawPixelRect(actor.x + 2, y + 28, 6, 4, body);
-    } else {
-      drawPixelRect(actor.x - 14, y + 21, 6, 7, body);
-      drawPixelRect(actor.x + 8, y + 21, 6, 7, body);
-      drawPixelRect(actor.x - 8, y + 28, 6, 4, body);
-      drawPixelRect(actor.x + 2, y + 28, 6, 4, body);
-    }
-  } else {
-    drawPixelRect(actor.x - 10 + idleLook, y, 20, 20, body);
-    const isBlink = (frame % 90 < 3);
-    drawPixelRect(actor.x - 6 + idleLook, y + 4, 12, isBlink ? 2 : 8, COLORS.white);
-    drawPixelRect(actor.x - 4 + idleLook, y + 6, 8, isBlink ? 1 : 4, COLORS.bg1);
-    drawPixelRect(actor.x - 6, y + 20, 12, 14, body);
-    drawPixelRect(actor.x - 14 + armSwing, y + 22, 6, 12, body);
-    drawPixelRect(actor.x + 8 - armSwing, y + 22, 6, 12, body);
-    drawPixelRect(actor.x - 8 - legSwing, y + 34, 6, 10, body);
-    drawPixelRect(actor.x + 2 + legSwing, y + 34, 6, 10, body);
-    drawPixelRect(actor.x - 4, y + 18, 8, 4, accent);
-  }
-
-  if (pose === "carry") {
-    drawPixelRect(actor.x - 8, y + 18, 16, 10, COLORS.amber);
-    drawPixelRect(actor.x - 4, y + 16, 8, 2, COLORS.white);
-  }
-
-  drawPixelRect(actor.x + 11 * direction, y + 9, 4, 4, "rgba(255,255,255,0.22)");
-
-  drawActivityCue({ x: actor.x, y }, agentState.activity, accent, pose);
-
-  // Speech bubble: show brief activity label above Rei when active
+  // Speech bubble above Rei when she's doing something
   if (isPrimary && agentState.activity && agentState.activity !== "idle") {
     const bubbleLabels = {
-      coding: "coding…",
-      debugging: "debugging…",
-      reading: "reading…",
-      reviewing: "reviewing…",
-      summarizing: "writing…",
-      planning: "planning…",
-      meeting: "syncing…",
+      coding:     "coding…",
+      debugging:  "debug…",
+      reading:    "reading…",
+      reviewing:  "review…",
+      summarizing:"writing…",
+      planning:   "plan…",
+      meeting:    "sync…",
     };
     const bubbleText = bubbleLabels[agentState.activity];
     if (bubbleText) {
       const bx = actor.x;
-      const by = y - 18;
-      const pulse = Math.sin(frame * 0.08) * 0.18 + 0.82;
+      const by = ty - 14;
+      const pulse = Math.sin(frame * 0.08) * 0.15 + 0.85;
       context.save();
       context.globalAlpha = pulse;
-      context.fillStyle = "rgba(8, 20, 34, 0.82)";
+      context.fillStyle = "rgba(8, 20, 34, 0.88)";
       context.strokeStyle = accent;
       context.lineWidth = 1;
       context.beginPath();
-      context.roundRect(bx - 28, by - 12, 56, 14, 3);
+      context.roundRect(bx - 26, by - 10, 52, 12, 4);
       context.fill();
       context.stroke();
+      // Tail
+      context.beginPath();
+      context.moveTo(bx - 4, by + 2);
+      context.lineTo(bx, by + 8);
+      context.lineTo(bx + 4, by + 2);
+      context.fillStyle = "rgba(8, 20, 34, 0.88)";
+      context.fill();
       context.fillStyle = "#edf3ff";
-      context.font = "bold 8px 'IBM Plex Mono', monospace";
+      context.font = "bold 7px 'IBM Plex Mono', monospace";
       context.textAlign = "center";
       context.textBaseline = "middle";
-      context.fillText(bubbleText, bx, by - 5);
+      context.fillText(bubbleText, bx, by - 4);
       context.restore();
     }
   }
 
-  // Name tag for non-primary agents (primary already has speech bubble)
+  // Name tag for non-primary agents
   if (!isPrimary && actor.display_name) {
     const nameText = actor.display_name.slice(0, 8);
-    const tagW = nameText.length * 5 + 8;
+    const tagW = nameText.length * 5 + 10;
     context.save();
-    context.fillStyle = "rgba(8, 20, 34, 0.75)";
-    context.fillRect(actor.x - tagW / 2, y - 28, tagW, 11);
-    context.fillStyle = withAlpha(COLORS.white, 0.85);
+    context.fillStyle = "rgba(8, 20, 34, 0.78)";
+    context.fillRect(actor.x - tagW / 2, ty - 18, tagW, 11);
+    context.fillStyle = "#8fa8c6";
     context.font = "7px 'IBM Plex Mono', monospace";
     context.textAlign = "center";
     context.textBaseline = "middle";
-    context.fillText(nameText, actor.x, y - 22);
+    context.fillText(nameText, actor.x, ty - 12);
     context.restore();
   }
 }
