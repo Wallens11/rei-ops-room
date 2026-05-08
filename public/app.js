@@ -2891,6 +2891,93 @@ function actorPalette(actorId, accent) {
   return { body: COLORS.cyan, accent };
 }
 
+// --- Matrix spawn/despawn effect ---
+
+// Per-agent spawn animation state
+const agentSpawnState = new Map(); // agentId → { startFrame, active }
+
+function getOrInitSpawnState(agentId, frame) {
+  if (!agentSpawnState.has(agentId)) {
+    agentSpawnState.set(agentId, { startFrame: frame, active: true });
+  }
+  return agentSpawnState.get(agentId);
+}
+
+function drawMatrixSpawn(x, y, frame, spawnStartFrame, accent) {
+  const DURATION_FRAMES = 45; // ~1.5s at 30fps
+  const elapsed = frame - spawnStartFrame;
+  if (elapsed > DURATION_FRAMES) return false; // done
+
+  const progress = elapsed / DURATION_FRAMES; // 0→1
+  const CHAR_W = 20, CHAR_H = 44; // character bounding box
+  const COLS = 4;
+  const COL_W = Math.floor(CHAR_W / COLS);
+
+  context.save();
+  for (let col = 0; col < COLS; col++) {
+    const colDelay = col / COLS * 0.3;
+    const colProgress = Math.max(0, Math.min(1, (progress - colDelay) / 0.7));
+    if (colProgress <= 0) continue;
+
+    const revealY = CHAR_H * colProgress;
+    const colX = x - 10 + col * COL_W;
+
+    for (let py = 0; py < revealY; py += 2) {
+      // Hash-based flicker like pixel-agents
+      const hash = ((col * 7 + py * 13 + frame * 31) & 0xff) / 255;
+      let alpha, color;
+      if (py > revealY - 6) {
+        // Bright head
+        alpha = 0.95;
+        color = "#ccffcc";
+      } else if (py > revealY - 14) {
+        // Mid trail
+        alpha = 0.55 + hash * 0.2;
+        color = accent;
+      } else {
+        // Fading tail
+        alpha = 0.2 + hash * 0.15;
+        color = COLORS.mint;
+      }
+      context.globalAlpha = alpha;
+      context.fillStyle = color;
+      context.fillRect(colX, y - 10 + py, COL_W - 1, 2);
+    }
+  }
+  context.restore();
+  return true; // still animating
+}
+
+// --- Z-sorted multi-agent render ---
+
+function renderActorsSorted(actors, agentStates, primaryActorId, frame) {
+  if (!actors || actors.length === 0) return;
+
+  // Sort actors by their y-bottom so those lower on screen appear in front
+  const sorted = [...actors].sort((a, b) => (a.y + 44) - (b.y + 44));
+
+  sorted.forEach((actor) => {
+    const agentState = agentStates?.find((s) => s.id === actor.id) || {
+      activity: "idle",
+      assigned_zone: actor.currentZone || "lab"
+    };
+    const isPrimary = actor.id === primaryActorId;
+
+    // Matrix spawn effect for new agents
+    const spawn = getOrInitSpawnState(actor.id, frame);
+    if (spawn.active) {
+      const { accent } = actorPalette(actor.id, COLORS.cyan);
+      const still = !drawMatrixSpawn(actor.x, actor.y, frame, spawn.startFrame, accent);
+      if (still) {
+        spawn.active = false; // spawn complete, draw normally
+      }
+      return; // during spawn, only show matrix effect
+    }
+
+    drawAgent(actor, agentState, isPrimary);
+  });
+}
+
 function drawActivityCue(actor, activity, accent, pose = "stand") {
   const seated = pose === "sit" || pose === "type" || pose === "read";
   const deskYOffset = seated ? 4 : 0;
@@ -2944,6 +3031,8 @@ function drawAgent(actor, agentState, isPrimary) {
   const idleLook = (!actor.moving && !seated)
     ? Math.round(Math.sin(frame * 0.022) * 1.5)
     : 0;
+  // Eye direction: gaze follows movement direction
+  const eyeDir = direction === -1 ? -3 : 3;
 
   drawPixelRect(actor.x - (seated ? 16 : 18), y + (seated ? 28 : 34), seated ? 32 : 36, 8, "rgba(0, 0, 0, 0.24)");
 
@@ -2971,6 +3060,10 @@ function drawAgent(actor, agentState, isPrimary) {
     // Focused expression dot when typing
     if (pose === "type" && !isBlink) {
       drawPixelRect(actor.x - 1, y + 9, 2, 2, accent);
+    }
+    // Eye direction highlight — subtle pixel showing gaze direction
+    if (!isBlink) {
+      drawPixelRect(actor.x + eyeDir - 1, y + 7, 2, 2, withAlpha(accent, 0.5));
     }
     drawPixelRect(actor.x - 7, y + 20, 14, 8, body);
     drawPixelRect(actor.x - 8, y + 17, 16, 4, accent);
@@ -3045,6 +3138,21 @@ function drawAgent(actor, agentState, isPrimary) {
       context.fillText(bubbleText, bx, by - 5);
       context.restore();
     }
+  }
+
+  // Name tag for non-primary agents (primary already has speech bubble)
+  if (!isPrimary && actor.display_name) {
+    const nameText = actor.display_name.slice(0, 8);
+    const tagW = nameText.length * 5 + 8;
+    context.save();
+    context.fillStyle = "rgba(8, 20, 34, 0.75)";
+    context.fillRect(actor.x - tagW / 2, y - 28, tagW, 11);
+    context.fillStyle = withAlpha(COLORS.white, 0.85);
+    context.font = "7px 'IBM Plex Mono', monospace";
+    context.textAlign = "center";
+    context.textBaseline = "middle";
+    context.fillText(nameText, actor.x, y - 22);
+    context.restore();
   }
 }
 
@@ -3160,14 +3268,13 @@ function drawScene() {
 
   drawEditorOverlay();
 
-  renderState.actors.forEach((actor) => {
-    const agentState = agentById(actor.id) || {
-      assigned_zone: actor.home,
-      activity: "idle"
-    };
-    const isPrimary = data.scene?.primary_bubble?.actor_id === actor.id;
-    drawAgent(actor, agentState, isPrimary);
-  });
+  const primaryActorId = data.scene?.primary_bubble?.actor_id;
+  renderActorsSorted(
+    renderState.actors,
+    renderState.data?.agents || [],
+    primaryActorId,
+    renderState.frame
+  );
 
   const primaryBubble = data.scene?.primary_bubble;
   const bubbleActor =
