@@ -406,19 +406,19 @@ test("createSseFrame formats named events with retry and JSON data", () => {
 
 test("normalizeGithubRepoSlug parses GitHub HTTPS and SSH remotes", () => {
   assert.equal(
-    normalizeGithubRepoSlug("https://github.com/Wallens11/rei-ops-room.git"),
-    "Wallens11/rei-ops-room"
+    normalizeGithubRepoSlug("https://github.com/example-org/my-project.git"),
+    "example-org/my-project"
   );
   assert.equal(
-    normalizeGithubRepoSlug("git@github.com:Wallens11/rei-ops-room.git"),
-    "Wallens11/rei-ops-room"
+    normalizeGithubRepoSlug("git@github.com:example-org/my-project.git"),
+    "example-org/my-project"
   );
   assert.equal(normalizeGithubRepoSlug("https://example.com/not-github.git"), null);
 });
 
 test("buildGithubIssueListArgs includes labels and the expected JSON fields", () => {
   const args = buildGithubIssueListArgs({
-    repo: "Wallens11/rei-ops-room",
+    repo: "example-org/my-project",
     state: "all",
     labels: ["agent:rei", "status:in_progress"],
     limit: 12
@@ -428,7 +428,7 @@ test("buildGithubIssueListArgs includes labels and the expected JSON fields", ()
     "issue",
     "list",
     "--repo",
-    "Wallens11/rei-ops-room",
+    "example-org/my-project",
     "--state",
     "all",
     "--limit",
@@ -448,7 +448,7 @@ test("inferGithubRepoSlugWithRunner reads the git remote and normalizes the repo
     async (file, args, options) => {
       calls.push({ file, args, options });
       return {
-        stdout: "git@github.com:Wallens11/rei-ops-room.git\n"
+        stdout: "git@github.com:example-org/my-project.git\n"
       };
     },
     {
@@ -456,7 +456,7 @@ test("inferGithubRepoSlugWithRunner reads the git remote and normalizes the repo
     }
   );
 
-  assert.equal(repo, "Wallens11/rei-ops-room");
+  assert.equal(repo, "example-org/my-project");
   assert.deepEqual(calls, [
     {
       file: "git",
@@ -481,16 +481,16 @@ test("listGithubIssuesWithRunner normalizes GitHub issues for the inbox view", a
             state: "OPEN",
             createdAt: "2026-03-30T10:00:00Z",
             updatedAt: "2026-03-30T10:30:00Z",
-            url: "https://github.com/Wallens11/rei-ops-room/issues/2",
+            url: "https://github.com/example-org/my-project/issues/2",
             labels: [{ name: "agent:rei" }, { name: "status:todo" }],
-            assignees: [{ login: "Wallens11" }],
-            author: { login: "Wallens11" }
+            assignees: [{ login: "example-user" }],
+            author: { login: "example-user" }
           }
         ])
       };
     },
     {
-      repo: "Wallens11/rei-ops-room",
+      repo: "example-org/my-project",
       labels: ["agent:rei"],
       limit: 20
     }
@@ -500,7 +500,7 @@ test("listGithubIssuesWithRunner normalizes GitHub issues for the inbox view", a
   assert.equal(calls[0].file, "gh");
   assert.equal(calls[0].options.maxBuffer, SQLITE_JSON_MAX_BUFFER);
   assert.deepEqual(payload, {
-    repo: "Wallens11/rei-ops-room",
+    repo: "example-org/my-project",
     filters: {
       state: "open",
       labels: ["agent:rei"],
@@ -522,7 +522,7 @@ test("listGithubIssuesWithRunner normalizes GitHub issues for the inbox view", a
         title: "GitHub issue-driven assistant workflow for cross-device task handling",
         updatedAt: "2026-03-30T10:30:00Z",
         status: "todo",
-        url: "https://github.com/Wallens11/rei-ops-room/issues/2"
+        url: "https://github.com/example-org/my-project/issues/2"
       }
     },
     issues: [
@@ -532,10 +532,10 @@ test("listGithubIssuesWithRunner normalizes GitHub issues for the inbox view", a
         state: "OPEN",
         createdAt: "2026-03-30T10:00:00Z",
         updatedAt: "2026-03-30T10:30:00Z",
-        url: "https://github.com/Wallens11/rei-ops-room/issues/2",
+        url: "https://github.com/example-org/my-project/issues/2",
         labels: ["agent:rei", "status:todo"],
-        assignees: ["Wallens11"],
-        author: "Wallens11"
+        assignees: ["example-user"],
+        author: "example-user"
       }
     ]
   });
@@ -625,7 +625,7 @@ test("createServer exposes /api/github/issues with inferred repo and default lab
   const listCalls = [];
   const server = createServer({
     getStatus: async () => ({ ok: true }),
-    inferGithubRepoSlug: async () => "Wallens11/rei-ops-room",
+    inferGithubRepoSlug: async () => "example-org/my-project",
     listGithubIssues: async (options) => {
       listCalls.push(options);
       return {
@@ -647,7 +647,7 @@ test("createServer exposes /api/github/issues with inferred repo and default lab
             title: "GitHub issue-driven assistant workflow for cross-device task handling",
             updatedAt: "2026-03-31T04:10:00Z",
             status: "todo",
-            url: "https://github.com/Wallens11/rei-ops-room/issues/2"
+            url: "https://github.com/example-org/my-project/issues/2"
           }
         },
         issues: [
@@ -672,13 +672,13 @@ test("createServer exposes /api/github/issues with inferred repo and default lab
   assert.equal(response.status, 200);
   assert.deepEqual(listCalls, [
     {
-      repo: "Wallens11/rei-ops-room",
+      repo: "example-org/my-project",
       state: "open",
       labels: ["agent:rei"],
       limit: 20
     }
   ]);
-  assert.equal(body.repo, "Wallens11/rei-ops-room");
+  assert.equal(body.repo, "example-org/my-project");
   assert.equal(body.summary.todo, 1);
   assert.equal(body.planner.status, "queued");
 });
@@ -798,24 +798,24 @@ test("createServer exposes /api/github/report-only preview and post routes", asy
   const server = createServer({
     getStatus: async () => ({ ok: true }),
     previewReportOnlyAction: async () => ({
-      repo: "Wallens11/rei-ops-room",
+      repo: "example-org/my-project",
       status: "ready",
       canComment: true,
       target: {
         number: 5,
         title: "Viewer report-only preview and manual trigger",
-        url: "https://github.com/Wallens11/rei-ops-room/issues/5"
+        url: "https://github.com/example-org/my-project/issues/5"
       },
       draft: "<!-- rei:report-only issue=5 -->\nRei report-only pickup for #5."
     }),
     postReportOnlyAction: async () => ({
-      repo: "Wallens11/rei-ops-room",
+      repo: "example-org/my-project",
       status: "comment_posted",
       canComment: false,
       target: {
         number: 5,
         title: "Viewer report-only preview and manual trigger",
-        url: "https://github.com/Wallens11/rei-ops-room/issues/5"
+        url: "https://github.com/example-org/my-project/issues/5"
       },
       draft: "<!-- rei:report-only issue=5 -->\nRei report-only pickup for #5."
     })
@@ -954,12 +954,12 @@ test("createServer exposes /api/github/execute preview and service routes", asyn
   const server = createServer({
     getStatus: async () => ({ ok: true }),
     previewExecuteAction: async () => ({
-      repo: "Wallens11/rei-ops-room",
+      repo: "example-org/my-project",
       status: "ready",
       target: {
         number: 31,
         title: "Queue-driven execute service MVP",
-        url: "https://github.com/Wallens11/rei-ops-room/issues/31"
+        url: "https://github.com/example-org/my-project/issues/31"
       },
       detail: "Ready to run the next execute issue."
     }),

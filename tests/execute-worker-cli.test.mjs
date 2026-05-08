@@ -14,14 +14,14 @@ test("parseExecuteWorkerCliArgs understands start interval and repo overrides", 
   const parsed = parseExecuteWorkerCliArgs([
     "start",
     "--repo",
-    "Wallens11/rei-ops-room",
+    "example-org/my-project",
     "--interval-seconds",
     "90"
   ]);
 
   assert.deepEqual(parsed, {
     command: "start",
-    repo: "Wallens11/rei-ops-room",
+    repo: "example-org/my-project",
     intervalMs: 90_000,
     workerIndex: 1
   });

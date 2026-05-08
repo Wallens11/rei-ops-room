@@ -152,22 +152,22 @@ test("executeNextIssue retries with the next runtime when the primary one is rat
   try {
     const result = await executeNextIssue({
       cwd: tempDir,
-      repo: "Wallens11/rei-ops-room",
+      repo: "example-org/my-project",
       availableRuntimes: ["claude-code", "codex"],
       previewAction: async () => ({
-        repo: "Wallens11/rei-ops-room",
+        repo: "example-org/my-project",
         status: "ready",
         target: {
           number: 26,
           title: "smart runtime routing",
-          url: "https://github.com/Wallens11/rei-ops-room/issues/26",
+          url: "https://github.com/example-org/my-project/issues/26",
           status: "todo"
         },
         issue: {
           number: 26,
           title: "smart runtime routing",
           body: "Route frontend-heavy work to Claude first, then fall back to Codex on rate limits.",
-          url: "https://github.com/Wallens11/rei-ops-room/issues/26",
+          url: "https://github.com/example-org/my-project/issues/26",
           labels: ["agent:rei", "mode:execute", "status:todo"]
         },
         skillProfile: {
@@ -263,14 +263,14 @@ test("executeNextIssue aborts mission when timeout signal fires", async () => {
     // Abort immediately to simulate a timeout before runMission resolves
     const result = await executeNextIssue({
       cwd: tempDir,
-      repo: "Wallens11/rei-ops-room",
+      repo: "example-org/my-project",
       availableRuntimes: ["codex"],
       signal: ac.signal,
       previewAction: async () => ({
-        repo: "Wallens11/rei-ops-room",
+        repo: "example-org/my-project",
         status: "ready",
-        target: { number: 99, title: "timeout test", url: "https://github.com/Wallens11/rei-ops-room/issues/99", status: "todo" },
-        issue: { number: 99, title: "timeout test", body: "hang forever", url: "https://github.com/Wallens11/rei-ops-room/issues/99", labels: [] },
+        target: { number: 99, title: "timeout test", url: "https://github.com/example-org/my-project/issues/99", status: "todo" },
+        issue: { number: 99, title: "timeout test", body: "hang forever", url: "https://github.com/example-org/my-project/issues/99", labels: [] },
         skillProfile: { id: "general", label: "General" },
         prompt: "Do something."
       }),
@@ -308,14 +308,14 @@ test("executeNextIssue passes composed timeout signal even without outer signal"
   try {
     await executeNextIssue({
       cwd: tempDir,
-      repo: "Wallens11/rei-ops-room",
+      repo: "example-org/my-project",
       availableRuntimes: ["codex"],
       signal: null, // no outer signal
       previewAction: async () => ({
-        repo: "Wallens11/rei-ops-room",
+        repo: "example-org/my-project",
         status: "ready",
-        target: { number: 98, title: "signal test", url: "https://github.com/Wallens11/rei-ops-room/issues/98", status: "todo" },
-        issue: { number: 98, title: "signal test", body: "check signal", url: "https://github.com/Wallens11/rei-ops-room/issues/98", labels: [] },
+        target: { number: 98, title: "signal test", url: "https://github.com/example-org/my-project/issues/98", status: "todo" },
+        issue: { number: 98, title: "signal test", body: "check signal", url: "https://github.com/example-org/my-project/issues/98", labels: [] },
         skillProfile: { id: "general", label: "General" },
         prompt: "Check signal."
       }),
@@ -358,13 +358,13 @@ test("executeNextIssue picks up .spawn-request.json and queues sub-task", async 
 
     await executeNextIssue({
       cwd: tempDir,
-      repo: "Wallens11/rei-ops-room",
+      repo: "example-org/my-project",
       availableRuntimes: ["codex"],
       previewAction: async () => ({
-        repo: "Wallens11/rei-ops-room",
+        repo: "example-org/my-project",
         status: "ready",
-        target: { number: 77, title: "spawn test issue", url: "https://github.com/Wallens11/rei-ops-room/issues/77", status: "todo" },
-        issue: { number: 77, title: "spawn test issue", body: "test spawn", url: "https://github.com/Wallens11/rei-ops-room/issues/77", labels: [] },
+        target: { number: 77, title: "spawn test issue", url: "https://github.com/example-org/my-project/issues/77", status: "todo" },
+        issue: { number: 77, title: "spawn test issue", body: "test spawn", url: "https://github.com/example-org/my-project/issues/77", labels: [] },
         skillProfile: { id: "general", label: "General" },
         prompt: "Do spawn test."
       }),
@@ -411,13 +411,13 @@ test("executeNextIssue ignores missing .spawn-request.json gracefully", async ()
   try {
     await assert.doesNotReject(executeNextIssue({
       cwd: tempDir,
-      repo: "Wallens11/rei-ops-room",
+      repo: "example-org/my-project",
       availableRuntimes: ["codex"],
       previewAction: async () => ({
-        repo: "Wallens11/rei-ops-room",
+        repo: "example-org/my-project",
         status: "ready",
-        target: { number: 78, title: "no spawn test", url: "https://github.com/Wallens11/rei-ops-room/issues/78", status: "todo" },
-        issue: { number: 78, title: "no spawn test", body: "no spawn", url: "https://github.com/Wallens11/rei-ops-room/issues/78", labels: [] },
+        target: { number: 78, title: "no spawn test", url: "https://github.com/example-org/my-project/issues/78", status: "todo" },
+        issue: { number: 78, title: "no spawn test", body: "no spawn", url: "https://github.com/example-org/my-project/issues/78", labels: [] },
         skillProfile: { id: "general", label: "General" },
         prompt: "No spawn."
       }),

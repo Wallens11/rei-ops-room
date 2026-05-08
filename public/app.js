@@ -391,7 +391,7 @@ function createEmptyState() {
       focus_reason: "Rei scanning — no hot desk yet."
     },
     activity: {
-      summary: "Belum ada log thread",
+      summary: "No thread log yet",
       source: "thread",
       lastLogAgo: "— rei watching —"
     },
@@ -961,13 +961,13 @@ async function importEditorLayout(file) {
   try {
     const text = await file.text();
     renderState.layout = parseLayoutDocument(text);
-    renderState.editorMessage = "Layout JSON berhasil diimport.";
+    renderState.editorMessage = "Layout JSON imported successfully.";
     syncDerivedLayout({ resetActors: true });
     renderState.hotspots = buildInteractiveHotspots();
-    persistLayout("Layout JSON diimport dan disimpan lokal.");
+    persistLayout("Layout JSON imported and saved locally.");
   } catch (error) {
     renderState.editorMessage =
-      error instanceof Error ? error.message : "Gagal import layout JSON.";
+      error instanceof Error ? error.message : "Failed to import layout JSON.";
     renderEditorControls();
   }
 }
@@ -1467,19 +1467,19 @@ function applyStatus(data) {
   elements.objectiveRepoChip.textContent = data.objective?.repo || data.room.current_repo || "workspace";
   elements.objectivePhaseChip.textContent = data.objective?.phase_title || data.scene.phase_title || "Standby";
   elements.objectiveDetail.textContent = truncate(
-    data.objective?.detail || data.thread?.title || "Belum ada thread aktif.",
+    data.objective?.detail || data.thread?.title || "No active thread yet.",
     160
   );
 
   elements.runtimeLiveTitle.textContent = truncate(
-    data.runtime?.live_now?.title || "Tidak ada activity live.",
+    data.runtime?.live_now?.title || "No live activity.",
     88
   );
   elements.runtimeLiveMeta.textContent = data.runtime?.live_now
     ? `${data.runtime.live_now.source_label} | ${data.runtime.live_now.age_label}`
     : "room idle";
   elements.runtimeFinishedTitle.textContent = truncate(
-    data.runtime?.last_finished?.title || "Belum ada aksi terakhir.",
+    data.runtime?.last_finished?.title || "Nothing finished yet.",
     88
   );
   elements.runtimeFinishedMeta.textContent = data.runtime?.last_finished
@@ -1493,7 +1493,7 @@ function applyStatus(data) {
   } else {
     elements.repoContextName.textContent = "-";
     elements.repoContextCwd.textContent = "-";
-    elements.repoContextTitle.textContent = "Belum ada repo spesifik lain.";
+    elements.repoContextTitle.textContent = "No specific repo context yet.";
   }
 
   renderRecentThreads(data.recentThreads || []);
@@ -3063,6 +3063,62 @@ function drawActivityCue(actor, activity, accent, pose = "stand") {
 
 // ─── Pixel art character renderer ────────────────────────────────────────────
 
+/**
+ * Draw a pixel-art office chair behind a seated character.
+ * cx   = horizontal center (same as actor.x)
+ * baseY = actor.y (the floor / reference y for this actor's seat position)
+ * accent = zone accent colour for subtle highlight
+ *
+ * Coordinate layout (all in canvas px, relative to baseY):
+ *   backrest top  : baseY - 48
+ *   seat plank    : baseY - 18 … baseY - 10
+ *   legs bottom   : baseY +  4
+ */
+function drawChair(cx, baseY, accent) {
+  const seatTop  = baseY - 18;
+  const seatBot  = baseY - 10;
+  const backTop  = baseY - 48;
+  const legBot   = baseY +  4;
+
+  // ── Backrest ──────────────────────────────────────────────────────────────
+  // Main panel
+  context.fillStyle = "#14142a";
+  context.fillRect(cx - 10, backTop, 20, seatTop - backTop);
+  // Horizontal slats (give it a real chair look)
+  context.fillStyle = withAlpha(accent, 0.18);
+  context.fillRect(cx - 8, backTop + 3, 16, 3);
+  context.fillRect(cx - 8, backTop + 10, 16, 3);
+  context.fillRect(cx - 8, backTop + 17, 16, 3);
+  // Backrest border highlight
+  context.fillStyle = withAlpha(accent, 0.30);
+  context.fillRect(cx - 10, backTop, 1, seatTop - backTop);
+  context.fillRect(cx +  9, backTop, 1, seatTop - backTop);
+
+  // ── Seat plank ────────────────────────────────────────────────────────────
+  const seatH = seatBot - seatTop;
+  context.fillStyle = "#1c1c34";
+  context.fillRect(cx - 12, seatTop, 24, seatH);
+  // Top edge highlight
+  context.fillStyle = withAlpha(accent, 0.14);
+  context.fillRect(cx - 10, seatTop, 20, 2);
+  // Side border
+  context.fillStyle = withAlpha(accent, 0.22);
+  context.fillRect(cx - 12, seatTop, 1, seatH);
+  context.fillRect(cx + 11, seatTop, 1, seatH);
+
+  // ── Legs (2 visible in 3/4 view) ─────────────────────────────────────────
+  const legH = legBot - seatBot;
+  context.fillStyle = "#0e0e1e";
+  // left leg
+  context.fillRect(cx - 10, seatBot, 3, legH);
+  // right leg
+  context.fillRect(cx +  7, seatBot, 3, legH);
+  // Tiny foot pads
+  context.fillStyle = "#1a1a2e";
+  context.fillRect(cx - 11, legBot - 2, 5, 2);
+  context.fillRect(cx +  6, legBot - 2, 5, 2);
+}
+
 // Palette per actor type (hair, shirt, pants, skin, shoe)
 const ACTOR_COSTUMES = {
   lead:    { hair: "#2a1a3e", shirt: "#b8a2ff", pants: "#1a1a3a", skin: "#f5cfa0", shoe: "#1a1010" },
@@ -3111,7 +3167,8 @@ function drawCharacterSprite(cx, ty, {
   context.fillStyle = "#000";
   context.beginPath();
   if (pose === "sit" || pose === "type" || pose === "read") {
-    context.ellipse(cx, ty + 36 * PX, 14, 4, 0, 0, Math.PI * 2);
+    // Shadow lands near the chair legs area (ty + 50 = actor.y → actor.y + 20 ≈ chair leg bottom)
+    context.ellipse(cx, ty + 54 * PX, 14, 4, 0, 0, Math.PI * 2);
   } else {
     context.ellipse(cx, ty + 22 * PX, 14, 4, 0, 0, Math.PI * 2);
   }
@@ -3125,7 +3182,8 @@ function drawCharacterSprite(cx, ty, {
     context.globalAlpha = haloPulse;
     context.fillStyle = accent;
     context.beginPath();
-    const haloY = (pose === "sit" || pose === "type" || pose === "read") ? ty + 36 * PX : ty + 22 * PX;
+    // Seated: halo near the feet (ty+50 = actor.y); standing: near feet at ty+44
+    const haloY = (pose === "sit" || pose === "type" || pose === "read") ? ty + 26 * PX : ty + 22 * PX;
     context.ellipse(cx, haloY, 18, 5, 0, 0, Math.PI * 2);
     context.fill();
     context.restore();
@@ -3133,9 +3191,6 @@ function drawCharacterSprite(cx, ty, {
 
   // ── SEATED POSE ─────────────────────────────────────────────────────────────
   if (pose === "sit" || pose === "type" || pose === "read") {
-    // Chair / seat suggestion
-    context.fillStyle = "rgba(255,255,255,0.08)";
-    context.fillRect(cx - 12, ty + 24 * PX, 24, 1);
 
     // Lower body (lap)
     dpx(-7, 16, 14, 5, c.pants);
@@ -3335,13 +3390,18 @@ function drawAgent(actor, agentState, isPrimary) {
     ? Math.sin(frame * 0.055) * 1.5
     : Math.sin(frame * 0.038 + (actor.patrolIndex || 0)) * 1.0;
 
-  // Actual canvas Y (top of character)
-  const ty = actor.y + (seated ? -8 : 0) + breathe - (seated ? 0 : 20);
+  // Actual canvas Y (top of character's head).
+  // Seated: shoes bottom (ry=25 → +50px) anchors to actor.y (the floor/seat reference).
+  //   ty + 50 = actor.y  →  ty = actor.y - 50
+  // Standing: shoe bottom (ry=22 → +44px) anchors slightly above actor.y for depth.
+  const ty = seated
+    ? actor.y - 50 + breathe
+    : actor.y - 20 + breathe;
 
   const direction = actor.facing || 1;
 
-  // 4-frame walk cycle (changes every 8 frames = ~4 steps/sec at 30fps)
-  const walkFrame = Math.floor(frame / 8) % 4;
+  // 4-frame walk cycle (changes every 12 frames ≈ 2.5 steps/sec — more natural than 8)
+  const walkFrame = Math.floor(frame / 12) % 4;
 
   // Idle head sway when standing still
   const idleSway = (!actor.moving && !seated)
@@ -3350,6 +3410,11 @@ function drawAgent(actor, agentState, isPrimary) {
 
   // Blink every ~3s
   const isBlink = (frame % 90 < 3);
+
+  // Draw chair BEHIND character so the character renders on top of the backrest
+  if (seated) {
+    drawChair(actor.x, actor.y, accent);
+  }
 
   drawCharacterSprite(actor.x, ty, {
     costume,
@@ -3635,7 +3700,7 @@ window.addEventListener("keydown", (event) => {
 });
 
 function showTransportError(error) {
-  elements.runtimeLiveTitle.textContent = "Gagal membaca status lokal.";
+  elements.runtimeLiveTitle.textContent = "Failed to read local status.";
   elements.runtimeLiveMeta.textContent = error instanceof Error ? error.message : String(error);
 }
 

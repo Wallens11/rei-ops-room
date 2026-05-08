@@ -11,7 +11,7 @@ import {
 test("normalizeGithubInboxPayload shapes GitHub issue data for the viewer panel", () => {
   const inbox = normalizeGithubInboxPayload(
     {
-      repo: "Wallens11/rei-ops-room",
+      repo: "example-org/my-project",
       filters: {
         state: "open",
         labels: ["agent:rei"],
@@ -29,7 +29,7 @@ test("normalizeGithubInboxPayload shapes GitHub issue data for the viewer panel"
           title: "GitHub issue-driven assistant workflow for cross-device task handling",
           state: "OPEN",
           updatedAt: "2026-03-31T01:20:00Z",
-          url: "https://github.com/Wallens11/rei-ops-room/issues/2",
+          url: "https://github.com/example-org/my-project/issues/2",
           labels: ["agent:rei", "status:todo"]
         },
         {
@@ -37,7 +37,7 @@ test("normalizeGithubInboxPayload shapes GitHub issue data for the viewer panel"
           title: "Viewer inbox panel",
           state: "OPEN",
           updatedAt: "2026-03-31T02:00:00Z",
-          url: "https://github.com/Wallens11/rei-ops-room/issues/3",
+          url: "https://github.com/example-org/my-project/issues/3",
           labels: ["agent:rei", "status:in_progress"]
         }
       ]
@@ -46,7 +46,7 @@ test("normalizeGithubInboxPayload shapes GitHub issue data for the viewer panel"
   );
 
   assert.equal(inbox.status, "ready");
-  assert.equal(inbox.repo, "Wallens11/rei-ops-room");
+  assert.equal(inbox.repo, "example-org/my-project");
   assert.equal(inbox.syncedAt, "2026-03-31T02:10:00Z");
   assert.deepEqual(inbox.summary, {
     total: 2,
@@ -59,7 +59,7 @@ test("normalizeGithubInboxPayload shapes GitHub issue data for the viewer panel"
     title: "Viewer inbox panel",
     state: "OPEN",
     updatedAt: "2026-03-31T02:00:00Z",
-    url: "https://github.com/Wallens11/rei-ops-room/issues/3",
+    url: "https://github.com/example-org/my-project/issues/3",
     labels: ["agent:rei", "status:in_progress"],
     status: "in_progress"
   });
@@ -69,7 +69,7 @@ test("buildGithubInboxViewModel exposes summary and issue rows for the panel", (
   const model = buildGithubInboxViewModel(
     normalizeGithubInboxPayload(
       {
-        repo: "Wallens11/rei-ops-room",
+        repo: "example-org/my-project",
         filters: {
           state: "open",
           labels: ["agent:rei"],
@@ -90,14 +90,14 @@ test("buildGithubInboxViewModel exposes summary and issue rows for the panel", (
             title: "Viewer inbox panel",
             updatedAt: "2026-03-31T02:00:00Z",
             status: "in_progress",
-            url: "https://github.com/Wallens11/rei-ops-room/issues/3"
+            url: "https://github.com/example-org/my-project/issues/3"
           },
           suggestedIssue: {
             number: 2,
             title: "GitHub issue-driven assistant workflow for cross-device task handling",
             updatedAt: "2026-03-31T01:20:00Z",
             status: "todo",
-            url: "https://github.com/Wallens11/rei-ops-room/issues/2"
+            url: "https://github.com/example-org/my-project/issues/2"
           }
         },
         issues: [
@@ -106,7 +106,7 @@ test("buildGithubInboxViewModel exposes summary and issue rows for the panel", (
             title: "GitHub issue-driven assistant workflow for cross-device task handling",
             state: "OPEN",
             updatedAt: "2026-03-31T01:20:00Z",
-            url: "https://github.com/Wallens11/rei-ops-room/issues/2",
+            url: "https://github.com/example-org/my-project/issues/2",
             labels: ["agent:rei", "status:todo"]
           },
           {
@@ -114,7 +114,7 @@ test("buildGithubInboxViewModel exposes summary and issue rows for the panel", (
             title: "Viewer inbox panel",
             state: "OPEN",
             updatedAt: "2026-03-31T02:00:00Z",
-            url: "https://github.com/Wallens11/rei-ops-room/issues/3",
+            url: "https://github.com/example-org/my-project/issues/3",
             labels: ["agent:rei", "status:in_progress"]
           }
         ]
@@ -123,7 +123,7 @@ test("buildGithubInboxViewModel exposes summary and issue rows for the panel", (
     )
   );
 
-  assert.equal(model.title, "Wallens11/rei-ops-room");
+  assert.equal(model.title, "example-org/my-project");
   assert.equal(model.chip, "2 open");
   assert.equal(model.queueTitle, "Active Queue: #3 Viewer inbox panel");
   assert.equal(
@@ -136,7 +136,7 @@ test("buildGithubInboxViewModel exposes summary and issue rows for the panel", (
   assert.deepEqual(model.rows[0], {
     id: "issue-2",
     title: "#2 GitHub issue-driven assistant workflow for cross-device task handling",
-    href: "https://github.com/Wallens11/rei-ops-room/issues/2",
+    href: "https://github.com/example-org/my-project/issues/2",
     detail: "status:todo | agent:rei",
     meta: "updated 2026-03-31 01:20 UTC",
     tone: "todo"
@@ -147,7 +147,7 @@ test("buildGithubInboxViewModel falls back to a suggested queue when nothing is 
   const model = buildGithubInboxViewModel(
     normalizeGithubInboxPayload(
       {
-        repo: "Wallens11/rei-ops-room",
+        repo: "example-org/my-project",
         filters: {
           state: "open",
           labels: ["agent:rei"],
@@ -169,7 +169,7 @@ test("buildGithubInboxViewModel falls back to a suggested queue when nothing is 
             title: "GitHub issue-driven assistant workflow for cross-device task handling",
             updatedAt: "2026-03-31T01:20:00Z",
             status: "todo",
-            url: "https://github.com/Wallens11/rei-ops-room/issues/2"
+            url: "https://github.com/example-org/my-project/issues/2"
           }
         },
         issues: [
@@ -178,7 +178,7 @@ test("buildGithubInboxViewModel falls back to a suggested queue when nothing is 
             title: "GitHub issue-driven assistant workflow for cross-device task handling",
             state: "OPEN",
             updatedAt: "2026-03-31T01:20:00Z",
-            url: "https://github.com/Wallens11/rei-ops-room/issues/2",
+            url: "https://github.com/example-org/my-project/issues/2",
             labels: ["agent:rei", "status:todo"]
           }
         ]
@@ -194,7 +194,7 @@ test("buildGithubInboxViewModel falls back to a suggested queue when nothing is 
 test("createGithubInboxErrorState keeps the last inbox snapshot visible during failures", () => {
   const previous = normalizeGithubInboxPayload(
     {
-      repo: "Wallens11/rei-ops-room",
+      repo: "example-org/my-project",
       filters: {
         state: "open",
         labels: ["agent:rei"],
@@ -212,7 +212,7 @@ test("createGithubInboxErrorState keeps the last inbox snapshot visible during f
           title: "GitHub issue-driven assistant workflow for cross-device task handling",
           state: "OPEN",
           updatedAt: "2026-03-31T01:20:00Z",
-          url: "https://github.com/Wallens11/rei-ops-room/issues/2",
+          url: "https://github.com/example-org/my-project/issues/2",
           labels: ["agent:rei", "status:todo"]
         }
       ]

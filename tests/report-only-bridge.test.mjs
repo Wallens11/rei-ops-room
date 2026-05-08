@@ -20,13 +20,13 @@ test("selectReportOnlyTarget picks the active in-progress report-only issue", ()
       {
         number: 3,
         title: "Report-only GitHub issue comment bridge",
-        url: "https://github.com/Wallens11/rei-ops-room/issues/3",
+        url: "https://github.com/example-org/my-project/issues/3",
         labels: ["agent:rei", "status:in_progress", "mode:report_only"]
       },
       {
         number: 2,
         title: "GitHub issue-driven assistant workflow for cross-device task handling",
-        url: "https://github.com/Wallens11/rei-ops-room/issues/2",
+        url: "https://github.com/example-org/my-project/issues/2",
         labels: ["agent:rei", "status:todo", "mode:report_only"]
       }
     ]
@@ -35,7 +35,7 @@ test("selectReportOnlyTarget picks the active in-progress report-only issue", ()
   assert.deepEqual(target, {
     number: 3,
     title: "Report-only GitHub issue comment bridge",
-    url: "https://github.com/Wallens11/rei-ops-room/issues/3",
+    url: "https://github.com/example-org/my-project/issues/3",
     labels: ["agent:rei", "status:in_progress", "mode:report_only"]
   });
 });
@@ -83,7 +83,7 @@ Create a report-only bridge that can:
 - only for issues tagged \`agent:rei\`
 - only for \`mode:report_only\`
 - duplicate comments should be avoided`,
-      url: "https://github.com/Wallens11/rei-ops-room/issues/3"
+      url: "https://github.com/example-org/my-project/issues/3"
     }
   });
 
@@ -97,7 +97,7 @@ Create a report-only bridge that can:
 
 test("prepareReportOnlyAction returns a ready preview when the active issue has no bridge comment yet", async () => {
   const preview = await prepareReportOnlyAction({
-    repo: "Wallens11/rei-ops-room",
+    repo: "example-org/my-project",
     runner: async (file, args) => {
       if (file === "gh" && args[0] === "issue" && args[1] === "list") {
         return {
@@ -108,14 +108,14 @@ test("prepareReportOnlyAction returns a ready preview when the active issue has 
               state: "OPEN",
               createdAt: "2026-03-31T02:30:00Z",
               updatedAt: "2026-03-31T02:30:00Z",
-              url: "https://github.com/Wallens11/rei-ops-room/issues/5",
+              url: "https://github.com/example-org/my-project/issues/5",
               labels: [
                 { name: "agent:rei" },
                 { name: "status:in_progress" },
                 { name: "mode:report_only" }
               ],
               assignees: [],
-              author: { login: "Wallens11" }
+              author: { login: "example-user" }
             }
           ])
         };
@@ -127,7 +127,7 @@ test("prepareReportOnlyAction returns a ready preview when the active issue has 
             number: 5,
             title: "Viewer report-only preview and manual trigger",
             body: "## Scope\n- show the active target in the viewer\n- preserve dedupe",
-            url: "https://github.com/Wallens11/rei-ops-room/issues/5",
+            url: "https://github.com/example-org/my-project/issues/5",
             labels: [{ name: "agent:rei" }, { name: "status:in_progress" }, { name: "mode:report_only" }],
             comments: []
           })
@@ -147,7 +147,7 @@ test("prepareReportOnlyAction returns a ready preview when the active issue has 
 test("executeReportOnlyAction posts once and returns a posted result", async () => {
   const calls = [];
   const result = await executeReportOnlyAction({
-    repo: "Wallens11/rei-ops-room",
+    repo: "example-org/my-project",
     runner: async (file, args) => {
       calls.push({ file, args });
 
@@ -160,14 +160,14 @@ test("executeReportOnlyAction posts once and returns a posted result", async () 
               state: "OPEN",
               createdAt: "2026-03-31T02:30:00Z",
               updatedAt: "2026-03-31T02:30:00Z",
-              url: "https://github.com/Wallens11/rei-ops-room/issues/5",
+              url: "https://github.com/example-org/my-project/issues/5",
               labels: [
                 { name: "agent:rei" },
                 { name: "status:in_progress" },
                 { name: "mode:report_only" }
               ],
               assignees: [],
-              author: { login: "Wallens11" }
+              author: { login: "example-user" }
             }
           ])
         };
@@ -179,7 +179,7 @@ test("executeReportOnlyAction posts once and returns a posted result", async () 
             number: 5,
             title: "Viewer report-only preview and manual trigger",
             body: "## Scope\n- show the active target in the viewer\n- preserve dedupe",
-            url: "https://github.com/Wallens11/rei-ops-room/issues/5",
+            url: "https://github.com/example-org/my-project/issues/5",
             labels: [{ name: "agent:rei" }, { name: "status:in_progress" }, { name: "mode:report_only" }],
             comments: []
           })

@@ -9,11 +9,11 @@ import {
 } from "../tools/report-only-worker-cli.mjs";
 
 test("parseWorkerCliArgs understands start interval and repo overrides", () => {
-  const parsed = parseWorkerCliArgs(["start", "--repo", "Wallens11/rei-ops-room", "--interval-seconds", "90"]);
+  const parsed = parseWorkerCliArgs(["start", "--repo", "example-org/my-project", "--interval-seconds", "90"]);
 
   assert.deepEqual(parsed, {
     command: "start",
-    repo: "Wallens11/rei-ops-room",
+    repo: "example-org/my-project",
     intervalMs: 90_000
   });
 });

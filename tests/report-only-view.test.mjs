@@ -10,7 +10,7 @@ test("buildReportOnlyViewModel exposes a ready manual trigger state", () => {
     target: {
       number: 5,
       title: "Viewer report-only preview and manual trigger",
-      url: "https://github.com/Wallens11/rei-ops-room/issues/5"
+      url: "https://github.com/example-org/my-project/issues/5"
     },
     detail: "Report-only action is ready for issue #5."
   });
@@ -29,7 +29,7 @@ test("buildReportOnlyViewModel disables the action when the comment already exis
     target: {
       number: 5,
       title: "Viewer report-only preview and manual trigger",
-      url: "https://github.com/Wallens11/rei-ops-room/issues/5"
+      url: "https://github.com/example-org/my-project/issues/5"
     },
     detail: "Report-only comment already exists for issue #5."
   });

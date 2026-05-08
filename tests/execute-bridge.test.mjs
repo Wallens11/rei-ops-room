@@ -22,7 +22,7 @@ test("selectExecuteTarget prefers an active execute issue and ignores report-onl
         title: "Viewer report-only preview and manual trigger",
         createdAt: "2026-04-02T01:00:00Z",
         updatedAt: "2026-04-02T01:05:00Z",
-        url: "https://github.com/Wallens11/rei-ops-room/issues/10",
+        url: "https://github.com/example-org/my-project/issues/10",
         labels: ["agent:rei", "status:in_progress", "mode:report_only"]
       },
       {
@@ -30,7 +30,7 @@ test("selectExecuteTarget prefers an active execute issue and ignores report-onl
         title: "Queue-driven execute service for issue mode",
         createdAt: "2026-04-02T02:00:00Z",
         updatedAt: "2026-04-02T02:10:00Z",
-        url: "https://github.com/Wallens11/rei-ops-room/issues/11",
+        url: "https://github.com/example-org/my-project/issues/11",
         labels: ["agent:rei", "status:todo", "mode:execute"]
       },
       {
@@ -38,7 +38,7 @@ test("selectExecuteTarget prefers an active execute issue and ignores report-onl
         title: "Executor should claim and run the active issue",
         createdAt: "2026-04-02T03:00:00Z",
         updatedAt: "2026-04-02T03:05:00Z",
-        url: "https://github.com/Wallens11/rei-ops-room/issues/12",
+        url: "https://github.com/example-org/my-project/issues/12",
         labels: ["agent:rei", "status:in_progress", "mode:execute"]
       }
     ]
@@ -50,13 +50,13 @@ test("selectExecuteTarget prefers an active execute issue and ignores report-onl
 
 test("buildExecutePrompt folds issue scope and handoff context into one launch prompt", () => {
   const prompt = buildExecutePrompt({
-    repo: "Wallens11/rei-ops-room",
+    repo: "example-org/my-project",
     repoCwd: "/Users/funtoco/workSpace/codex-pixel-agent",
     issue: {
       number: 14,
       title: "Add execute mode to the ops room queue",
       body: "## Scope\n- claim mode:execute issues\n- launch Codex from the worker\n- report the result back to GitHub",
-      url: "https://github.com/Wallens11/rei-ops-room/issues/14",
+      url: "https://github.com/example-org/my-project/issues/14",
       labels: ["agent:rei", "status:todo", "mode:execute"]
     },
     handoff: {
@@ -119,13 +119,13 @@ test("selectExecuteSkillProfile prefers backend specialist when integration keyw
 
 test("buildExecutePrompt includes the recommended specialist profile and skills", () => {
   const prompt = buildExecutePrompt({
-    repo: "Wallens11/rei-ops-room",
+    repo: "example-org/my-project",
     repoCwd: "/Users/funtoco/workSpace/codex-pixel-agent",
     issue: {
       number: 19,
       title: "Polish the Execute Agent panel layout",
       body: "Improve the viewer UI, spacing, button states, responsive layout, and styling for the room panel.",
-      url: "https://github.com/Wallens11/rei-ops-room/issues/19",
+      url: "https://github.com/example-org/my-project/issues/19",
       labels: ["agent:rei", "mode:execute", "status:todo"]
     },
     handoff: {
@@ -144,13 +144,13 @@ test("buildExecutePrompt includes the recommended specialist profile and skills"
 
 test("buildExecutePrompt includes the latest ops-room continuity snapshot when available", () => {
   const prompt = buildExecutePrompt({
-    repo: "Wallens11/rei-ops-room",
+    repo: "example-org/my-project",
     repoCwd: "/Users/funtoco/workSpace/codex-pixel-agent",
     issue: {
       number: 28,
       title: "Improve operator trust cues in the execute panel",
       body: "Show why the next issue was selected and what continuity context the executor will use.",
-      url: "https://github.com/Wallens11/rei-ops-room/issues/28",
+      url: "https://github.com/example-org/my-project/issues/28",
       labels: ["agent:rei", "mode:execute", "status:approved"]
     },
     handoff: {
@@ -179,7 +179,7 @@ test("buildExecutePrompt includes the latest ops-room continuity snapshot when a
 
 test("prepareExecuteAction returns the next execute issue with a launch prompt when status:approved", async () => {
   const preview = await prepareExecuteAction({
-    repo: "Wallens11/rei-ops-room",
+    repo: "example-org/my-project",
     handoff: {
       date: "2026-04-02",
       sections: [
@@ -211,10 +211,10 @@ test("prepareExecuteAction returns the next execute issue with a launch prompt w
               state: "OPEN",
               createdAt: "2026-04-02T02:00:00Z",
               updatedAt: "2026-04-02T02:00:00Z",
-              url: "https://github.com/Wallens11/rei-ops-room/issues/15",
+              url: "https://github.com/example-org/my-project/issues/15",
               labels: [{ name: "agent:rei" }, { name: "status:approved" }, { name: "mode:execute" }],
               assignees: [],
-              author: { login: "Wallens11" }
+              author: { login: "example-user" }
             }
           ])
         };
@@ -226,7 +226,7 @@ test("prepareExecuteAction returns the next execute issue with a launch prompt w
             number: 15,
             title: "Agent execute queue MVP",
             body: "## Scope\n- pick the next mode:execute issue\n- start Codex\n- comment the result",
-            url: "https://github.com/Wallens11/rei-ops-room/issues/15",
+            url: "https://github.com/example-org/my-project/issues/15",
             labels: [{ name: "agent:rei" }, { name: "status:approved" }, { name: "mode:execute" }],
             comments: []
           })
@@ -252,7 +252,7 @@ test("prepareExecuteAction returns the next execute issue with a launch prompt w
 
 test("prepareExecuteAction returns awaiting_approval when issue has mode:execute but no status:approved", async () => {
   const preview = await prepareExecuteAction({
-    repo: "Wallens11/rei-ops-room",
+    repo: "example-org/my-project",
     handoff: { date: "2026-04-02", sections: [] },
     runner: async (file, args) => {
       if (file === "gh" && args[0] === "issue" && args[1] === "list") {
@@ -264,10 +264,10 @@ test("prepareExecuteAction returns awaiting_approval when issue has mode:execute
               state: "OPEN",
               createdAt: "2026-04-02T02:00:00Z",
               updatedAt: "2026-04-02T02:00:00Z",
-              url: "https://github.com/Wallens11/rei-ops-room/issues/17",
+              url: "https://github.com/example-org/my-project/issues/17",
               labels: [{ name: "agent:rei" }, { name: "status:todo" }, { name: "mode:execute" }],
               assignees: [],
-              author: { login: "Wallens11" }
+              author: { login: "example-user" }
             }
           ])
         };
@@ -279,7 +279,7 @@ test("prepareExecuteAction returns awaiting_approval when issue has mode:execute
             number: 17,
             title: "Issue needing approval",
             body: "## Scope\n- needs approval first",
-            url: "https://github.com/Wallens11/rei-ops-room/issues/17",
+            url: "https://github.com/example-org/my-project/issues/17",
             labels: [{ name: "agent:rei" }, { name: "status:todo" }, { name: "mode:execute" }],
             comments: []
           })
@@ -298,7 +298,7 @@ test("prepareExecuteAction returns awaiting_approval when issue has mode:execute
 
 test("prepareExecuteAction can auto-pick the next roadmap child when no explicit execute issue is queued", async () => {
   const preview = await prepareExecuteAction({
-    repo: "Wallens11/rei-ops-room",
+    repo: "example-org/my-project",
     handoff: {
       date: "2026-04-02",
       sections: []
@@ -313,10 +313,10 @@ test("prepareExecuteAction can auto-pick the next roadmap child when no explicit
               state: "OPEN",
               createdAt: "2026-04-02T01:00:00Z",
               updatedAt: "2026-04-02T03:00:00Z",
-              url: "https://github.com/Wallens11/rei-ops-room/issues/13",
+              url: "https://github.com/example-org/my-project/issues/13",
               labels: [{ name: "agent:rei" }],
               assignees: [],
-              author: { login: "Wallens11" }
+              author: { login: "example-user" }
             },
             {
               number: 15,
@@ -324,10 +324,10 @@ test("prepareExecuteAction can auto-pick the next roadmap child when no explicit
               state: "OPEN",
               createdAt: "2026-04-02T01:10:00Z",
               updatedAt: "2026-04-02T03:10:00Z",
-              url: "https://github.com/Wallens11/rei-ops-room/issues/15",
+              url: "https://github.com/example-org/my-project/issues/15",
               labels: [{ name: "agent:rei" }, { name: "status:todo" }, { name: "mode:report_only" }],
               assignees: [],
-              author: { login: "Wallens11" }
+              author: { login: "example-user" }
             },
             {
               number: 16,
@@ -335,10 +335,10 @@ test("prepareExecuteAction can auto-pick the next roadmap child when no explicit
               state: "OPEN",
               createdAt: "2026-04-02T01:20:00Z",
               updatedAt: "2026-04-02T03:20:00Z",
-              url: "https://github.com/Wallens11/rei-ops-room/issues/16",
+              url: "https://github.com/example-org/my-project/issues/16",
               labels: [{ name: "agent:rei" }, { name: "status:todo" }, { name: "mode:report_only" }],
               assignees: [],
-              author: { login: "Wallens11" }
+              author: { login: "example-user" }
             }
           ])
         };
@@ -350,7 +350,7 @@ test("prepareExecuteAction can auto-pick the next roadmap child when no explicit
             number: 13,
             title: "Roadmap: Paperclip-lite gap map for Rei Ops Room",
             body: "Child issues for this roadmap:\n- #14\n- #15\n- #16",
-            url: "https://github.com/Wallens11/rei-ops-room/issues/13",
+            url: "https://github.com/example-org/my-project/issues/13",
             labels: [{ name: "agent:rei" }],
             comments: [
               {
@@ -367,7 +367,7 @@ test("prepareExecuteAction can auto-pick the next roadmap child when no explicit
             number: 15,
             title: "Approval-gated execution lane beyond report-only",
             body: "## Scope\n- auto-pick the next child issue from roadmap context",
-            url: "https://github.com/Wallens11/rei-ops-room/issues/15",
+            url: "https://github.com/example-org/my-project/issues/15",
             labels: [{ name: "agent:rei" }, { name: "status:todo" }, { name: "mode:report_only" }],
             comments: []
           })
@@ -387,7 +387,7 @@ test("prepareExecuteAction can auto-pick the next roadmap child when no explicit
 
 test("prepareExecuteAction halts the roadmap queue when the next child is blocked", async () => {
   const preview = await prepareExecuteAction({
-    repo: "Wallens11/rei-ops-room",
+    repo: "example-org/my-project",
     handoff: {
       date: "2026-04-02",
       sections: []
@@ -402,10 +402,10 @@ test("prepareExecuteAction halts the roadmap queue when the next child is blocke
               state: "OPEN",
               createdAt: "2026-04-02T01:00:00Z",
               updatedAt: "2026-04-02T03:00:00Z",
-              url: "https://github.com/Wallens11/rei-ops-room/issues/13",
+              url: "https://github.com/example-org/my-project/issues/13",
               labels: [{ name: "agent:rei" }],
               assignees: [],
-              author: { login: "Wallens11" }
+              author: { login: "example-user" }
             },
             {
               number: 15,
@@ -413,10 +413,10 @@ test("prepareExecuteAction halts the roadmap queue when the next child is blocke
               state: "OPEN",
               createdAt: "2026-04-02T01:10:00Z",
               updatedAt: "2026-04-02T03:10:00Z",
-              url: "https://github.com/Wallens11/rei-ops-room/issues/15",
+              url: "https://github.com/example-org/my-project/issues/15",
               labels: [{ name: "agent:rei" }, { name: "status:blocked" }, { name: "mode:report_only" }],
               assignees: [],
-              author: { login: "Wallens11" }
+              author: { login: "example-user" }
             },
             {
               number: 16,
@@ -424,10 +424,10 @@ test("prepareExecuteAction halts the roadmap queue when the next child is blocke
               state: "OPEN",
               createdAt: "2026-04-02T01:20:00Z",
               updatedAt: "2026-04-02T03:20:00Z",
-              url: "https://github.com/Wallens11/rei-ops-room/issues/16",
+              url: "https://github.com/example-org/my-project/issues/16",
               labels: [{ name: "agent:rei" }, { name: "status:todo" }, { name: "mode:report_only" }],
               assignees: [],
-              author: { login: "Wallens11" }
+              author: { login: "example-user" }
             }
           ])
         };
@@ -439,7 +439,7 @@ test("prepareExecuteAction halts the roadmap queue when the next child is blocke
             number: 13,
             title: "Roadmap: Paperclip-lite gap map for Rei Ops Room",
             body: "Child issues for this roadmap:\n- #15\n- #16",
-            url: "https://github.com/Wallens11/rei-ops-room/issues/13",
+            url: "https://github.com/example-org/my-project/issues/13",
             labels: [{ name: "agent:rei" }],
             comments: []
           })
@@ -469,7 +469,7 @@ test("selectExecuteTarget skips an in_progress issue updated within the claim co
           title: "Active execute issue just claimed by another process",
           createdAt: "2026-04-02T01:00:00Z",
           updatedAt: recentIso,
-          url: "https://github.com/Wallens11/rei-ops-room/issues/20",
+          url: "https://github.com/example-org/my-project/issues/20",
           labels: ["agent:rei", "status:in_progress", "mode:execute"]
         },
         {
@@ -477,7 +477,7 @@ test("selectExecuteTarget skips an in_progress issue updated within the claim co
           title: "Next todo execute issue",
           createdAt: "2026-04-02T02:00:00Z",
           updatedAt: "2026-04-02T02:00:00Z",
-          url: "https://github.com/Wallens11/rei-ops-room/issues/21",
+          url: "https://github.com/example-org/my-project/issues/21",
           labels: ["agent:rei", "status:todo", "mode:execute"]
         }
       ]
@@ -502,7 +502,7 @@ test("selectExecuteTarget picks an in_progress issue that is outside the claim c
           title: "Ongoing execute work, safe to resume",
           createdAt: "2026-04-02T01:00:00Z",
           updatedAt: oldIso,
-          url: "https://github.com/Wallens11/rei-ops-room/issues/22",
+          url: "https://github.com/example-org/my-project/issues/22",
           labels: ["agent:rei", "status:in_progress", "mode:execute"]
         }
       ]
@@ -613,7 +613,7 @@ test("prepareExecuteAction retries a blocked execute issue after backoff has pas
   const oldMs = Date.now() - 10 * 60_000; // 10 menit lalu — lewat backoff 5m
 
   const preview = await prepareExecuteAction({
-    repo: "Wallens11/rei-ops-room",
+    repo: "example-org/my-project",
     handoff: { date: "2026-04-06", sections: [] },
     runner: async (file, args) => {
       if (file === "gh" && args[0] === "issue" && args[1] === "list") {
@@ -625,10 +625,10 @@ test("prepareExecuteAction retries a blocked execute issue after backoff has pas
               state: "OPEN",
               createdAt: "2026-04-01T01:00:00Z",
               updatedAt: "2026-04-01T02:00:00Z",
-              url: "https://github.com/Wallens11/rei-ops-room/issues/40",
+              url: "https://github.com/example-org/my-project/issues/40",
               labels: [{ name: "agent:rei" }, { name: "status:blocked" }, { name: "mode:execute" }],
               assignees: [],
-              author: { login: "Wallens11" }
+              author: { login: "example-user" }
             }
           ])
         };
@@ -640,7 +640,7 @@ test("prepareExecuteAction retries a blocked execute issue after backoff has pas
             number: 40,
             title: "Blocked execute issue eligible for retry",
             body: "## Scope\n- Fix the broken worker flow",
-            url: "https://github.com/Wallens11/rei-ops-room/issues/40",
+            url: "https://github.com/example-org/my-project/issues/40",
             labels: [{ name: "agent:rei" }, { name: "status:blocked" }, { name: "mode:execute" }],
             comments: [
               {
@@ -673,7 +673,7 @@ test("selectExecuteTarget returns 'approved' status for mode:execute + status:ap
         title: "Explicitly approved execute issue",
         createdAt: "2026-04-07T01:00:00Z",
         updatedAt: "2026-04-07T01:00:00Z",
-        url: "https://github.com/Wallens11/rei-ops-room/issues/30",
+        url: "https://github.com/example-org/my-project/issues/30",
         labels: ["agent:rei", "status:approved", "mode:execute"]
       }
     ]
@@ -691,7 +691,7 @@ test("selectExecuteTarget returns 'awaiting_approval' for mode:execute + status:
         title: "Issue pending approval",
         createdAt: "2026-04-07T01:00:00Z",
         updatedAt: "2026-04-07T01:00:00Z",
-        url: "https://github.com/Wallens11/rei-ops-room/issues/31",
+        url: "https://github.com/example-org/my-project/issues/31",
         labels: ["agent:rei", "status:todo", "mode:execute"]
       }
     ]
@@ -709,7 +709,7 @@ test("selectExecuteTarget prefers status:approved over status:todo (awaiting_app
         title: "Pending approval issue",
         createdAt: "2026-04-07T01:00:00Z",
         updatedAt: "2026-04-07T01:00:00Z",
-        url: "https://github.com/Wallens11/rei-ops-room/issues/32",
+        url: "https://github.com/example-org/my-project/issues/32",
         labels: ["agent:rei", "status:todo", "mode:execute"]
       },
       {
@@ -717,7 +717,7 @@ test("selectExecuteTarget prefers status:approved over status:todo (awaiting_app
         title: "Explicitly approved issue",
         createdAt: "2026-04-07T01:01:00Z",
         updatedAt: "2026-04-07T01:01:00Z",
-        url: "https://github.com/Wallens11/rei-ops-room/issues/33",
+        url: "https://github.com/example-org/my-project/issues/33",
         labels: ["agent:rei", "status:approved", "mode:execute"]
       }
     ]
@@ -736,7 +736,7 @@ test("approveExecuteIssue adds status:approved and mode:execute labels", async (
   const calls = [];
 
   await approveExecuteIssue({
-    repo: "Wallens11/rei-ops-room",
+    repo: "example-org/my-project",
     issueNumber: 35,
     runner: async (file, args) => {
       calls.push({ file, args });
