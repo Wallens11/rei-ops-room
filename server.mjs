@@ -2354,6 +2354,26 @@ export function startServer(listenPort = port) {
   return server;
 }
 
+async function startDemoServer(listenPort = port) {
+  const { createDemoServer } = await import("./tools/demo-server.mjs");
+  const server = createDemoServer();
+  server.listen(listenPort, () => {
+    console.log(`Rei ops room ready at http://localhost:${listenPort} (demo mode)`);
+  });
+  return server;
+}
+
 if (process.argv[1] && fileURLToPath(import.meta.url) === path.resolve(process.argv[1])) {
-  startServer();
+  const isDemo =
+    process.env.DEMO_MODE === "true" ||
+    process.env.DEMO_MODE === "1" ||
+    process.argv.includes("--demo");
+  if (isDemo) {
+    startDemoServer().catch((err) => {
+      console.error("Demo server failed to start:", err.message);
+      process.exitCode = 1;
+    });
+  } else {
+    startServer();
+  }
 }

@@ -4,9 +4,11 @@ Autonomous agent ops room built on vanilla Node.js. Rei watches your GitHub issu
 
 No framework. No heavy dependencies. Pure ESM.
 
+![Rei Ops Room demo](public/demo.gif)
+
 ```bash
 # Try it instantly — no setup needed
-npm run demo
+DEMO_MODE=true npm start
 # → http://localhost:4317
 ```
 
