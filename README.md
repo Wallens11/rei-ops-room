@@ -6,7 +6,7 @@ No framework. No heavy dependencies. Pure ESM.
 
 ```bash
 # Try it instantly — no setup needed
-DEMO_MODE=true npm start
+npm run demo
 # → http://localhost:4317
 ```
 
