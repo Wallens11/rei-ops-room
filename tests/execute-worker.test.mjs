@@ -252,3 +252,90 @@ test("recoverStuckTasks is callable without throwing in a clean environment", as
   const warnLines = lines.filter((line) => line.includes("[warn]"));
   assert.equal(Array.isArray(warnLines), true);
 });
+
+test("executeNextIssue aborts mission when timeout signal fires", async () => {
+  const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "rei-execute-timeout-"));
+  let receivedSignal = null;
+
+  try {
+    const ac = new AbortController();
+    // Abort immediately to simulate a timeout before runMission resolves
+    const result = await executeNextIssue({
+      cwd: tempDir,
+      repo: "Wallens11/rei-ops-room",
+      availableRuntimes: ["codex"],
+      signal: ac.signal,
+      previewAction: async () => ({
+        repo: "Wallens11/rei-ops-room",
+        status: "ready",
+        target: { number: 99, title: "timeout test", url: "https://github.com/Wallens11/rei-ops-room/issues/99", status: "todo" },
+        issue: { number: 99, title: "timeout test", body: "hang forever", url: "https://github.com/Wallens11/rei-ops-room/issues/99", labels: [] },
+        skillProfile: { id: "general", label: "General" },
+        prompt: "Do something."
+      }),
+      listWorktreePaths: async () => [],
+      loadRuntimeConfig: async () => ({ preferences: {}, rateLimitFallback: true }),
+      runMission: async ({ signal: sig, runDir }) => {
+        receivedSignal = sig;
+        await fs.mkdir(runDir, { recursive: true });
+        // Simulate hanging runtime — abort after a tick
+        ac.abort();
+        // Wait for abort signal
+        await new Promise((resolve) => setTimeout(resolve, 10));
+        return { exitCode: 1, aborted: sig.aborted, outputLastMessageFile: null };
+      },
+      transitionIssueToInProgress: async () => {},
+      transitionIssueToDone: async () => {},
+      transitionIssueToBlocked: async () => {},
+      postIssueComment: async () => {},
+      onStateChange: async () => {}
+    });
+
+    // Mission received a composed signal (not null)
+    assert.ok(receivedSignal instanceof AbortSignal, "runMission should receive an AbortSignal");
+    // Result should be aborted or failed (not completed)
+    assert.ok(["aborted", "failed"].includes(result.status), `Expected aborted or failed, got: ${result.status}`);
+  } finally {
+    await fs.rm(tempDir, { recursive: true, force: true });
+  }
+});
+
+test("executeNextIssue passes composed timeout signal even without outer signal", async () => {
+  const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "rei-execute-notimeout-"));
+  let receivedSignal = null;
+
+  try {
+    await executeNextIssue({
+      cwd: tempDir,
+      repo: "Wallens11/rei-ops-room",
+      availableRuntimes: ["codex"],
+      signal: null, // no outer signal
+      previewAction: async () => ({
+        repo: "Wallens11/rei-ops-room",
+        status: "ready",
+        target: { number: 98, title: "signal test", url: "https://github.com/Wallens11/rei-ops-room/issues/98", status: "todo" },
+        issue: { number: 98, title: "signal test", body: "check signal", url: "https://github.com/Wallens11/rei-ops-room/issues/98", labels: [] },
+        skillProfile: { id: "general", label: "General" },
+        prompt: "Check signal."
+      }),
+      listWorktreePaths: async () => [],
+      loadRuntimeConfig: async () => ({ preferences: {}, rateLimitFallback: true }),
+      runMission: async ({ signal: sig, runDir }) => {
+        receivedSignal = sig;
+        await fs.mkdir(runDir, { recursive: true });
+        return { exitCode: 0, aborted: false, outputLastMessageFile: null };
+      },
+      transitionIssueToInProgress: async () => {},
+      transitionIssueToDone: async () => {},
+      transitionIssueToBlocked: async () => {},
+      postIssueComment: async () => {},
+      onStateChange: async () => {}
+    });
+
+    // Even without outer signal, mission should receive a timeout AbortSignal
+    assert.ok(receivedSignal instanceof AbortSignal, "runMission should always receive an AbortSignal for timeout");
+    assert.ok(!receivedSignal.aborted, "Signal should not be aborted yet on fast completion");
+  } finally {
+    await fs.rm(tempDir, { recursive: true, force: true });
+  }
+});

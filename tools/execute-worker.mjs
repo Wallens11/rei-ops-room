@@ -49,6 +49,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const DEFAULT_INTERVAL_SECONDS = 60;
 const MIN_INTERVAL_SECONDS = 30;
 const STUCK_TASK_THRESHOLD_MS = 10 * 60 * 1000; // 10 menit
+const EXECUTE_TIMEOUT_MS = Number(process.env.EXECUTE_TIMEOUT_MS ?? 10 * 60 * 1000); // 10 menit default
 const DEFAULT_CODEX_CANDIDATES = ["/Applications/Codex.app/Contents/Resources/codex"];
 const execFileAsync = promisify(execFile);
 const EXECUTE_RUNTIME_PATH_PREFIXES = [
@@ -112,6 +113,7 @@ function createRunDirName(issue) {
 }
 
 async function readTextIfExists(filePath) {
+  if (!filePath) return "";
   try {
     return await fs.readFile(filePath, "utf8");
   } catch (error) {
@@ -751,6 +753,14 @@ export async function executeNextIssue({
   let activeRunDir = runDir;
   let activeRuntimeId = initialRuntimeId;
 
+  // Execution timeout: batalkan misi kalau runtime hang terlalu lama.
+  // Compose dengan outer signal kalau ada (dari worker loop AbortController).
+  const timeoutController = new AbortController();
+  const timeoutHandle = setTimeout(() => timeoutController.abort(), EXECUTE_TIMEOUT_MS);
+  const missionSignal = signal
+    ? AbortSignal.any([signal, timeoutController.signal])
+    : timeoutController.signal;
+
   // Session pinning: kalau issue ini pernah dijalankan sebelumnya dan runtime-nya claude-code,
   // coba resume dari session terakhir supaya konteks percakapan tidak hilang saat worker crash.
   const pinnedSessionId = await readSessionPin(preview.target.number).catch(() => null);
@@ -766,7 +776,7 @@ export async function executeNextIssue({
       repoCwd: cwd,
       prompt: preview.prompt,
       runDir: attemptRunDir,
-      signal,
+      signal: missionSignal,
       resumeSessionId: useSessionId,
       onChildPid: async (childPid) => {
         await onStateChange({
@@ -811,6 +821,8 @@ export async function executeNextIssue({
       detail: `${runtimeLabel} was rate limited for issue #${preview.target.number}; retrying with ${nextRuntimeLabel}.`
     });
   }
+
+  clearTimeout(timeoutHandle);
 
   const nextWorktreePaths = await listWorktreePaths({
     stage: "after",
