@@ -1,8 +1,9 @@
 # syntax=docker/dockerfile:1
 FROM node:22-alpine
 
-# Install gh CLI (needed for GitHub issue polling)
-RUN apk add --no-cache github-cli
+# gh CLI is optional — Rei uses GITHUB_TOKEN + REST API by default.
+# Install it only if you prefer the CLI path (e.g. for local dev).
+# RUN apk add --no-cache github-cli
 
 WORKDIR /app
 

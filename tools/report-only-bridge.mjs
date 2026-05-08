@@ -10,8 +10,15 @@ import {
   listGithubIssuesWithRunner,
   SQLITE_JSON_MAX_BUFFER
 } from "../server.mjs";
+import { createGithubRunner } from "./github-api.mjs";
 
 const execFileAsync = promisify(execFile);
+
+function defaultRunner() {
+  return process.env.GITHUB_TOKEN
+    ? createGithubRunner({ fallbackRunner: execFileAsync })
+    : execFileAsync;
+}
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const REPORT_ONLY_MARKER_PREFIX = "<!-- rei:report-only issue=";
 
@@ -179,7 +186,7 @@ async function commentIssueWithRunner(runner, { repo, issueNumber, body }) {
 }
 
 export async function prepareReportOnlyAction({
-  runner = execFileAsync,
+  runner = defaultRunner(),
   cwd = path.resolve(__dirname, ".."),
   repo = null
 } = {}) {
@@ -261,7 +268,7 @@ export async function executeReportOnlyAction(options = {}) {
 }
 
 export async function runReportOnlyBridge({
-  runner = execFileAsync,
+  runner = defaultRunner(),
   cwd = path.resolve(__dirname, ".."),
   repo = null,
   comment = false,

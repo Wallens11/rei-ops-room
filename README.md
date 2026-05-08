@@ -70,7 +70,9 @@ docker run -p 4317:4317 \
 ## Requirements
 
 - Node.js 20+
-- `gh` CLI — authenticated (`gh auth login`)
+- GitHub access — either:
+  - `GITHUB_TOKEN` env var (recommended, works in Docker / CI)
+  - or `gh` CLI authenticated (`gh auth login`)
 - At least one AI runtime:
   - [Claude Code](https://github.com/anthropics/claude-code) (`claude` in PATH)
   - [Codex](https://github.com/openai/codex) (`codex` in PATH or via `CODEX_BIN`)

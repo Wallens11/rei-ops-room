@@ -16,6 +16,7 @@ import {
   signalWorkerWake
 } from "./tools/execute-queue.mjs";
 import { readArtifactFile, readArtifacts } from "./tools/execute-artifacts.mjs";
+import { createGithubRunner } from "./tools/github-api.mjs";
 
 const execFileAsync = promisify(execFile);
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -580,8 +581,14 @@ export async function inferGithubRepoSlugWithRunner(
   return repo;
 }
 
+function defaultRunner() {
+  return process.env.GITHUB_TOKEN
+    ? createGithubRunner({ fallbackRunner: execFileAsync })
+    : execFileAsync;
+}
+
 async function inferGithubRepoSlug(options) {
-  return inferGithubRepoSlugWithRunner(execFileAsync, options);
+  return inferGithubRepoSlugWithRunner(defaultRunner(), options);
 }
 
 export async function listGithubIssuesWithRunner(
@@ -612,7 +619,7 @@ export async function listGithubIssuesWithRunner(
 }
 
 async function listGithubIssues(options) {
-  return listGithubIssuesWithRunner(execFileAsync, options);
+  return listGithubIssuesWithRunner(defaultRunner(), options);
 }
 
 async function previewReportOnlyAction(options = {}) {
@@ -2247,25 +2254,25 @@ export function createServer({
 
         const allLabels = ["agent:rei", "status:todo", "mode:report_only", ...extraLabels];
 
-        // Buat GitHub issue via gh CLI
-        const ghArgs = [
-          "issue", "create",
-          "--title", title,
-          "--body", formattedBody,
-          ...allLabels.flatMap((l) => ["--label", l])
-        ];
-
+        // Buat GitHub issue via REST API (atau gh CLI fallback)
         const repo = process.env.GITHUB_REPO || null;
-        if (repo) ghArgs.push("--repo", repo);
 
         let issueUrl = null;
         try {
-          const { stdout } = await execFileAsync("gh", ghArgs, { cwd: __dirname });
+          const runner = defaultRunner();
+          const ghArgs = [
+            "issue", "create",
+            "--title", title,
+            "--body", formattedBody,
+            ...allLabels.flatMap((l) => ["--label", l])
+          ];
+          if (repo) ghArgs.push("--repo", repo);
+          const { stdout } = await runner("gh", ghArgs, { cwd: __dirname });
           issueUrl = stdout.trim();
         } catch (ghError) {
-          // gh CLI tidak tersedia atau credentials tidak setup
+          // REST API token tidak ada atau gh CLI tidak tersedia
           writeJson(response, 503, {
-            error: "Gagal buat GitHub issue — pastikan gh CLI tersedia dan terautentikasi.",
+            error: "Gagal buat GitHub issue — set GITHUB_TOKEN env var atau pastikan gh CLI terautentikasi.",
             detail: ghError instanceof Error ? ghError.message : String(ghError),
             title,
             labels: allLabels

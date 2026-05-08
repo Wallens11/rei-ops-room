@@ -19,8 +19,15 @@ import {
   formatLearningContext,
   readLearningLog
 } from "./execute-learning.mjs";
+import { createGithubRunner } from "./github-api.mjs";
 
 const execFileAsync = promisify(execFile);
+
+function defaultRunner() {
+  return process.env.GITHUB_TOKEN
+    ? createGithubRunner({ fallbackRunner: execFileAsync })
+    : execFileAsync;
+}
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const CODEX_SKILLS_ROOT = path.join(os.homedir(), ".codex", "skills");
 const EXECUTE_SKILL_CATALOG = {
@@ -1015,7 +1022,7 @@ export function buildExecuteCompletionComment({
 }
 
 export async function prepareExecuteAction({
-  runner = execFileAsync,
+  runner = defaultRunner(),
   cwd = path.resolve(__dirname, ".."),
   repo = null,
   handoff = null,
@@ -1258,7 +1265,7 @@ export async function prepareExecuteAction({
  * atau via tombol "Approve for Execution" di UI.
  */
 export async function approveExecuteIssue({
-  runner = execFileAsync,
+  runner = defaultRunner(),
   repo,
   issueNumber
 } = {}) {
@@ -1271,7 +1278,7 @@ export async function approveExecuteIssue({
 }
 
 export async function transitionExecuteIssueToInProgress({
-  runner = execFileAsync,
+  runner = defaultRunner(),
   repo,
   issueNumber
 } = {}) {
@@ -1284,7 +1291,7 @@ export async function transitionExecuteIssueToInProgress({
 }
 
 export async function transitionExecuteIssueToDone({
-  runner = execFileAsync,
+  runner = defaultRunner(),
   repo,
   issueNumber
 } = {}) {
@@ -1301,7 +1308,7 @@ export async function transitionExecuteIssueToDone({
 }
 
 export async function transitionExecuteIssueToBlocked({
-  runner = execFileAsync,
+  runner = defaultRunner(),
   repo,
   issueNumber
 } = {}) {
@@ -1314,7 +1321,7 @@ export async function transitionExecuteIssueToBlocked({
 }
 
 export async function postExecuteIssueComment({
-  runner = execFileAsync,
+  runner = defaultRunner(),
   repo,
   issueNumber,
   body
