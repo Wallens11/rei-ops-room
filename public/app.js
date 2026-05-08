@@ -2139,60 +2139,303 @@ function drawLayoutRects(origin, rects = [], palette = {}, { active = false } = 
   }
 }
 
+// ─── Cozy ambient elements ────────────────────────────────────────────────────
+
+function drawWarmLamp(x, y, frame) {
+  // Lamp pole
+  drawPixelRect(x - 2, y, 4, 28, COLORS.bg1);
+  // Lamp shade
+  drawPixelRect(x - 10, y - 8, 20, 8, COLORS.amber);
+  drawPixelRect(x - 8, y - 12, 16, 6, COLORS.amber);
+  // Warm glow cone — flickering slightly
+  const flicker = 0.18 + Math.sin(frame * 0.07 + x) * 0.04;
+  context.save();
+  const grad = context.createRadialGradient(x, y, 2, x, y + 20, 38);
+  grad.addColorStop(0, `rgba(255, 200, 100, ${flicker})`);
+  grad.addColorStop(1, "rgba(255, 200, 100, 0)");
+  context.fillStyle = grad;
+  context.fillRect(x - 38, y, 76, 60);
+  context.restore();
+  // Bulb
+  drawPixelRect(x - 3, y - 2, 6, 4, "rgba(255, 240, 180, 0.9)");
+}
+
+function drawPlant(x, y) {
+  // Pot
+  drawPixelRect(x - 6, y + 10, 12, 8, COLORS.rose);
+  drawPixelRect(x - 5, y + 12, 10, 6, "rgba(255, 144, 124, 0.6)");
+  // Soil
+  drawPixelRect(x - 5, y + 10, 10, 3, "#2a1a0e");
+  // Stems
+  drawPixelRect(x - 1, y - 8, 2, 18, COLORS.mint);
+  drawPixelRect(x - 5, y, 2, 10, COLORS.mint);
+  drawPixelRect(x + 3, y + 2, 2, 8, COLORS.mint);
+  // Leaves
+  drawPixelRect(x - 10, y - 6, 10, 6, COLORS.mint);
+  drawPixelRect(x + 2, y - 8, 8, 6, COLORS.mint);
+  drawPixelRect(x - 8, y + 2, 8, 5, "rgba(124, 255, 186, 0.7)");
+  drawPixelRect(x + 1, y + 3, 7, 5, "rgba(124, 255, 186, 0.7)");
+}
+
+function drawCoffee(x, y, frame) {
+  // Mug body
+  drawPixelRect(x - 6, y, 12, 10, COLORS.white);
+  drawPixelRect(x - 5, y + 1, 10, 8, "rgba(40, 20, 10, 0.85)");
+  // Handle
+  drawPixelRect(x + 6, y + 2, 3, 6, COLORS.white);
+  // Steam particles
+  if (!renderState.reducedMotion) {
+    const t = frame * 0.06;
+    const steamAlpha = 0.28 + Math.sin(t) * 0.1;
+    context.save();
+    context.fillStyle = `rgba(237, 243, 255, ${steamAlpha})`;
+    // Three wispy steam particles at different phases
+    [[x - 2, -10, 0], [x + 1, -14, 1.2], [x - 1, -18, 2.4]].forEach(([sx, dy, phase]) => {
+      const wobble = Math.sin(t + phase) * 3;
+      const rise = ((t * 20 + phase * 10) % 16);
+      context.fillRect(sx + wobble, y + dy - rise + 16, 2, 3);
+    });
+    context.restore();
+  }
+  // Liquid surface shine
+  drawPixelRect(x - 4, y + 2, 4, 2, "rgba(255, 200, 140, 0.4)");
+}
+
+function drawBookshelf(x, y) {
+  // Shelf planks
+  drawPixelRect(x, y, 64, 4, COLORS.bg1);
+  drawPixelRect(x, y + 24, 64, 4, COLORS.bg1);
+  drawPixelRect(x, y + 48, 64, 4, COLORS.bg1);
+  // Side panels
+  drawPixelRect(x, y, 4, 52, COLORS.bg1);
+  drawPixelRect(x + 60, y, 4, 52, COLORS.bg1);
+  // Books row 1 (various widths and colors)
+  const books1 = [
+    { w: 6, c: COLORS.cyan },   { w: 4, c: COLORS.violet },
+    { w: 8, c: COLORS.mint },   { w: 5, c: COLORS.amber },
+    { w: 6, c: COLORS.rose },   { w: 4, c: COLORS.cyan },
+    { w: 7, c: COLORS.violet },
+  ];
+  let bx = x + 5;
+  books1.forEach(({ w, c }) => {
+    drawPixelRect(bx, y + 4, w, 18, c);
+    drawPixelRect(bx, y + 4, w, 2, "rgba(255,255,255,0.2)");
+    bx += w + 1;
+  });
+  // Books row 2
+  const books2 = [
+    { w: 5, c: COLORS.rose },   { w: 7, c: COLORS.amber },
+    { w: 4, c: COLORS.cyan },   { w: 8, c: COLORS.mint },
+    { w: 5, c: COLORS.violet }, { w: 6, c: COLORS.rose },
+  ];
+  let bx2 = x + 5;
+  books2.forEach(({ w, c }) => {
+    drawPixelRect(bx2, y + 28, w, 18, c);
+    drawPixelRect(bx2, y + 28, w, 2, "rgba(255,255,255,0.2)");
+    bx2 += w + 2;
+  });
+}
+
+function drawClock(x, y, frame) {
+  // Clock face
+  drawPixelRect(x - 12, y - 12, 24, 24, COLORS.bg1);
+  drawPixelRect(x - 10, y - 10, 20, 20, "rgba(13, 31, 49, 0.9)");
+  drawPixelRect(x - 11, y - 11, 22, 2, COLORS.cyan);
+  drawPixelRect(x - 11, y + 9, 22, 2, COLORS.cyan);
+  drawPixelRect(x - 11, y - 11, 2, 22, COLORS.cyan);
+  drawPixelRect(x + 9, y - 11, 2, 22, COLORS.cyan);
+  // Clock hands (animated slowly)
+  const seconds = (frame / 30) % 60; // ~30fps
+  const minutes = seconds / 60;
+  const minuteAngle = minutes * Math.PI * 2 - Math.PI / 2;
+  const hourAngle = (minutes / 12) * Math.PI * 2 - Math.PI / 2;
+  context.save();
+  // Minute hand
+  context.strokeStyle = COLORS.white;
+  context.lineWidth = 1.5;
+  context.beginPath();
+  context.moveTo(x, y);
+  context.lineTo(x + Math.cos(minuteAngle) * 7, y + Math.sin(minuteAngle) * 7);
+  context.stroke();
+  // Hour hand
+  context.strokeStyle = COLORS.cyan;
+  context.lineWidth = 1.5;
+  context.beginPath();
+  context.moveTo(x, y);
+  context.lineTo(x + Math.cos(hourAngle) * 5, y + Math.sin(hourAngle) * 5);
+  context.stroke();
+  // Center dot
+  context.fillStyle = COLORS.white;
+  context.fillRect(x - 1, y - 1, 2, 2);
+  context.restore();
+}
+
+function drawDustParticles(frame, tone) {
+  if (renderState.reducedMotion || tone === "busy") return;
+  // Subtle floating dust motes when calm/rest — adds life to the room
+  const alpha = tone === "rest" ? 0.22 : 0.12;
+  context.save();
+  context.fillStyle = `rgba(237, 243, 255, ${alpha})`;
+  // Use deterministic pseudo-random positions that drift upward
+  const seeds = [0.13, 0.37, 0.61, 0.82, 0.24, 0.55, 0.78, 0.42, 0.67, 0.91];
+  seeds.forEach((seed, i) => {
+    const speed = 0.15 + seed * 0.1;
+    const x = ((seed * 580 + i * 63) % 580) + 30;
+    const yBase = ((frame * speed + seed * 400) % 300) + 80;
+    const wobble = Math.sin(frame * 0.03 + seed * 6) * 6;
+    context.globalAlpha = alpha * (0.5 + Math.sin(frame * 0.05 + seed * 4) * 0.5);
+    context.fillRect(x + wobble, yBase, 2, 2);
+  });
+  context.restore();
+}
+
+function drawWindowWithLight(frame, tone) {
+  // Window frame
+  drawPixelRect(220, 20, 200, 72, COLORS.bg2);
+  drawPixelRect(222, 22, 196, 68, "rgba(101, 228, 255, 0.06)");
+
+  // Sky color varies by tone
+  const skyColor = tone === "rest"
+    ? "rgba(30, 20, 80, 0.9)"
+    : tone === "busy"
+      ? "rgba(20, 60, 100, 0.85)"
+      : "rgba(15, 40, 80, 0.8)";
+  drawPixelRect(224, 24, 192, 64, skyColor);
+
+  // Window panes (cross dividers)
+  drawPixelRect(318, 24, 4, 64, COLORS.bg2);  // vertical
+  drawPixelRect(224, 55, 192, 4, COLORS.bg2); // horizontal
+
+  // Stars in night mode
+  if (tone === "rest") {
+    [[250, 36], [290, 44], [340, 32], [380, 50], [420, 40], [460, 35]].forEach(([sx, sy]) => {
+      const twinkle = 0.5 + Math.sin(frame * 0.04 + sx * 0.1) * 0.5;
+      drawPixelRect(sx, sy, 2, 2, `rgba(237, 243, 255, ${twinkle * 0.8})`);
+    });
+  } else {
+    // City lights / horizon glow
+    const glowAlpha = tone === "busy" ? 0.3 : 0.2;
+    context.save();
+    const horizGrad = context.createLinearGradient(224, 50, 224, 88);
+    horizGrad.addColorStop(0, `rgba(101, 228, 255, 0)`);
+    horizGrad.addColorStop(1, `rgba(101, 228, 255, ${glowAlpha})`);
+    context.fillStyle = horizGrad;
+    context.fillRect(224, 50, 192, 38);
+    context.restore();
+
+    // Distant building silhouettes
+    [[240, 52, 8, 16], [256, 58, 6, 10], [270, 50, 10, 18], [310, 55, 7, 13],
+     [360, 48, 9, 20], [395, 54, 6, 14], [420, 50, 11, 18], [450, 56, 7, 12]].forEach(([bx, by, bw, bh]) => {
+      drawPixelRect(bx, by, bw, bh, "rgba(5, 15, 30, 0.7)");
+      // Window lights on buildings
+      if (bh > 14) {
+        drawPixelRect(bx + 2, by + 3, 2, 2, "rgba(255, 200, 100, 0.5)");
+        drawPixelRect(bx + 5, by + 7, 2, 2, "rgba(255, 200, 100, 0.3)");
+      }
+    });
+  }
+
+  // Window sill
+  drawPixelRect(218, 92, 204, 5, COLORS.bg1);
+
+  // Light rays from window (only calm/steady)
+  if (!renderState.reducedMotion && (tone === "calm" || tone === "steady")) {
+    const rayAlpha = 0.04 + Math.sin(frame * 0.025) * 0.02;
+    context.save();
+    context.fillStyle = `rgba(101, 228, 255, ${rayAlpha})`;
+    // Two angled light beams
+    context.beginPath();
+    context.moveTo(260, 88);
+    context.lineTo(280, 88);
+    context.lineTo(180, 280);
+    context.lineTo(160, 280);
+    context.fill();
+    context.beginPath();
+    context.moveTo(360, 88);
+    context.lineTo(380, 88);
+    context.lineTo(480, 280);
+    context.lineTo(460, 280);
+    context.fill();
+    context.restore();
+  }
+}
+
+function drawRug(floorTop) {
+  // Simple decorative rug in the center of the floor
+  drawPixelRect(220, floorTop + 40, 200, 80, "rgba(184, 162, 255, 0.06)");
+  drawPixelRect(222, floorTop + 42, 196, 76, "rgba(184, 162, 255, 0.04)");
+  // Rug border pattern
+  for (let i = 0; i < 10; i++) {
+    drawPixelRect(222 + i * 20, floorTop + 42, 2, 76, "rgba(184, 162, 255, 0.08)");
+  }
+  drawPixelRect(222, floorTop + 42, 196, 4, "rgba(184, 162, 255, 0.12)");
+  drawPixelRect(222, floorTop + 114, 196, 4, "rgba(184, 162, 255, 0.12)");
+}
+
 function drawRoomBase(tone = "calm") {
   context.clearRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
 
+  // Background
   context.fillStyle = COLORS.bg0;
   context.fillRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
 
   const layout = currentLayout();
+
+  // Wall — warmer gradient
   const wallGradient = context.createLinearGradient(0, 0, 0, layout.canvas.wall_height);
-  wallGradient.addColorStop(0, COLORS.bg2);
+  const wallTop = tone === "rest" ? "#12203a" : tone === "busy" ? "#162840" : "#152e48";
+  wallGradient.addColorStop(0, wallTop);
   wallGradient.addColorStop(1, COLORS.bg1);
   context.fillStyle = wallGradient;
   context.fillRect(0, 0, CANVAS_WIDTH, layout.canvas.wall_height);
 
-  const glowAlpha =
-    tone === "busy" ? 0.22 : tone === "steady" ? 0.18 : tone === "rest" ? 0.08 : 0.12;
-  context.fillStyle = `rgba(101, 228, 255, ${glowAlpha})`;
-  context.fillRect(220, 26, 200, 14);
-  context.fillRect(250, 42, 140, 72);
+  // Decorative bookshelf on left wall
+  drawBookshelf(12, 30);
 
+  // Window with city view (replaces old simple glow)
+  drawWindowWithLight(renderState.frame, tone);
+
+  // Clock on right wall
+  drawClock(590, 52, renderState.frame);
+
+  // Warm lamp glow (right side of room)
+  drawWarmLamp(560, 130, renderState.frame);
+
+  // Floor
   context.fillStyle = COLORS.bg2;
   context.fillRect(0, layout.canvas.floor_top, CANVAS_WIDTH, CANVAS_HEIGHT - layout.canvas.floor_top);
 
+  // Rug
+  drawRug(layout.canvas.floor_top);
+
+  // Floor grid lines
   for (let row = 0; row < 12; row += 1) {
     context.strokeStyle = COLORS.floorLine;
+    context.lineWidth = 0.5;
     context.beginPath();
     context.moveTo(0, layout.canvas.floor_top + row * 18);
     context.lineTo(CANVAS_WIDTH, layout.canvas.floor_top + row * 18);
     context.stroke();
   }
 
+  // Diagonal floor lines (subtle perspective)
   for (let col = 0; col < 18; col += 1) {
-    context.strokeStyle = "rgba(255, 255, 255, 0.025)";
+    context.strokeStyle = "rgba(255, 255, 255, 0.018)";
+    context.lineWidth = 0.5;
     context.beginPath();
     context.moveTo(col * 36, layout.canvas.floor_top);
     context.lineTo(col * 36 + 20, CANVAS_HEIGHT);
     context.stroke();
   }
 
-  drawPixelRect(300, 24, 40, 10, COLORS.amber);
-  drawPixelRect(312, 34, 16, 18, COLORS.white);
+  // Plant in bottom-left corner
+  drawPlant(38, layout.canvas.floor_top + 30);
 
-  if (tone === "rest") {
-    [
-      { x: 72, y: 40 },
-      { x: 112, y: 58 },
-      { x: 528, y: 46 },
-      { x: 570, y: 68 }
-    ].forEach((star) => {
-      drawPixelRect(star.x, star.y, 4, 4, "rgba(237, 243, 255, 0.82)");
-    });
+  // Coffee on the lab desk area (approximate position)
+  drawCoffee(310, layout.canvas.floor_top + 12, renderState.frame);
 
-    drawPixelRect(286, 160, 72, 8, "rgba(184, 162, 255, 0.22)");
-    drawPixelRect(298, 168, 48, 6, "rgba(184, 162, 255, 0.12)");
-  }
+  // Floating dust particles (ambient life)
+  drawDustParticles(renderState.frame, tone);
 }
 
 function drawRouteMarkers(points, color, { intensity = "medium", live = false } = {}) {
@@ -2425,6 +2668,19 @@ function drawStatusMonitor(scene, frame) {
     monitor_lit: lit,
     bg1: COLORS.bg1
   });
+  // Add scrolling "code" characters on monitor screen
+  if (!renderState.reducedMotion) {
+    const { origin } = layout;
+    context.save();
+    context.font = "5px monospace";
+    context.fillStyle = `rgba(101, 228, 255, 0.55)`;
+    const lines = ["01101", "func()", "→ ok", "10110", "run()", "pass ✓"];
+    lines.forEach((line, i) => {
+      const scrollY = ((frame * 0.4 + i * 8) % 40);
+      context.fillText(line, origin.x + 4, origin.y + 8 + scrollY);
+    });
+    context.restore();
+  }
 }
 
 function drawToolRack(scene, frame) {
@@ -2670,10 +2926,24 @@ function drawAgent(actor, agentState, isPrimary) {
           ? "walk"
           : "stand");
   const seated = actor.motionState === "SEATED" || actor.motionState === "REST" || ["sit", "type", "read"].includes(pose);
-  const y = actor.y + (seated ? -8 + (frame % 20 < 10 ? 0 : -1) : 0);
+  // Natural breathing / idle bob — smooth sine wave instead of hard step
+  const breathe = seated
+    ? Math.sin(frame * 0.06) * 1.2  // gentle seated sway
+    : Math.sin(frame * 0.04 + (actor.patrolIndex || 0)) * 0.8; // standing breathe
+  const y = actor.y + (seated ? -8 + breathe : breathe);
   const direction = actor.facing || 1;
-  const armSwing = actor.moving ? ((frame + actor.patrolIndex) % 10 < 5 ? 2 : -2) : seated ? 1 : 0;
-  const legSwing = actor.moving ? ((frame + actor.patrolIndex) % 12 < 6 ? 2 : -2) : 0;
+  // Smooth arm swing using sine instead of binary flip
+  const swingPhase = (frame + (actor.patrolIndex || 0) * 3) * 0.18;
+  const armSwing = actor.moving
+    ? Math.round(Math.sin(swingPhase) * 3)
+    : seated ? 1 : Math.round(Math.sin(frame * 0.05) * 0.5); // tiny idle arm sway
+  const legSwing = actor.moving
+    ? Math.round(Math.sin(swingPhase) * 2.5)
+    : 0;
+  // Idle look-around: slight head tilt offset
+  const idleLook = (!actor.moving && !seated)
+    ? Math.round(Math.sin(frame * 0.022) * 1.5)
+    : 0;
 
   drawPixelRect(actor.x - (seated ? 16 : 18), y + (seated ? 28 : 34), seated ? 32 : 36, 8, "rgba(0, 0, 0, 0.24)");
 
@@ -2722,10 +2992,10 @@ function drawAgent(actor, agentState, isPrimary) {
       drawPixelRect(actor.x + 2, y + 28, 6, 4, body);
     }
   } else {
-    drawPixelRect(actor.x - 10, y, 20, 20, body);
+    drawPixelRect(actor.x - 10 + idleLook, y, 20, 20, body);
     const isBlink = (frame % 90 < 3);
-    drawPixelRect(actor.x - 6, y + 4, 12, isBlink ? 2 : 8, COLORS.white);
-    drawPixelRect(actor.x - 4, y + 6, 8, isBlink ? 1 : 4, COLORS.bg1);
+    drawPixelRect(actor.x - 6 + idleLook, y + 4, 12, isBlink ? 2 : 8, COLORS.white);
+    drawPixelRect(actor.x - 4 + idleLook, y + 6, 8, isBlink ? 1 : 4, COLORS.bg1);
     drawPixelRect(actor.x - 6, y + 20, 12, 14, body);
     drawPixelRect(actor.x - 14 + armSwing, y + 22, 6, 12, body);
     drawPixelRect(actor.x + 8 - armSwing, y + 22, 6, 12, body);
