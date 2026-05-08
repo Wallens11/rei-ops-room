@@ -217,7 +217,11 @@ async function main() {
   }
 }
 
-main().catch((err) => {
-  process.stderr.write(`\nSetup error: ${err?.message || String(err)}\n`);
-  process.exit(1);
-});
+export default main;
+
+if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+  main().catch((err) => {
+    process.stderr.write(`\nSetup error: ${err?.message || String(err)}\n`);
+    process.exit(1);
+  });
+}

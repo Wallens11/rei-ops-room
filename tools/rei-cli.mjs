@@ -120,6 +120,8 @@ export function parseCliArgs(argv) {
   if (command === "room" || command === "widget") {
     mode = normalizeMode(command);
     command = "activate";
+  } else if (["stop", "status", "init", "help", "--help", "-h"].includes(command)) {
+    // these commands take no mode
   } else if (args[0] && !args[0].startsWith("--")) {
     mode = normalizeMode(args.shift());
   }
@@ -336,7 +338,7 @@ async function startDetachedServer(port) {
 
   const ready = await waitForServer(port);
   if (!ready) {
-    throw new Error(`Pixel agent server failed to start on port ${port}`);
+    throw new Error(`Rei server failed to start on port ${port}`);
   }
 }
 
@@ -383,7 +385,7 @@ async function activate({ port, mode, open }) {
     await syncPid(runtime);
     if (initialAction.type === "error") {
       throw new Error(
-        `Port ${port} is held by the pixel agent process, but /api/status is not responding`
+        `Port ${port} is held by Rei, but /api/status is not responding`
       );
     }
 
@@ -399,7 +401,7 @@ async function activate({ port, mode, open }) {
         await startDetachedServer(port);
       } else if (recoveryAction.type !== "reuse") {
         throw new Error(
-          `Port ${port} is held by the pixel agent process, but /api/status is not responding`
+          `Port ${port} is held by Rei, but /api/status is not responding`
         );
       }
     }
@@ -411,7 +413,7 @@ async function activate({ port, mode, open }) {
     await openViewer(url);
   }
 
-  console.log(`agent pixel active: ${url}`);
+  console.log(`rei active: ${url}`);
 }
 
 async function stopServer(port) {
@@ -420,25 +422,32 @@ async function stopServer(port) {
 
   if (targetPid) {
     await stopRuntimePid(targetPid, port);
-    console.log("agent pixel stopped");
+    console.log("rei stopped");
     return;
   }
 
   await fs.rm(pidFile, { force: true });
-  console.log("agent pixel was not running");
+  console.log("rei was not running");
 }
 
 async function printStatus(port) {
   const runtime = await inspectServerRuntime(port);
   console.log(
     runtime.running
-      ? `agent pixel running at ${buildViewerUrl({ port, mode: "room" })}`
-      : "agent pixel is not running"
+      ? `rei running at ${buildViewerUrl({ port, mode: "room" })}`
+      : "rei is not running"
   );
 }
 
 async function main() {
   const parsed = parseCliArgs(process.argv.slice(2));
+
+  if (parsed.command === "init") {
+    const setupPath = path.resolve(__dirname, "..", "setup.mjs");
+    const { default: runSetup } = await import(setupPath);
+    await runSetup();
+    return;
+  }
 
   if (parsed.command === "stop") {
     await stopServer(parsed.port);
@@ -450,10 +459,19 @@ async function main() {
     return;
   }
 
-  if (parsed.command === "help") {
-    console.log("usage: rei [activate] [room|widget] [--no-open] [--port 4317]");
-    console.log("       rei stop");
-    console.log("       rei status");
+  if (parsed.command === "help" || parsed.command === "--help" || parsed.command === "-h") {
+    console.log("usage: rei <command> [options]");
+    console.log("");
+    console.log("commands:");
+    console.log("  init                 run setup wizard (create config, labels, etc.)");
+    console.log("  room                 open the ops room UI in the browser");
+    console.log("  widget               open in widget mode");
+    console.log("  status               check if the server is running");
+    console.log("  stop                 stop the server");
+    console.log("");
+    console.log("options:");
+    console.log("  --no-open            don't open the browser");
+    console.log("  --port <n>           use a different port (default: 4317)");
     return;
   }
 
