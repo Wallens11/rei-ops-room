@@ -9,15 +9,21 @@
   </head>
   <body>
     <div id="demo-banner" class="demo-banner" hidden>
-      <span class="demo-banner-icon">&#x1F3AD;</span>
-      Demo Mode &mdash; data is simulated.
-      Run without <code>DEMO_MODE=true</code> for live data.
+      <span class="demo-banner-icon">✦</span>
+      Demo Mode — Rei is running on simulated data.
+      Try it live: remove <code>DEMO_MODE=true</code> and configure <code>rei.config.json</code>.
     </div>
     <div class="background-grid"></div>
     <main class="shell">
       <header class="topbar">
         <div class="topbar-copy">
-          <p class="eyebrow">Rei Ops Room</p>
+          <div class="rei-identity">
+            <div class="rei-avatar" title="Rei — autonomous agent">🤖</div>
+            <div>
+              <div class="rei-name">Rei</div>
+              <div class="rei-tagline">AUTONOMOUS OPS AGENT</div>
+            </div>
+          </div>
         </div>
 
         <div class="topbar-actions">
@@ -53,7 +59,7 @@
               <span id="mode-chip" class="chip">Solo</span>
               <span id="confidence-chip" class="chip">focus 46%</span>
             </div>
-            <span id="activity-age" class="activity-age">Belum ada data</span>
+            <span id="activity-age" class="activity-age">— rei watching —</span>
           </div>
 
           <div class="scene-shell">
@@ -69,7 +75,7 @@
             <p class="panel-label">Scene Detail</p>
             <h3 id="scene-detail-title">Room details</h3>
             <p id="scene-detail-body" class="dim">
-              Hover a desk or click an agent to inspect the current room state.
+              Hover a desk or click Rei to inspect her current state.
             </p>
           </div>
 
@@ -81,7 +87,7 @@
                 <p id="editor-entity-meta" class="dim mono">zone:lab | x 322 | y 216</p>
               </div>
               <p id="editor-status" class="dim">
-                Room layout masih pakai schema default.
+                Layout is using default schema.
               </p>
             </div>
 
@@ -123,7 +129,7 @@
               <p class="panel-label">Room Phase</p>
               <h2 id="phase-title">Standby</h2>
               <p id="phase-reason" class="dim">
-                Room lagi tenang dan belum ada gerakan berarti.
+                Rei is in standby. Quiet — waiting for signals.
               </p>
             </div>
 
@@ -131,15 +137,15 @@
               <p id="focus-label" class="panel-label">Active Desk</p>
               <h2 id="focus-title">Lead Table</h2>
               <p id="focus-reason" class="dim">
-                Belum ada desk aktif yang dominan.
+                No hot desk yet. Rei is scanning.
               </p>
               <p id="assignment-hint" class="dim mono" hidden></p>
             </div>
 
             <div class="caption-block mission-block">
               <p class="panel-label">Current Task</p>
-              <h3 id="task-title">Standby di room aktif</h3>
-              <p id="task-repo" class="dim mono">workspace | solo</p>
+              <h3 id="task-title">Rei on standby</h3>
+              <p id="task-repo" class="dim mono">rei | watching</p>
             </div>
 
             <div class="caption-block skill-block">

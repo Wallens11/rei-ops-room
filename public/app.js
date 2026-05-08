@@ -320,12 +320,12 @@ function createEmptyState() {
       phase_confidence: 0.46,
       focus_zone: "lab",
       focus_confidence: 0.46,
-      current_task: "Standby di room aktif",
+      current_task: "Rei on standby",
       current_repo: "workspace",
       mode: "solo",
       status: "idle",
       phase_reason: ROOM_PHASES.standby.summary,
-      focus_reason: "Belum ada desk aktif yang dominan."
+      focus_reason: "Rei scanning — no hot desk yet."
     },
     scene: {
       headline: DEFAULT_HEADLINE,
@@ -354,7 +354,7 @@ function createEmptyState() {
         label: "Active Desk",
         chip_title: "Lead Table",
         title: "Lead Table",
-        reason: "Belum ada desk aktif yang dominan."
+        reason: "Rei scanning — no hot desk yet."
       },
       assignment_hint: {
         active: false,
@@ -385,16 +385,16 @@ function createEmptyState() {
       focus_label: "Active Desk",
       focus_chip_title: "Lead Table",
       focus_title: "Lead Table",
-      focus_reason: "Belum ada desk aktif yang dominan."
+      focus_reason: "Rei scanning — no hot desk yet."
     },
     activity: {
       summary: "Belum ada log thread",
       source: "thread",
-      lastLogAgo: "belum ada data"
+      lastLogAgo: "— rei watching —"
     },
     objective: {
-      title: "Belum ada objective aktif.",
-      detail: "Thread baru akan muncul di sini saat room mulai jalan.",
+      title: "No active objective. Rei is watching.",
+      detail: "New threads appear here when Rei picks up an issue.",
       repo: "workspace",
       focus_title: "Lead Table",
       phase_title: ROOM_PHASES.standby.title,
@@ -714,7 +714,7 @@ function formatConfidence(value) {
 
 function updateActivityAgeLabel() {
   const prefix = transportLabel(renderState.transportMode);
-  const ageLabel = renderState.data?.activity?.lastLogAgo || "belum ada data";
+  const ageLabel = renderState.data?.activity?.lastLogAgo || "— rei watching —";
 
   elements.activityAge.textContent = renderState.data?.room?.resting
     ? `${prefix} | idle ${ageLabel}`
@@ -1446,7 +1446,7 @@ function applyStatus(data) {
   elements.taskRepo.textContent = `${data.room.current_repo} | ${data.room.mode}`;
 
   elements.objectiveTitle.textContent = truncate(
-    data.objective?.title || data.room.current_task || "Belum ada objective aktif.",
+    data.objective?.title || data.room.current_task || "No active objective. Rei is watching.",
     76
   );
   elements.objectiveMeta.textContent = `${data.objective?.focus_title || data.scene.focus_title || "Lead Table"} | ${data.room.mode}`;
@@ -2678,6 +2678,15 @@ function drawAgent(actor, agentState, isPrimary) {
   drawPixelRect(actor.x - (seated ? 16 : 18), y + (seated ? 28 : 34), seated ? 32 : 36, 8, "rgba(0, 0, 0, 0.24)");
 
   if (isPrimary) {
+    // Animated halo
+    const haloPulse = 0.3 + Math.abs(Math.sin(frame * 0.05)) * 0.3;
+    context.save();
+    context.globalAlpha = haloPulse;
+    context.fillStyle = accent;
+    context.beginPath();
+    context.ellipse(actor.x, y + (seated ? 32 : 40), seated ? 20 : 24, 5, 0, 0, Math.PI * 2);
+    context.fill();
+    context.restore();
     drawPixelRect(actor.x - 16, y - 2, 32, 4, accent);
   }
 
@@ -2685,8 +2694,14 @@ function drawAgent(actor, agentState, isPrimary) {
     drawPixelRect(actor.x - 9, y + 20, 18, 8, COLORS.bg2);
     drawPixelRect(actor.x - 12, y + 24, 24, 5, "rgba(7, 17, 26, 0.55)");
     drawPixelRect(actor.x - 10, y, 20, 20, body);
-    drawPixelRect(actor.x - 6, y + 4, 12, 8, COLORS.white);
-    drawPixelRect(actor.x - 4, y + 6, 8, 4, COLORS.bg1);
+    // Face — blink every ~3s (180 frames at 60fps or ~90 at 30fps)
+    const isBlink = (frame % 90 < 3);
+    drawPixelRect(actor.x - 6, y + 4, 12, isBlink ? 2 : 8, COLORS.white);
+    drawPixelRect(actor.x - 4, y + 6, 8, isBlink ? 1 : 4, COLORS.bg1);
+    // Focused expression dot when typing
+    if (pose === "type" && !isBlink) {
+      drawPixelRect(actor.x - 1, y + 9, 2, 2, accent);
+    }
     drawPixelRect(actor.x - 7, y + 20, 14, 8, body);
     drawPixelRect(actor.x - 8, y + 17, 16, 4, accent);
 
@@ -2708,8 +2723,9 @@ function drawAgent(actor, agentState, isPrimary) {
     }
   } else {
     drawPixelRect(actor.x - 10, y, 20, 20, body);
-    drawPixelRect(actor.x - 6, y + 4, 12, 8, COLORS.white);
-    drawPixelRect(actor.x - 4, y + 6, 8, 4, COLORS.bg1);
+    const isBlink = (frame % 90 < 3);
+    drawPixelRect(actor.x - 6, y + 4, 12, isBlink ? 2 : 8, COLORS.white);
+    drawPixelRect(actor.x - 4, y + 6, 8, isBlink ? 1 : 4, COLORS.bg1);
     drawPixelRect(actor.x - 6, y + 20, 12, 14, body);
     drawPixelRect(actor.x - 14 + armSwing, y + 22, 6, 12, body);
     drawPixelRect(actor.x + 8 - armSwing, y + 22, 6, 12, body);
@@ -2726,6 +2742,40 @@ function drawAgent(actor, agentState, isPrimary) {
   drawPixelRect(actor.x + 11 * direction, y + 9, 4, 4, "rgba(255,255,255,0.22)");
 
   drawActivityCue({ x: actor.x, y }, agentState.activity, accent, pose);
+
+  // Speech bubble: show brief activity label above Rei when active
+  if (isPrimary && agentState.activity && agentState.activity !== "idle") {
+    const bubbleLabels = {
+      coding: "coding…",
+      debugging: "debugging…",
+      reading: "reading…",
+      reviewing: "reviewing…",
+      summarizing: "writing…",
+      planning: "planning…",
+      meeting: "syncing…",
+    };
+    const bubbleText = bubbleLabels[agentState.activity];
+    if (bubbleText) {
+      const bx = actor.x;
+      const by = y - 18;
+      const pulse = Math.sin(frame * 0.08) * 0.18 + 0.82;
+      context.save();
+      context.globalAlpha = pulse;
+      context.fillStyle = "rgba(8, 20, 34, 0.82)";
+      context.strokeStyle = accent;
+      context.lineWidth = 1;
+      context.beginPath();
+      context.roundRect(bx - 28, by - 12, 56, 14, 3);
+      context.fill();
+      context.stroke();
+      context.fillStyle = "#edf3ff";
+      context.font = "bold 8px 'IBM Plex Mono', monospace";
+      context.textAlign = "center";
+      context.textBaseline = "middle";
+      context.fillText(bubbleText, bx, by - 5);
+      context.restore();
+    }
+  }
 }
 
 function bubbleColor(tone) {

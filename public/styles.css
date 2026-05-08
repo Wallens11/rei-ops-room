@@ -993,3 +993,192 @@ body.widget-mode .inspector {
     border-radius: 18px;
   }
 }
+
+/* ─── Rei Character Animations ──────────────────────────────────────────────── */
+
+/* Pulse animation for active status pill */
+@keyframes rei-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 currentColor; opacity: 1; }
+  50% { box-shadow: 0 0 8px 3px currentColor; opacity: 0.8; }
+}
+
+.status-busy .status-pill::before,
+.status-pill.status-busy::before {
+  animation: rei-pulse 1.8s ease-in-out infinite;
+}
+
+/* Glow border on active room card when busy */
+@keyframes rei-border-glow {
+  0%, 100% { box-shadow: 0 18px 60px rgba(0,0,0,0.34), 0 0 0 1px rgba(101,228,255,0.08); }
+  50% { box-shadow: 0 18px 60px rgba(0,0,0,0.34), 0 0 24px 2px rgba(101,228,255,0.18); }
+}
+
+body[data-tone="busy"] .room-card {
+  animation: rei-border-glow 3s ease-in-out infinite;
+}
+
+/* Smooth transitions on panels */
+.panel, .workspace-card, .room-card {
+  transition: box-shadow 0.4s ease, border-color 0.4s ease;
+}
+
+/* Status pill transition */
+.status-pill {
+  transition: color 0.3s ease, background 0.3s ease;
+}
+
+/* Chip hover glow */
+.chip:not([hidden]) {
+  transition: background 0.2s ease, box-shadow 0.2s ease;
+}
+
+/* Shimmer loading state */
+@keyframes rei-shimmer {
+  0% { background-position: -200% center; }
+  100% { background-position: 200% center; }
+}
+
+.rei-loading {
+  background: linear-gradient(90deg, rgba(255,255,255,0.04) 25%, rgba(255,255,255,0.10) 50%, rgba(255,255,255,0.04) 75%);
+  background-size: 200% auto;
+  animation: rei-shimmer 1.5s linear infinite;
+  border-radius: 6px;
+  color: transparent !important;
+  pointer-events: none;
+  user-select: none;
+}
+
+/* Slide-in for panels updating */
+@keyframes rei-fadein {
+  from { opacity: 0; transform: translateY(6px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+.rei-fresh {
+  animation: rei-fadein 0.35s ease forwards;
+}
+
+/* Canvas glow shell when busy */
+body[data-tone="busy"] #room-canvas {
+  box-shadow: 0 0 32px rgba(101, 228, 255, 0.12);
+  transition: box-shadow 0.6s ease;
+}
+
+/* Topbar Rei identity */
+.rei-identity {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.rei-avatar {
+  width: 36px;
+  height: 36px;
+  border-radius: 10px;
+  background: linear-gradient(135deg, var(--cyan), var(--violet));
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 18px;
+  flex-shrink: 0;
+  box-shadow: 0 0 16px rgba(101, 228, 255, 0.25);
+}
+
+.rei-name {
+  font-family: var(--mono-font);
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--ink);
+  letter-spacing: 0.04em;
+}
+
+.rei-tagline {
+  font-family: var(--mono-font);
+  font-size: 10px;
+  color: var(--muted);
+  letter-spacing: 0.06em;
+  margin-top: 1px;
+}
+
+/* Status pill active text badge */
+.rei-mood-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 8px;
+  border-radius: 999px;
+  background: rgba(101, 228, 255, 0.08);
+  border: 1px solid rgba(101, 228, 255, 0.15);
+  font-family: var(--mono-font);
+  font-size: 10px;
+  color: var(--cyan);
+  letter-spacing: 0.04em;
+}
+
+/* Panel label with accent dot */
+.panel-label::before {
+  content: "·";
+  margin-right: 4px;
+  color: var(--cyan);
+  font-size: 14px;
+  vertical-align: middle;
+}
+
+/* Scrolling ticker for long text */
+@keyframes rei-ticker {
+  0% { transform: translateX(0); }
+  100% { transform: translateX(-50%); }
+}
+
+/* Stack list item hover */
+.stack-list li {
+  transition: background 0.15s ease, border-color 0.15s ease;
+}
+
+.stack-list li:hover {
+  background: rgba(255,255,255,0.04);
+}
+
+/* Report button hover */
+.report-only-button:hover:not(:disabled) {
+  background: rgba(255,255,255,0.08);
+  border-color: rgba(255,255,255,0.2);
+  transition: all 0.18s ease;
+}
+
+/* Active executing pulse on execute agent view */
+@keyframes rei-run-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.6; }
+}
+
+[data-execute-running="true"] .item-chip {
+  animation: rei-run-pulse 1.4s ease-in-out infinite;
+}
+
+/* Metric bar fill animation */
+@keyframes rei-bar-grow {
+  from { width: 0; }
+  to   { width: var(--bar-width, 0%); }
+}
+
+.rei-metric-bar-fill {
+  animation: rei-bar-grow 0.8s cubic-bezier(0.4, 0, 0.2, 1) forwards;
+}
+
+/* Canvas container breathing effect */
+@keyframes rei-breathe {
+  0%, 100% { transform: scale(1); }
+  50% { transform: scale(1.002); }
+}
+
+body[data-tone="busy"] .scene-shell {
+  animation: rei-breathe 4s ease-in-out infinite;
+}
+
+/* Objective panel highlight when task active */
+body[data-tone="busy"] #runtime-panel,
+body[data-tone="steady"] #runtime-panel {
+  border-color: rgba(101, 228, 255, 0.22);
+  transition: border-color 0.5s ease;
+}

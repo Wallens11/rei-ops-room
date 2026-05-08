@@ -27,17 +27,27 @@ function describeAgentSelection(selection, state) {
   const workstream = state.workstreams.find((entry) =>
     agent?.assigned_workstream_ids?.includes(entry.id)
   );
+  const activityMap = {
+    coding: "writing code",
+    debugging: "chasing a bug",
+    reading: "reading context",
+    reviewing: "reviewing changes",
+    summarizing: "writing a summary",
+    planning: "planning next steps",
+    meeting: "syncing with team",
+    idle: "watching the queue",
+  };
+  const activityLabel = activityMap[agent?.activity] || agent?.activity || "on standby";
 
   return {
-    title: selection.label,
+    title: `Rei — ${activityLabel}`,
     body: [
-      `Activity: ${agent?.activity || "idle"}`,
-      agent?.idle_behavior ? `Idle mode: ${agent.idle_behavior}` : null,
       `Zone: ${agent?.assigned_zone || selection.zone || "lab"}`,
-      workstream ? `Workstream: ${workstream.task}` : "Workstream: standby watch"
+      agent?.idle_behavior ? `Idle mode: ${agent.idle_behavior}` : null,
+      workstream ? `Working on: ${workstream.task}` : "Watching for the next issue."
     ]
       .filter(Boolean)
-      .join(" | ")
+      .join(" · ")
   };
 }
 
@@ -55,10 +65,10 @@ function describeDeskSelection(selection, state) {
           isOccupied ? `Occupancy: ${occupancy.count}` : null
         ]
           .filter(Boolean)
-          .join(" | ")
+          .join(" · ")
       : isOccupied
-        ? `${selection.label} is staffed. Occupancy: ${occupancy.count}.`
-        : `${selection.label} is on watch for the next handoff.`
+        ? `${selection.label} is active. Rei is working here.`
+        : `${selection.label} is clear — ready for the next handoff.`
   };
 }
 
@@ -88,8 +98,8 @@ function describePropSelection(selection) {
 export function describeSceneSelection(selection, state) {
   if (!selection) {
     return {
-      title: "Room details",
-      body: "Hover a desk or click an agent to inspect the current room state."
+      title: "Rei Ops Room",
+      body: "Click Rei or hover a desk to inspect current state."
     };
   }
 
