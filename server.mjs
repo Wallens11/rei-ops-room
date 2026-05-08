@@ -27,10 +27,7 @@ const stateDb = process.env.CODEX_STATE_DB || path.join(codexHome, "state_5.sqli
 const logsDb = process.env.CODEX_LOGS_DB || path.join(codexHome, "logs_1.sqlite");
 const dailyDeviceHandoffPaths = process.env.DAILY_DEVICE_HANDOFF_PATH
   ? [process.env.DAILY_DEVICE_HANDOFF_PATH]
-  : [
-      path.join(workspaceRoot, ".work", "raffi-agent-skill", "references", "daily-device-handoff.md"),
-      path.join(codexHome, "skills", "raffi-agent-skill", "references", "daily-device-handoff.md")
-    ];
+  : [];
 const port = Number(process.env.PORT || 4317);
 export const SQLITE_JSON_MAX_BUFFER = 8 * 1024 * 1024;
 export const STATUS_STREAM_RETRY_MS = 2500;
@@ -43,7 +40,7 @@ const FOCUS_PROFILES = [
   {
     zone: "frontend",
     title: "Frontend Desk",
-    detail: "UI, layout, atau interaksi lagi dominan.",
+    detail: "UI, layout, or interaction work is dominant.",
     keywords: [
       "frontend",
       "front",
@@ -69,7 +66,7 @@ const FOCUS_PROFILES = [
   {
     zone: "backend",
     title: "Backend Rack",
-    detail: "Logic, API, atau server-side flow lagi diproses.",
+    detail: "Logic, API, or server-side flow is being processed.",
     keywords: [
       "backend",
       "api",
@@ -90,7 +87,7 @@ const FOCUS_PROFILES = [
   {
     zone: "database",
     title: "Database Vault",
-    detail: "Schema, migration, atau data layer yang lagi diutak-atik.",
+    detail: "Schema, migration, or data layer work is in progress.",
     keywords: [
       "database",
       "db",
@@ -110,7 +107,7 @@ const FOCUS_PROFILES = [
   {
     zone: "review",
     title: "Docs / Ops Corner",
-    detail: "Review, issue, docs, atau deployment lagi aktif.",
+    detail: "Review, issue, docs, or deployment work is active.",
     keywords: [
       "review",
       "issue",
@@ -1072,7 +1069,7 @@ function inferFocus(thread, repoContext, activity) {
     return {
       zone: "lab",
       title: "General Lab",
-      reason: "Belum ada sinyal kuat; squad lagi standby umum di ruang tengah.",
+      reason: "No strong signal yet; squad standing by in the central area.",
       hits: [],
       confidence: "low"
     };
@@ -1116,8 +1113,8 @@ function inferPhase(thread, activity, logs, focus) {
       title: "Planning Huddle",
       reason:
         meetingHits.length > 0
-          ? `Masih fase ngobrol / nyusun arah dari: ${meetingHits.slice(0, 3).join(", ")}.`
-          : "Belum ada fokus kuat, jadi squad kumpul dulu di meja tengah."
+          ? `Still in discussion / planning phase from: ${meetingHits.slice(0, 3).join(", ")}.`
+          : "No strong focus yet, squad gathering at the central table."
     };
   }
 
@@ -1797,7 +1794,7 @@ export function createServer({
         });
       } catch (error) {
         writeJson(response, 500, {
-          error: "Gagal generate handoff",
+          error: "Failed to generate handoff",
           detail: error instanceof Error ? error.message : String(error)
         });
       }
@@ -1991,14 +1988,14 @@ export function createServer({
           priority: body?.priority ?? 0
         });
 
-        // Bangunkan worker kalau sedang sleep — supaya task langsung diproses,
+        // Wake the worker if it's sleeping so the task gets processed immediately,
         // tidak perlu tunggu interval berikutnya (biasanya 60s).
         const woke = await signalWorkerWake();
 
         writeJson(response, 202, { status: "queued", task: entry, workerWoken: woke });
       } catch (error) {
         writeJson(response, error?.statusCode || 500, {
-          error: "Gagal enqueue task",
+          error: "Failed to enqueue task",
           detail: error instanceof Error ? error.message : String(error)
         });
       }
@@ -2011,7 +2008,7 @@ export function createServer({
         writeJson(response, 200, { tasks });
       } catch (error) {
         writeJson(response, 500, {
-          error: "Gagal baca execute queue",
+          error: "Failed to read execute queue",
           detail: error instanceof Error ? error.message : String(error)
         });
       }
@@ -2024,7 +2021,7 @@ export function createServer({
         writeJson(response, 200, { workers });
       } catch (error) {
         writeJson(response, 500, {
-          error: "Gagal baca workers registry",
+          error: "Failed to read workers registry",
           detail: error instanceof Error ? error.message : String(error)
         });
       }
@@ -2044,13 +2041,13 @@ export function createServer({
         if (!outcome.removed && outcome.reason === "not_found") {
           writeJson(response, 404, { error: "Task tidak ditemukan.", id: taskId });
         } else if (!outcome.removed && outcome.reason === "in_progress") {
-          writeJson(response, 409, { error: "Task sedang berjalan dan tidak bisa dihapus.", id: taskId });
+          writeJson(response, 409, { error: "Task is currently running and cannot be deleted.", id: taskId });
         } else {
           writeJson(response, 200, { removed: true, id: taskId });
         }
       } catch (error) {
         writeJson(response, 500, {
-          error: "Gagal hapus task",
+          error: "Failed to delete task",
           detail: error instanceof Error ? error.message : String(error)
         });
       }
@@ -2092,7 +2089,7 @@ export function createServer({
 
         const lastMessage = await fs.readFile(lastMessageFile, "utf8").catch(() => "");
 
-        // Ambil 30 baris terakhir dari events.jsonl
+        // Fetch last 30 lines from events.jsonl
         let eventsPreview = [];
         try {
           const eventsText = await fs.readFile(eventsFile, "utf8");
@@ -2107,7 +2104,7 @@ export function createServer({
         });
       } catch (error) {
         writeJson(response, 500, {
-          error: "Gagal baca run log",
+          error: "Failed to read run log",
           detail: error instanceof Error ? error.message : String(error)
         });
       }
@@ -2129,7 +2126,7 @@ export function createServer({
         writeJson(response, 200, result);
       } catch (error) {
         writeJson(response, error?.statusCode || 500, {
-          error: "Gagal approve issue",
+          error: "Failed to approve issue",
           detail: error instanceof Error ? error.message : String(error)
         });
       }
@@ -2146,7 +2143,7 @@ export function createServer({
         writeJson(response, 200, result);
       } catch (error) {
         writeJson(response, 500, {
-          error: "Gagal baca runtime registry",
+          error: "Failed to read runtime registry",
           detail: error instanceof Error ? error.message : String(error)
         });
       }
@@ -2162,7 +2159,7 @@ export function createServer({
         writeJson(response, 200, result);
       } catch (error) {
         writeJson(response, 500, {
-          error: "Gagal baca metrics",
+          error: "Failed to read metrics",
           detail: error instanceof Error ? error.message : String(error)
         });
       }
@@ -2178,7 +2175,7 @@ export function createServer({
         writeJson(response, 200, result);
       } catch (error) {
         writeJson(response, 500, {
-          error: "Gagal baca run ledger",
+          error: "Failed to read run ledger",
           detail: error instanceof Error ? error.message : String(error)
         });
       }
@@ -2197,7 +2194,7 @@ export function createServer({
         const artifacts = await listArtifactsImpl({ issueNumber: Number.isFinite(issueNumber) ? issueNumber : null });
         writeJson(response, 200, { artifacts });
       } catch (error) {
-        writeJson(response, 500, { error: "Gagal baca artifacts", detail: String(error) });
+        writeJson(response, 500, { error: "Failed to read artifacts", detail: String(error) });
       }
       return;
     }
@@ -2277,7 +2274,7 @@ export function createServer({
         } catch (ghError) {
           // REST API token tidak ada atau gh CLI tidak tersedia
           writeJson(response, 503, {
-            error: "Gagal buat GitHub issue — set GITHUB_TOKEN env var atau pastikan gh CLI terautentikasi.",
+            error: "Failed to create GitHub issue — set the GITHUB_TOKEN env var or authenticate the gh CLI.",
             detail: ghError instanceof Error ? ghError.message : String(ghError),
             title,
             labels: allLabels
@@ -2297,7 +2294,7 @@ export function createServer({
         });
       } catch (error) {
         writeJson(response, error?.statusCode || 500, {
-          error: "Gagal proses inquiry intake",
+          error: "Failed to process inquiry intake",
           detail: error instanceof Error ? error.message : String(error)
         });
       }
@@ -2334,7 +2331,7 @@ export function createServer({
         });
       } catch (error) {
         writeJson(response, error?.statusCode || 500, {
-          error: "Gagal proses webhook",
+          error: "Failed to process webhook",
           detail: error instanceof Error ? error.message : String(error)
         });
       }
