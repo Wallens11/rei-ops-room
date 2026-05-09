@@ -22,3 +22,4 @@ rei.config.json
 .execute-sessions.json
 .execute-artifacts.json
 demo-frames/
+public/demo.gif

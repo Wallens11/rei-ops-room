@@ -1,11 +1,20 @@
 /**
- * capture-demo.mjs — capture screenshots of the demo UI for README GIF.
+ * capture-demo.mjs — capture screenshots of the demo UI for the README image.
  *
  * Usage:
  *   DEMO_MODE=true node server.mjs &
  *   node tools/capture-demo.mjs
  *
- * Outputs PNGs to ./demo-frames/ then writes a GIF-ready sprite sheet.
+ * Outputs PNGs to ./demo-frames/ and writes public/demo.png (960px wide).
+ * To also generate an animated GIF (requires ffmpeg):
+ *   ffmpeg -y -framerate 1.5 -pattern_type glob -i 'demo-frames/0*.png' \
+ *     -vf "fps=1.5,scale=960:-1:flags=lanczos,palettegen=stats_mode=diff:max_colors=256" \
+ *     /tmp/rei-palette.png && \
+ *   ffmpeg -y -framerate 1.5 -pattern_type glob -i 'demo-frames/0*.png' \
+ *     -i /tmp/rei-palette.png \
+ *     -filter_complex "fps=1.5,scale=960:-1:flags=lanczos[x];[x][1:v]paletteuse=dither=sierra2_4a:diff_mode=rectangle" \
+ *     public/demo.gif
+ *
  * Requires: npx playwright (chromium headless shell must be installed)
  */
 
@@ -129,4 +138,21 @@ const files = (await fs.readdir(framesDir))
   .filter((f) => f.endsWith(".png"))
   .sort();
 for (const f of files) console.log(`  ${f}`);
-console.log("\nNext: run tools/frames-to-gif.mjs to generate the GIF.");
+
+// Auto-generate public/demo.png from the overview frame (960px wide, crisp for dark UIs)
+const overviewFrame = path.join(framesDir, "01-overview.png");
+const demoPng = path.join(projectRoot, "public", "demo.png");
+try {
+  const { execFile } = await import("node:child_process");
+  const { promisify } = await import("node:util");
+  await promisify(execFile)("ffmpeg", [
+    "-y", "-i", overviewFrame,
+    "-vf", "scale=960:-1:flags=lanczos",
+    demoPng
+  ]);
+  const stat = await fs.stat(demoPng);
+  console.log(`\n✓ demo.png written: ${demoPng} (${(stat.size / 1024).toFixed(0)} KB)`);
+} catch {
+  console.log("\nSkipped demo.png generation (ffmpeg not available).");
+  console.log("Run: ffmpeg -i demo-frames/01-overview.png -vf scale=960:-1 public/demo.png");
+}
