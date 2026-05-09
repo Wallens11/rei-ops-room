@@ -1,5 +1,5 @@
 {
-  "_comment": "Runtime routing config untuk Rei execute worker. Edit sesuai kebutuhan — tanpa restart worker.",
+  "_comment": "Copy to .rei-runtimes.json. Rei picks the preferred runtime per task type. Changes take effect without restarting the worker.",
   "preferences": {
     "frontend":  ["claude-code", "codex"],
     "backend":   ["codex", "claude-code"],

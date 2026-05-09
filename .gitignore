@@ -1,4 +1,7 @@
 node_modules/
+.claude/
+.rei-runtimes.json
+docs/
 .rei-server.log
 .rei-server.pid
 .agent-pixel.log

@@ -26,17 +26,15 @@ try {
 } catch { /* fall through */ }
 
 if (!chromium) {
-  const candidates = [
-    "/Users/funtoco/.npm/_npx/2334a3ea0ef73d73/node_modules/playwright/index.js",
-    "/Users/funtoco/workSpace/fun-growth-loadmap/node_modules/playwright/index.js",
-  ];
-  for (const c of candidates) {
-    try {
-      const mod = await import(c);
+  // Try npx-cached playwright as fallback (run: npx playwright install chromium)
+  const { execSync } = await import("node:child_process");
+  try {
+    const npxPath = execSync("npx --yes playwright --version 2>/dev/null && node -e \"require.resolve('playwright')\"", { encoding: "utf8" }).trim();
+    if (npxPath) {
+      const mod = await import(npxPath);
       chromium = mod.chromium ?? (mod.default || mod["module.exports"])?.chromium;
-      if (chromium) break;
-    } catch { /* try next */ }
-  }
+    }
+  } catch { /* fall through */ }
 }
 if (!chromium) throw new Error("playwright not found — run: npm install -D playwright");
 import fs from "node:fs/promises";

@@ -30,9 +30,8 @@ const DELAY_CS = Math.round(100 / FPS); // centiseconds per frame
 
 // ── Load sharp ─────────────────────────────────────────────────────────────
 let sharp;
-const sharpCandidates = [
-  "/Users/funtoco/workSpace/fun-growth-loadmap/node_modules/sharp/lib/index.js",
-];
+// sharp is not a project dependency — try npx or a sibling workspace
+const sharpCandidates = [];
 for (const c of sharpCandidates) {
   try {
     const m = await import(c);
