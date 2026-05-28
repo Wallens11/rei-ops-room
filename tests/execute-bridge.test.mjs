@@ -839,7 +839,7 @@ test("buildExecutePrompt injects human comments when provided", () => {
     handoff: { date: "2026-04-20", sections: [] },
     humanComments
   });
-  assert.ok(prompt.includes("⚡ Human corrections"), "should include human corrections header");
+  assert.ok(prompt.includes("HUMAN CORRECTIONS"), "should include human corrections header");
   assert.ok(prompt.includes("TypeScript not JavaScript"), "should include the comment body");
   assert.ok(prompt.includes("@raffi"), "should include the author");
   assert.ok(prompt.includes("Incorporate these corrections"), "should include the action directive");
@@ -852,5 +852,5 @@ test("buildExecutePrompt with no human comments has no corrections section", () 
     issue: { number: 10, title: "Fix bug", body: "Details", labels: [], url: "" },
     handoff: { date: "2026-04-20", sections: [] }
   });
-  assert.ok(!prompt.includes("⚡ Human corrections"), "should NOT include corrections header when no comments");
+  assert.ok(!prompt.includes("HUMAN CORRECTIONS"), "should NOT include corrections header when no comments");
 });

@@ -384,10 +384,10 @@ describe("execute-bridge: buildDirectTaskPrompt", async () => {
     );
   });
 
-  it("prompt mengandung execution rules", () => {
+  it("prompt mengandung operating principles dan execution boundary", () => {
     const prompt = buildDirectTaskPrompt({ task: "do something", repoCwd: "/repo" });
-    assert.ok(prompt.includes("Execution rules:"));
-    assert.ok(prompt.includes("do not push"));
+    assert.ok(prompt.includes("OPERATING PRINCIPLES"));
+    assert.ok(prompt.toLowerCase().includes("do not push"));
   });
 
   it("prompt ikut menyebut DESIGN.md kalau repo punya design brief lokal", () => {

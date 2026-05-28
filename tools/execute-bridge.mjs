@@ -25,6 +25,12 @@ import {
   formatChatInjection,
   readUnconsumedUserMessages
 } from "./rei-chat.mjs";
+import {
+  formatCodebaseContext,
+  loadCodebaseGraph
+} from "./rei-codebase-graph.mjs";
+import { getPersonality } from "./rei-personality.mjs";
+import { buildReiSystemPrompt, buildReiDirectPrompt } from "./rei-prompt.mjs";
 import { createGithubRunner } from "./github-api.mjs";
 
 const execFileAsync = promisify(execFile);
@@ -511,44 +517,49 @@ export function buildDirectTaskPrompt({
   learningContext = null,
   memoryContext = null,
   chatContext = null,
+  codebaseContext = null,
+  personality = null,
   continuity = null,
   designProfile = readRepoDesignProfile(repoCwd)
 } = {}) {
-  const repoLabel = stripWorkspacePrefix(repoCwd) || repoCwd;
-  const designGuidanceLines = buildDesignGuidanceLines(designProfile);
   const continuityLines = buildContinuityPromptLines(continuity);
+  const designGuidanceLines = buildDesignGuidanceLines(designProfile);
 
-  return [
-    `You are Rei, an autonomous agent working inside ${repoCwd} (${repoLabel}).`,
-    "",
-    "Task:",
-    String(task || "").trim() || "No task description provided.",
-    context ? `\nAdditional context:\n${String(context).trim()}` : null,
-    "",
-    `Latest handoff (${handoff?.date || "no date"}):`,
-    summarizeHandoff(handoff || {}),
-    handoff?.next_focus_zone
-      ? `\nOperator-specified next focus zone: ${handoff.next_focus_zone}`
-      : null,
-    handoff?.blockers?.length > 0
-      ? `Known blockers:\n${handoff.blockers.map((b) => `- ${b}`).join("\n")}`
-      : null,
-    learningContext ? `\n${learningContext}` : null,
-    memoryContext ? `\n${memoryContext}` : null,
-    chatContext ? `\n${chatContext}` : null,
-    ...continuityLines,
-    designGuidanceLines.length > 0 ? "" : null,
-    ...designGuidanceLines,
-    "",
-    "Execution rules:",
-    "- Inspect the repo before changing anything.",
-    "- Implement the smallest safe slice that satisfies the task.",
-    "- Run verification before finishing.",
-    "- Leave changes locally — do not push or create a PR unless explicitly asked.",
-    "- End with a concise summary of what was done."
+  // Fold handoff + context + design into a single guidance block so the
+  // core prompt stays clean. The pro prompt already enforces "look first,
+  // small slice, verify" so we drop the legacy execution-rules footer.
+  const extraGuidance = [
+    context ? `Additional context:\n${String(context).trim()}` : "",
+    handoff
+      ? [
+          `Latest handoff (${handoff?.date || "no date"}): ${summarizeHandoff(handoff)}`,
+          handoff?.next_focus_zone ? `Operator next focus zone: ${handoff.next_focus_zone}` : "",
+          handoff?.blockers?.length > 0
+            ? `Known blockers:\n${handoff.blockers.map((b) => `- ${b}`).join("\n")}`
+            : ""
+        ]
+          .filter(Boolean)
+          .join("\n")
+      : "",
+    learningContext ? String(learningContext) : "",
+    ...designGuidanceLines
   ]
     .filter(Boolean)
-    .join("\n");
+    .join("\n\n");
+
+  const fullTask = extraGuidance
+    ? `${String(task || "").trim()}\n\n${extraGuidance}`
+    : String(task || "").trim();
+
+  return buildReiDirectPrompt({
+    task: fullTask,
+    repoCwd,
+    memoryContext: memoryContext || "",
+    codebaseContext: codebaseContext || "",
+    chatContext: chatContext || "",
+    continuityLines,
+    personality
+  });
 }
 
 export async function selectRuntimeForProfile(profileId) {
@@ -885,25 +896,49 @@ export function buildExecutePrompt({
   learningContext = null,
   memoryContext = null,
   chatContext = null,
+  codebaseContext = null,
+  personality = null,
   continuity = null,
   designProfile = readRepoDesignProfile(repoCwd),
   humanComments = []
 }) {
-  const issueBody = String(issue?.body || "").trim() || "No issue body provided.";
-  const repoLabel = stripWorkspacePrefix(repoCwd) || repoCwd;
   const skillProfile = selectExecuteSkillProfile(issue);
   const designGuidanceLines = buildDesignGuidanceLines(designProfile);
   const continuityLines = buildContinuityPromptLines(continuity);
-  const skillLines =
+
+  // Skills + handoff are folded into the design/continuity blocks; the
+  // pro prompt deliberately omits the noisy "execution rules" footer
+  // because the core principles already cover that ground.
+  const skillBlock =
     skillProfile.skills.length > 0
-      ? skillProfile.skills.map((skill) => `- ${skill.label}: ${skill.path}`).join("\n")
-      : "- No specialized skills were matched.";
+      ? "Recommended skills:\n" +
+        skillProfile.skills.map((s) => `- ${s.label}: ${s.path}`).join("\n")
+      : "";
+
+  const handoffBlock = handoff
+    ? [
+        `Latest handoff (${handoff?.date || "no date"}): ${summarizeHandoff(handoff)}`,
+        handoff?.next_focus_zone
+          ? `Operator next focus zone: ${handoff.next_focus_zone}`
+          : "",
+        handoff?.blockers?.length > 0
+          ? `Known blockers (avoid re-attempting):\n${handoff.blockers
+              .map((b) => `- ${b}`)
+              .join("\n")}`
+          : ""
+      ]
+        .filter(Boolean)
+        .join("\n")
+    : "";
+
+  const designGuidance = [skillBlock, handoffBlock, ...designGuidanceLines]
+    .filter(Boolean)
+    .join("\n\n");
 
   const newComments = Array.isArray(humanComments) ? humanComments : [];
   const humanCommentLines = newComments.length > 0
     ? [
-        "",
-        `⚡ Human corrections since last run (${newComments.length} new comment${newComments.length > 1 ? "s" : ""}):`,
+        `${newComments.length} new comment${newComments.length > 1 ? "s" : ""} since last run:`,
         ...newComments.slice(0, 5).map((c) => {
           const author = c?.author?.login || String(c?.author || "human");
           const body = String(c?.body || "").trim().slice(0, 500);
@@ -913,54 +948,20 @@ export function buildExecutePrompt({
       ]
     : [];
 
-  return [
-    `You are handling GitHub issue #${issue.number} in repo ${repo}.`,
-    `Work only inside ${repoCwd} (${repoLabel}).`,
-    "",
-    "Issue context:",
-    `- Title: ${issue.title}`,
-    `- URL: ${issue.url || "n/a"}`,
-    `- Labels: ${(issue.labels || []).join(", ") || "none"}`,
-    issue?.roadmap?.number
-      ? `- Selected from roadmap: #${issue.roadmap.number} ${issue.roadmap.title || "Untitled roadmap"}`
-      : null,
-    "",
-    "Issue body:",
-    issueBody,
-    "",
-    "Suggested specialist profile:",
-    `- Profile: ${skillProfile.label}`,
-    `- Why: ${skillProfile.reason}`,
-    "- Recommended skills to use if they match the work:",
-    skillLines,
-    "",
-    `Latest handoff (${handoff?.date || "no date"}):`,
-    summarizeHandoff(handoff),
-    handoff?.next_focus_zone
-      ? `\nOperator-specified next focus zone: ${handoff.next_focus_zone} — lean toward this area unless the issue clearly overrides it.`
-      : null,
-    handoff?.blockers?.length > 0
-      ? `Known blockers from handoff:\n${handoff.blockers.map((b) => `- ${b}`).join("\n")}\nAvoid re-attempting these without a plan to resolve them.`
-      : null,
-    learningContext ? `\n${learningContext}` : null,
-    memoryContext ? `\n${memoryContext}` : null,
-    chatContext ? `\n${chatContext}` : null,
-    ...continuityLines,
-    designGuidanceLines.length > 0 ? "" : null,
-    ...designGuidanceLines,
-    ...humanCommentLines,
-    "",
-    "Execution rules:",
-    "- Inspect the repository and issue history before changing code.",
-    "- Lean on the suggested specialist profile and skills before falling back to generic implementation patterns.",
-    "- Implement the smallest safe slice that satisfies the issue scope.",
-    "- Run the relevant verification before finishing.",
-    "- Leave the working tree changes in place locally.",
-    "- Do not push or create a PR unless explicitly asked.",
-    "- End with a concise summary suitable for posting back to the GitHub issue."
-  ]
-    .filter(Boolean)
-    .join("\n");
+  return buildReiSystemPrompt({
+    repo,
+    repoCwd,
+    issue,
+    skillProfile,
+    designGuidance,
+    memoryContext: memoryContext || "",
+    codebaseContext: codebaseContext || "",
+    learningContext: learningContext || "",
+    chatContext: chatContext || "",
+    continuityLines,
+    humanCommentLines,
+    personality
+  });
 }
 
 function buildExecutePreviewDetail(target, skillProfile, { roadmap = null, designProfile = null } = {}) {
@@ -1084,6 +1085,26 @@ export async function prepareExecuteAction({
       return null;
     }
   };
+
+  // Codebase graph — built once per prepare call, then queried per issue.
+  // Falls back gracefully if the cwd isn't a real repo (e.g. tests).
+  const codebaseGraph = await loadCodebaseGraph({ repoRoot: cwd }).catch(() => null);
+  const buildCodebaseContextFor = (issue) => {
+    if (!codebaseGraph || !issue) return null;
+    const query = `${issue.title || ""} ${String(issue.body || "").slice(0, 400)}`;
+    try {
+      return formatCodebaseContext(codebaseGraph, { query, limit: 8 });
+    } catch {
+      return null;
+    }
+  };
+
+  // Personality snapshot — gives the agent a sense of its own current state.
+  let personality = null;
+  try {
+    personality = await getPersonality();
+  } catch {}
+
   const target = selectExecuteTarget(payload);
 
   if (!target?.issue) {
@@ -1113,6 +1134,7 @@ export async function prepareExecuteAction({
       const skillProfile = selectExecuteSkillProfile(issue);
       const resolvedHandoff = handoff || (await readDailyDeviceHandoff());
       const memoryContext = await buildMemoryContextFor(issue);
+      const codebaseContext = buildCodebaseContextFor(issue);
         const prompt = buildExecutePrompt({
           repo: resolvedRepo,
           repoCwd: cwd,
@@ -1124,6 +1146,8 @@ export async function prepareExecuteAction({
           learningContext,
           memoryContext,
           chatContext,
+          codebaseContext,
+          personality,
           continuity: resolvedContinuity,
           designProfile,
           humanComments: extractNewHumanComments(issue?.comments || [], issue?.number)
@@ -1177,6 +1201,7 @@ export async function prepareExecuteAction({
         const skillProfile = selectExecuteSkillProfile(fullIssue);
         const resolvedHandoff = handoff || (await readDailyDeviceHandoff());
         const memoryContext = await buildMemoryContextFor(fullIssue);
+        const codebaseContext = buildCodebaseContextFor(fullIssue);
         const prompt = buildExecutePrompt({
           repo: resolvedRepo,
           repoCwd: cwd,
@@ -1185,6 +1210,8 @@ export async function prepareExecuteAction({
           learningContext,
           memoryContext,
           chatContext,
+          codebaseContext,
+          personality,
           continuity: resolvedContinuity,
           designProfile,
           humanComments: extractNewHumanComments(fullIssue?.comments || [], fullIssue?.number)
@@ -1263,6 +1290,7 @@ export async function prepareExecuteAction({
   }
 
   const memoryContext = await buildMemoryContextFor(issue);
+  const codebaseContext = buildCodebaseContextFor(issue);
   const prompt = buildExecutePrompt({
     repo: resolvedRepo,
     repoCwd: cwd,
@@ -1271,6 +1299,8 @@ export async function prepareExecuteAction({
     learningContext,
     memoryContext,
     chatContext,
+    codebaseContext,
+    personality,
     continuity: resolvedContinuity,
     designProfile,
     humanComments: extractNewHumanComments(issue?.comments || [], issue?.number)

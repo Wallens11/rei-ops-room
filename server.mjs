@@ -2340,6 +2340,39 @@ export function createServer({
     }
 
     // ─── Personality ──────────────────────────────────────────────────────────
+    // GET /api/rei/codebase — codebase knowledge graph stats (built on demand)
+    if (url.pathname === "/api/rei/codebase" && request.method === "GET") {
+      try {
+        const { loadCodebaseGraph, findRelevantFiles } = await import("./tools/rei-codebase-graph.mjs");
+        const repoRoot = url.searchParams.get("root") || process.cwd();
+        const refresh = url.searchParams.get("refresh") === "1";
+        const graph = refresh
+          ? await (await import("./tools/rei-codebase-graph.mjs")).buildCodebaseGraph(repoRoot)
+          : await loadCodebaseGraph({ repoRoot });
+        if (!graph) {
+          writeJson(response, 404, { error: "Could not build graph for repo." });
+          return;
+        }
+        const query = url.searchParams.get("q") || "";
+        const relevant = query ? findRelevantFiles(graph, query, { limit: 10 }) : [];
+        writeJson(response, 200, {
+          builtAt: graph.builtAt,
+          root: graph.root,
+          fileCount: graph.fileCount,
+          totalBytes: graph.totalBytes,
+          langCounts: graph.langCounts,
+          symbolCount: Object.keys(graph.symbolIndex || {}).length,
+          relevant
+        });
+      } catch (error) {
+        writeJson(response, 500, {
+          error: "Failed to load codebase graph",
+          detail: error instanceof Error ? error.message : String(error)
+        });
+      }
+      return;
+    }
+
     // GET /api/rei/personality — mood + energy + focus + confidence
     if (url.pathname === "/api/rei/personality" && request.method === "GET") {
       try {
