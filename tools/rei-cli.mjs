@@ -113,6 +113,10 @@ export function parseCliArgs(argv) {
   let open = true;
   let port = defaultPort;
 
+  if (args[0] === "--version" || args[0] === "-v") {
+    return { command: args[0], mode, open, port };
+  }
+
   if (args[0] && !args[0].startsWith("--")) {
     command = args.shift();
   }
@@ -120,7 +124,7 @@ export function parseCliArgs(argv) {
   if (command === "room" || command === "widget") {
     mode = normalizeMode(command);
     command = "activate";
-  } else if (["stop", "status", "init", "help", "--help", "-h"].includes(command)) {
+  } else if (["stop", "status", "init", "help", "--help", "-h", "--version", "-v"].includes(command)) {
     // these commands take no mode
   } else if (args[0] && !args[0].startsWith("--")) {
     mode = normalizeMode(args.shift());
@@ -441,6 +445,14 @@ async function printStatus(port) {
 
 async function main() {
   const parsed = parseCliArgs(process.argv.slice(2));
+
+  if (parsed.command === "--version" || parsed.command === "-v") {
+    const pkgPath = path.resolve(__dirname, "..", "package.json");
+    const pkgText = await fs.readFile(pkgPath, "utf8");
+    const { version } = JSON.parse(pkgText);
+    console.log(`rei v${version}`);
+    return;
+  }
 
   if (parsed.command === "init") {
     const setupPath = path.resolve(__dirname, "..", "setup.mjs");
