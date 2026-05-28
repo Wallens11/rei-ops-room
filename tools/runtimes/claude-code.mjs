@@ -38,6 +38,7 @@ export function buildInvocation({ command, repoCwd, resumeSessionId = null } = {
   const args = [
     "--print",
     "--output-format", "stream-json",
+    "--verbose",
     "--dangerously-skip-permissions"
   ];
 
