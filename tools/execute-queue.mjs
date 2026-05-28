@@ -1,18 +1,18 @@
 /**
  * execute-queue.mjs — Direct task queue + multi-worker registry.
  *
- * Dua tanggung jawab:
- *   1. Task queue  — terima task dari /api/execute/submit tanpa butuh GitHub issue.
- *   2. Workers registry — tiap execute-worker instance register dirinya supaya
- *      UI bisa tampilkan berapa Rei aktif dan pakai runtime apa.
+ * Two responsibilities:
+ *   1. Task queue  — accept tasks from /api/execute/submit without needing a GitHub issue.
+ *   2. Workers registry — each execute-worker instance registers itself so
+ *      the UI can show how many Rei workers are active and which runtime they use.
  *
- * Persistent via file JSON di project root (excluded dari git via .gitignore).
+ * Persistent via JSON file in the project root (excluded from git via .gitignore).
  *
- * Cross-session note (buat LLM lain yang lanjut):
+ * Cross-session note (for other LLMs continuing this work):
  *   - Queue file: .execute-queue.json
  *   - Workers file: .execute-workers.json
- *   - Worker bisa di-wake via SIGUSR1 setelah task di-submit
- *     (server.mjs kirim sinyal ke PID dari .execute-worker.pid)
+ *   - Worker can be woken via SIGUSR1 after a task is submitted
+ *     (server.mjs sends the signal to the PID from .execute-worker.pid)
  */
 
 import crypto from "node:crypto";
@@ -27,9 +27,9 @@ export const executeWakeTriggerFile = path.join(projectRoot, ".execute-wake.trig
 export const executeQueueLockFile = path.join(projectRoot, ".execute-queue.lock");
 
 // ─── Queue lock (multi-worker coordination) ───────────────────────────────────
-// Menggunakan atomic file create (O_EXCL) supaya hanya satu worker yang bisa
-// claim task di saat yang sama. Lock bersifat TTL — stale lock (> 5s) akan
-// di-steal supaya tidak block selamanya kalau worker crash saat pegang lock.
+// Uses atomic file create (O_EXCL) so only one worker can claim a task at a time.
+// The lock has a TTL — stale locks (> 5s) are stolen to avoid blocking forever
+// if a worker crashes while holding the lock.
 
 const LOCK_TTL_MS = 5_000;
 const LOCK_WAIT_MS = 100;
@@ -40,7 +40,7 @@ async function withQueueLock(fn) {
 
   while (true) {
     try {
-      // O_EXCL → atomic: berhasil hanya kalau file belum ada
+      // O_EXCL → atomic: succeeds only if the file doesn't yet exist
       const fd = await fs.open(executeQueueLockFile, "wx");
       await fd.writeFile(String(process.pid), "utf8");
       await fd.close();
@@ -48,14 +48,14 @@ async function withQueueLock(fn) {
     } catch (e) {
       if (e.code !== "EEXIST") throw e;
 
-      // Lock ada — cek apakah stale
+      // Lock exists — check whether it's stale
       try {
         const stat = await fs.stat(executeQueueLockFile);
         if (Date.now() - stat.mtimeMs > LOCK_TTL_MS) {
           await fs.rm(executeQueueLockFile, { force: true });
-          continue; // langsung retry
+          continue; // retry immediately
         }
-      } catch { /* file mungkin sudah dihapus worker lain — retry */ }
+      } catch { /* file may have been removed by another worker — retry */ }
 
       if (Date.now() >= deadline) {
         throw new Error("execute-queue: lock timeout after 3s");
@@ -89,13 +89,13 @@ async function writeJson(filePath, data) {
 
 // ─── Task Queue ───────────────────────────────────────────────────────────────
 
-/** Berapa banyak task done/failed yang disimpan setelah prune. */
+/** How many done/failed tasks to retain after pruning. */
 export const QUEUE_KEEP_COMPLETED = 20;
 
 /**
- * Hapus entry done/failed lama supaya queue file tidak tumbuh selamanya.
- * Pertahankan semua queued/in_progress + QUEUE_KEEP_COMPLETED terbaru dari
- * done/failed (diurutkan berdasarkan finishedAt descending).
+ * Remove old done/failed entries so the queue file doesn't grow indefinitely.
+ * Retains all queued/in_progress + the QUEUE_KEEP_COMPLETED most recent
+ * done/failed entries (sorted by finishedAt descending).
  */
 async function pruneQueue() {
   const tasks = await readQueue();
@@ -114,7 +114,7 @@ async function pruneQueue() {
 }
 
 /**
- * Baca semua tasks dari queue.
+ * Read all tasks from the queue.
  * Return: array of task objects.
  */
 export async function readQueue() {
@@ -127,16 +127,16 @@ async function saveQueue(tasks) {
 }
 
 /**
- * Tambah task baru ke queue.
+ * Add a new task to the queue.
  *
- * @param task              — deskripsi task (required)
- * @param context           — konteks tambahan (optional, misal "ini untuk repo X")
- * @param runtimeId         — override runtime: "codex" | "claude-code" | null (auto-select)
- * @param priority          — angka prioritas: lebih tinggi = dijalankan lebih dulu (default 0)
- * @param parentIssueNumber — GitHub issue number yang menjadi asal spawn (optional)
- * @param spawnedBy         — identifier siapa yang spawn task ini (optional, misal "agent")
+ * @param task              — task description (required)
+ * @param context           — additional context (optional, e.g. "this is for repo X")
+ * @param runtimeId         — runtime override: "codex" | "claude-code" | null (auto-select)
+ * @param priority          — priority number: higher = runs sooner (default 0)
+ * @param parentIssueNumber — GitHub issue number that spawned this task (optional)
+ * @param spawnedBy         — identifier of who spawned this task (optional, e.g. "agent")
  *
- * Return: task entry yang baru dibuat.
+ * Return: the newly created task entry.
  */
 export async function enqueueTask({ task, context = null, runtimeId = null, priority = 0, parentIssueNumber = null, spawnedBy = null } = {}) {
   const tasks = await readQueue();
@@ -187,10 +187,10 @@ export async function submitQueueTask({ title, body = null, runtimeId = null, pa
 }
 
 /**
- * Ambil task pertama yang status-nya "queued" dan tandai sebagai "in_progress".
- * Di-wrap dengan file lock supaya aman untuk multi-worker.
- * Task dengan `retryAfter` di masa depan dilewati (masih dalam cooldown).
- * Return: task entry atau null kalau queue kosong / semua masih cooldown.
+ * Claim the first task with status "queued" and mark it as "in_progress".
+ * Wrapped with a file lock for safe multi-worker access.
+ * Tasks with a future `retryAfter` are skipped (still in cooldown).
+ * Return: task entry or null if the queue is empty / all tasks are in cooldown.
  */
 export async function claimNextQueuedTask() {
   return withQueueLock(async () => {
@@ -203,7 +203,7 @@ export async function claimNextQueuedTask() {
 
     if (eligible.length === 0) return null;
 
-    // Sort: priority desc (lebih tinggi dijalankan dulu), lalu submittedAt asc (FIFO tiebreak)
+    // Sort: priority desc (higher runs first), then submittedAt asc (FIFO tiebreak)
     eligible.sort((a, b) => {
       const pa = Number(a.priority) || 0;
       const pb = Number(b.priority) || 0;
@@ -220,12 +220,12 @@ export async function claimNextQueuedTask() {
 }
 
 /**
- * Jadwal ulang task yang gagal dengan exponential backoff.
- * Kalau retryCount sudah melebihi maxRetries → tandai sebagai "failed".
+ * Reschedule a failed task with exponential backoff.
+ * If retryCount exceeds maxRetries → mark as "failed".
  *
  * @param id     — task ID
- * @param result — ringkasan hasil (disimpan kalau permanent failure)
- * Return: true kalau di-retry, false kalau permanently failed.
+ * @param result — result summary (saved on permanent failure)
+ * Return: true if retried, false if permanently failed.
  */
 export async function requeueForRetry(id, { result = null } = {}) {
   const tasks = await readQueue();
@@ -236,7 +236,7 @@ export async function requeueForRetry(id, { result = null } = {}) {
   const maxRetries = task.maxRetries ?? 2;
 
   if (retryCount > maxRetries) {
-    // Sudah habis retry — mark permanent failure
+    // Retry quota exhausted — mark as permanent failure
     task.status = "failed";
     task.result = result ? String(result).trim() : null;
     task.finishedAt = new Date().toISOString();
@@ -256,11 +256,11 @@ export async function requeueForRetry(id, { result = null } = {}) {
 }
 
 /**
- * Tandai task sebagai selesai (done atau failed).
+ * Mark a task as finished (done or failed).
  *
  * @param id     — task ID
  * @param status — "done" | "failed"
- * @param result — ringkasan hasil eksekusi (string)
+ * @param result — execution result summary (string)
  */
 export async function resolveQueueTask(id, { status, result = null } = {}) {
   const tasks = await readQueue();
@@ -276,11 +276,11 @@ export async function resolveQueueTask(id, { status, result = null } = {}) {
 }
 
 /**
- * Hapus task dari queue berdasarkan ID.
- * Hanya bisa menghapus task yang status-nya "queued" atau "failed".
- * Task "in_progress" tidak bisa dihapus (butuh kill child process dulu).
+ * Remove a task from the queue by ID.
+ * Only tasks with status "queued" or "failed" can be removed.
+ * Tasks that are "in_progress" cannot be removed (requires killing the child process first).
  *
- * Return: { removed: true } atau { removed: false, reason: "not_found"|"in_progress" }
+ * Return: { removed: true } or { removed: false, reason: "not_found"|"in_progress" }
  */
 export async function removeQueueTask(id) {
   const tasks = await readQueue();
@@ -295,7 +295,7 @@ export async function removeQueueTask(id) {
 }
 
 /**
- * Kembalikan task in_progress ke queued (misalnya kalau worker crash).
+ * Return an in_progress task back to queued state (e.g. when the worker crashes).
  */
 export async function requeueStuckTask(id) {
   const tasks = await readQueue();
@@ -311,7 +311,7 @@ export async function requeueStuckTask(id) {
 // ─── Workers Registry ─────────────────────────────────────────────────────────
 
 /**
- * Baca registry worker aktif.
+ * Read the active worker registry.
  * Return: array of worker objects.
  */
 export async function readWorkers() {
@@ -324,8 +324,8 @@ async function saveWorkers(workers) {
 }
 
 /**
- * Register worker baru ke registry.
- * Kalau workerId sudah ada (restart), entry lama di-replace.
+ * Register a new worker in the registry.
+ * If the workerId already exists (restart), the old entry is replaced.
  */
 export async function registerWorker({ workerId, pid, runtimeId = null } = {}) {
   const workers = await readWorkers();
@@ -345,7 +345,7 @@ export async function registerWorker({ workerId, pid, runtimeId = null } = {}) {
 }
 
 /**
- * Update apa yang sedang dikerjakan worker (task queue atau GitHub issue).
+ * Update what the worker is currently processing (task queue or GitHub issue).
  */
 export async function updateWorkerActivity(workerId, {
   taskId = null,
@@ -366,7 +366,7 @@ export async function updateWorkerActivity(workerId, {
 }
 
 /**
- * Hapus worker dari registry (dipanggil saat worker exit).
+ * Remove a worker from the registry (called when the worker exits).
  */
 export async function unregisterWorker(workerId) {
   const workers = await readWorkers();
@@ -376,25 +376,25 @@ export async function unregisterWorker(workerId) {
 // ─── Wake signal (cross-platform) ────────────────────────────────────────────
 
 /**
- * Bangunkan execute worker supaya langsung proses task tanpa tunggu interval.
+ * Wake the execute worker so it processes the task immediately without waiting for the interval.
  *
- * Dua mekanisme dipakai sekaligus:
- *   1. Trigger file (.execute-wake.trigger) — bekerja di semua platform.
- *      Worker cek file ini tiap 2s selama sleep, langsung skip kalau ada.
- *   2. SIGUSR1 — fast-path untuk Mac/Linux. Di Windows diabaikan (tidak crash).
+ * Two mechanisms are used simultaneously:
+ *   1. Trigger file (.execute-wake.trigger) — works on all platforms.
+ *      The worker checks this file every 2s during sleep and skips ahead if found.
+ *   2. SIGUSR1 — fast-path on Mac/Linux. Ignored on Windows (no crash).
  *
- * Kalau worker tidak jalan, trigger file tetap tersimpan dan akan dibaca
- * saat worker start di iterasi berikutnya.
+ * If the worker isn't running, the trigger file is persisted and will be read
+ * when the worker starts in the next iteration.
  */
 export async function signalWorkerWake() {
-  // 1. Tulis trigger file — cross-platform, selalu jalan
+  // 1. Write trigger file — cross-platform, always works
   try {
     await fs.writeFile(executeWakeTriggerFile, new Date().toISOString(), "utf8");
   } catch {
-    // ignore — trigger file bersifat best-effort
+    // ignore — trigger file is best-effort
   }
 
-  // 2. SIGUSR1 sebagai fast-path di Unix (abaikan error di Windows)
+  // 2. SIGUSR1 as fast-path on Unix (ignore errors on Windows)
   try {
     const pidText = await fs.readFile(executeWorkerPidFile, "utf8");
     const pid = Number(pidText.trim());
@@ -402,16 +402,16 @@ export async function signalWorkerWake() {
       process.kill(pid, "SIGUSR1");
     }
   } catch {
-    // Windows: SIGUSR1 tidak tersedia — trigger file sudah cukup
+    // Windows: SIGUSR1 is not available — the trigger file is sufficient
   }
 
   return true;
 }
 
 /**
- * Cek apakah trigger file ada dan hapus setelah dibaca.
- * Dipanggil oleh worker di tiap poll chunk saat sleep.
- * Return: true kalau trigger ada (worker harus langsung bangun).
+ * Check whether the trigger file exists and remove it after reading.
+ * Called by the worker on every poll chunk during sleep.
+ * Return: true if the trigger exists (worker should wake up immediately).
  */
 export async function checkAndClearWakeTrigger() {
   try {

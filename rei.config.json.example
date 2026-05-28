@@ -1,0 +1,16 @@
+{
+  "githubRepo": "your-org/your-repo",
+  "githubWebhookSecret": "",
+  "workspaceRoot": "/absolute/path/to/your-repo",
+  "runtimes": ["claude-code", "codex"],
+  "executeIntervalSeconds": 60,
+  "executeTimeoutMs": 600000,
+  "webhooks": {
+    "slack": "",
+    "discord": "",
+    "generic": "",
+    "events": "completed,failed,blocked"
+  },
+  "port": 4317,
+  "demo": false
+}

@@ -1529,8 +1529,8 @@ export function parseDailyDeviceHandoffMarkdown(markdown = "") {
   };
 }
 
-// 3: Ekstrak structured fields dari section handoff khusus — backward-compatible
-// Section yang dikenali (case-insensitive): "Next Focus Zone", "Blockers", "Active Issues"
+// 3: Extract structured fields from special handoff sections — backward-compatible
+// Recognised sections (case-insensitive): "Next Focus Zone", "Blockers", "Active Issues"
 export function extractStructuredHandoffFields(sections = []) {
   const result = {
     next_focus_zone: null,
@@ -1543,14 +1543,14 @@ export function extractStructuredHandoffFields(sections = []) {
     const items = Array.isArray(section.items) ? section.items.filter(Boolean) : [];
 
     if (titleLc.includes("next focus zone") || titleLc.includes("focus zone")) {
-      // Ambil zone dari item pertama — bisa "backend", "frontend", dll
+      // Take zone from the first item — can be "backend", "frontend", etc.
       const raw = String(items[0] || "").toLowerCase().trim();
       const knownZones = ["frontend", "backend", "database", "review", "lab"];
       result.next_focus_zone = knownZones.find((z) => raw.includes(z)) || raw || null;
     } else if (titleLc.includes("blocker")) {
       result.blockers = items;
     } else if (titleLc.includes("active issue")) {
-      // Parse "#N title" atau free text dengan #N di dalamnya
+      // Parse "#N title" or free text containing #N
       result.active_issues = items
         .map((item) => {
           const match = String(item).match(/#(\d+)/);
@@ -1780,7 +1780,7 @@ export function createServer({
     }
 
     // ─── Generate Handoff ────────────────────────────────────────────────────
-    // POST /api/handoff/generate — buat daily handoff dari run history + learning
+    // POST /api/handoff/generate — build daily handoff from run history + learning
 
     if (url.pathname === "/api/handoff/generate" && request.method === "POST") {
       try {
@@ -1989,7 +1989,7 @@ export function createServer({
         });
 
         // Wake the worker if it's sleeping so the task gets processed immediately,
-        // tidak perlu tunggu interval berikutnya (biasanya 60s).
+        // no need to wait for the next interval (usually 60s).
         const woke = await signalWorkerWake();
 
         writeJson(response, 202, { status: "queued", task: entry, workerWoken: woke });
@@ -2029,8 +2029,8 @@ export function createServer({
     }
 
     // ─── Delete Queue Task ───────────────────────────────────────────────────
-    // DELETE /api/execute/queue/:id — hapus task kalau status queued atau failed.
-    // 409 kalau in_progress, 404 kalau tidak ditemukan.
+    // DELETE /api/execute/queue/:id — remove a task if its status is queued or failed.
+    // 409 if in_progress, 404 if not found.
 
     const deleteQueueMatch = request.method === "DELETE" &&
       url.pathname.match(/^\/api\/execute\/queue\/([^/]+)$/);
@@ -2055,8 +2055,8 @@ export function createServer({
     }
 
     // ─── Run Log Viewer ──────────────────────────────────────────────────────
-    // GET /api/execute/runs/:taskId — baca last-message.md dan tail events.jsonl
-    // dari run dir yang namanya mengandung 8 char pertama dari taskId.
+    // GET /api/execute/runs/:taskId — read last-message.md and tail events.jsonl
+    // from the run dir whose name contains the first 8 chars of the taskId.
 
     const runsMatch = request.method === "GET" &&
       url.pathname.match(/^\/api\/execute\/runs\/([^/]+)$/);
@@ -2069,14 +2069,14 @@ export function createServer({
         try {
           entries = await fs.readdir(executeRunsDir);
         } catch {
-          // Direktori belum ada — return empty
+          // Directory does not exist yet — return empty
         }
 
-        // Cari run dir yang namanya mengandung taskIdPrefix
+        // Find the run dir whose name contains taskIdPrefix
         const matchingDir = entries
           .filter((e) => e.includes(taskIdPrefix))
           .sort()
-          .pop(); // ambil yang paling baru
+          .pop(); // take the most recent
 
         if (!matchingDir) {
           writeJson(response, 404, { error: "Run log tidak ditemukan untuk task ini.", taskId: runsMatch[1] });
@@ -2094,7 +2094,7 @@ export function createServer({
         try {
           const eventsText = await fs.readFile(eventsFile, "utf8");
           eventsPreview = eventsText.split("\n").filter(Boolean).slice(-30);
-        } catch { /* file mungkin belum ada */ }
+        } catch { /* file may not exist yet */ }
 
         writeJson(response, 200, {
           taskId: runsMatch[1],
@@ -2113,8 +2113,8 @@ export function createServer({
 
     // ─── Approve Issue for Execution ─────────────────────────────────────────
     // POST /api/github/issues/:number/approve
-    // Menambahkan label status:approved + mode:execute ke issue.
-    // Ini adalah approval gate eksplisit untuk issue #15.
+    // Adds the status:approved + mode:execute labels to the issue.
+    // This is the explicit approval gate introduced by issue #15.
 
     const approveIssueMatch = request.method === "POST" &&
       url.pathname.match(/^\/api\/github\/issues\/(\d+)\/approve$/);
@@ -2134,8 +2134,8 @@ export function createServer({
     }
 
     // ─── Runtime Registry ────────────────────────────────────────────────────
-    // GET /api/execute/runtimes — daftar runtime yang dikenal + yang tersedia
-    // Ini adalah ekspos dari issue #16: runtime registry.
+    // GET /api/execute/runtimes — list known runtimes + available ones
+    // Exposed via issue #16: runtime registry.
 
     if (url.pathname === "/api/execute/runtimes" && request.method === "GET") {
       try {
@@ -2434,7 +2434,7 @@ export function createServer({
     }
 
     // ─── Run Usage Ledger ─────────────────────────────────────────────────────
-    // GET /api/execute/ledger — ringkasan usage dari learning log (issue #17)
+    // GET /api/execute/ledger — usage summary derived from the learning log (issue #17)
 
     if (url.pathname === "/api/execute/ledger" && request.method === "GET") {
       try {
@@ -2485,8 +2485,8 @@ export function createServer({
     }
 
     // ─── External Inquiry Bridge ──────────────────────────────────────────────
-    // POST /api/inquiry/intake — terima inquiry dari webhook/form/chat bridge
-    // dan buat GitHub issue dengan label agent:rei.
+    // POST /api/inquiry/intake — accept an inquiry from a webhook/form/chat bridge
+    // and create a GitHub issue with the agent:rei label.
     // Issue #18: external inquiry bridge.
     //
     // Request body: { title, body, source?, labels? }
@@ -2504,7 +2504,7 @@ export function createServer({
           return;
         }
 
-        // Buat body issue yang terstruktur
+        // Build a structured issue body
         const formattedBody = [
           `## Inquiry`,
           "",
@@ -2523,7 +2523,7 @@ export function createServer({
 
         const allLabels = ["agent:rei", "status:todo", "mode:report_only", ...extraLabels];
 
-        // Buat GitHub issue via REST API (atau gh CLI fallback)
+        // Create a GitHub issue via REST API (or gh CLI fallback)
         const repo = process.env.GITHUB_REPO || null;
 
         let issueUrl = null;
@@ -2539,7 +2539,7 @@ export function createServer({
           const { stdout } = await runner("gh", ghArgs, { cwd: __dirname });
           issueUrl = stdout.trim();
         } catch (ghError) {
-          // REST API token tidak ada atau gh CLI tidak tersedia
+          // REST API token not set or gh CLI not available
           writeJson(response, 503, {
             error: "Failed to create GitHub issue — set the GITHUB_TOKEN env var or authenticate the gh CLI.",
             detail: ghError instanceof Error ? ghError.message : String(ghError),
@@ -2549,7 +2549,7 @@ export function createServer({
           return;
         }
 
-        // Bangunkan worker supaya langsung cek queue baru
+        // Wake the worker so it checks the new queue entry immediately
         await signalWorkerWake().catch(() => {});
 
         writeJson(response, 201, {

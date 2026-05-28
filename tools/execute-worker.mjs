@@ -53,8 +53,8 @@ import {
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const DEFAULT_INTERVAL_SECONDS = 60;
 const MIN_INTERVAL_SECONDS = 30;
-const STUCK_TASK_THRESHOLD_MS = 10 * 60 * 1000; // 10 menit
-const EXECUTE_TIMEOUT_MS = Number(process.env.EXECUTE_TIMEOUT_MS ?? 10 * 60 * 1000); // 10 menit default
+const STUCK_TASK_THRESHOLD_MS = 10 * 60 * 1000; // 10 minutes
+const EXECUTE_TIMEOUT_MS = Number(process.env.EXECUTE_TIMEOUT_MS ?? 10 * 60 * 1000); // 10 minute default
 const DEFAULT_CODEX_CANDIDATES = ["/Applications/Codex.app/Contents/Resources/codex"];
 const execFileAsync = promisify(execFile);
 const EXECUTE_RUNTIME_PATH_PREFIXES = [
@@ -131,8 +131,8 @@ async function readTextIfExists(filePath) {
 }
 
 // ─── Wake-up state (SIGUSR1 fast-path, Unix only) ────────────────────────────
-// wakeResolve di-set oleh sleepWithSignal dan di-call oleh handler SIGUSR1.
-// Di Windows, SIGUSR1 tidak tersedia — trigger file dipakai sebagai gantinya.
+// wakeResolve is set by sleepWithSignal and called by the SIGUSR1 handler.
+// On Windows, SIGUSR1 is not available — the trigger file is used instead.
 
 let wakeResolve = null;
 
@@ -144,10 +144,10 @@ process.on("SIGUSR1", () => {
 });
 
 /**
- * Sleep selama `ms` milidetik, tapi bisa di-interrupt lebih awal via:
- *   1. Trigger file (.execute-wake.trigger) — cross-platform, di-poll tiap 2s.
- *   2. SIGUSR1 — fast-path di Unix (Mac/Linux). Di Windows diabaikan.
- *   3. AbortSignal — untuk graceful shutdown.
+ * Sleep for `ms` milliseconds, but can be interrupted early via:
+ *   1. Trigger file (.execute-wake.trigger) — cross-platform, polled every 2s.
+ *   2. SIGUSR1 — fast-path on Unix (Mac/Linux). Ignored on Windows.
+ *   3. AbortSignal — for graceful shutdown.
  */
 async function sleepWithSignal(ms, signal) {
   if (ms <= 0) return;
@@ -162,7 +162,7 @@ async function sleepWithSignal(ms, signal) {
       throw err;
     }
 
-    // Cross-platform: cek trigger file dulu sebelum tunggu chunk berikutnya
+    // Cross-platform: check trigger file before waiting for the next chunk
     const triggered = await checkAndClearWakeTrigger().catch(() => false);
     if (triggered) return;
 
@@ -192,7 +192,7 @@ async function sleepWithSignal(ms, signal) {
         reject(err);
       }
 
-      // SIGUSR1 fast-path (Unix) — panggil resolver untuk skip chunk ini
+      // SIGUSR1 fast-path (Unix) — call resolver to skip this chunk
       wakeResolve = resolver;
       signal?.addEventListener?.("abort", onAbort, { once: true });
     });
@@ -323,15 +323,15 @@ export function detectRateLimitFailure({
 }
 
 /**
- * Parse JSONL output dari claude-code --output-format stream-json.
- * Ekstrak session_id dan teks output terakhir dari stream events.
+ * Parse JSONL output from claude-code --output-format stream-json.
+ * Extract session_id and the last output text from stream events.
  *
- * Format event yang relevan:
+ * Relevant event formats:
  *   {"type":"system","subtype":"init","session_id":"..."}
  *   {"type":"assistant","message":{"content":[{"type":"text","text":"..."}]}}
  *   {"type":"result","subtype":"success","session_id":"...","result":"..."}
  *
- * Kalau line tidak valid JSON (misal: output format lama) → dikembalikan sebagai teks biasa.
+ * If a line is not valid JSON (e.g. old output format) → returned as plain text.
  */
 export function parseStreamJsonOutput(text = "") {
   let sessionId = null;
@@ -346,12 +346,12 @@ export function parseStreamJsonOutput(text = "") {
       const event = JSON.parse(trimmed);
       hasJsonLines = true;
 
-      // Ambil session_id dari event apapun yang punya field itu
+      // Grab session_id from any event that has that field
       if (event.session_id && typeof event.session_id === "string") {
         sessionId = event.session_id;
       }
 
-      // Teks dari assistant message blocks
+      // Text from assistant message blocks
       if (event.type === "assistant" && Array.isArray(event.message?.content)) {
         for (const block of event.message.content) {
           if (block.type === "text" && block.text) {
@@ -360,12 +360,12 @@ export function parseStreamJsonOutput(text = "") {
         }
       }
 
-      // result event: ambil result field sebagai fallback teks
+      // result event: use the result field as a text fallback
       if (event.type === "result" && event.result && !lastText) {
         lastText = String(event.result);
       }
     } catch {
-      // Bukan JSON — mungkin plain text fallback atau log noise
+      // Not JSON — likely plain text fallback or log noise
       if (trimmed && !hasJsonLines) {
         lastText = trimmed;
       }
@@ -418,7 +418,7 @@ async function runMission({
     child.stdout.on("data", (chunk) => {
       stdoutChunks.push(Buffer.from(chunk));
       stream.write(chunk);
-      // outputMode "stdout": kumpulkan stdout sebagai last message
+      // outputMode "stdout": collect stdout as the last message
       if (invocation.outputMode === "stdout") {
         stdoutChunks.push(chunk);
       }
@@ -443,7 +443,7 @@ async function runMission({
         const stdoutText = Buffer.concat(stdoutChunks).toString("utf8");
         const stderrText = Buffer.concat(stderrChunks).toString("utf8");
 
-        // stream-json: parse JSONL untuk extract session_id dan teks akhir
+        // stream-json: parse JSONL to extract session_id and final text
         let sessionId = null;
         let derivedLastMessage = "";
 
@@ -451,12 +451,12 @@ async function runMission({
           const parsed = parseStreamJsonOutput(stdoutText);
           sessionId = parsed.sessionId;
           derivedLastMessage = parsed.lastText || stderrText.trim();
-          // Simpan teks yang sudah diparsing ke file (bukan raw JSONL)
+          // Write the parsed text to file (not raw JSONL)
           if (derivedLastMessage) {
             await fs.writeFile(outputLastMessageFile, `${derivedLastMessage}\n`, "utf8").catch(() => {});
           }
         } else {
-          // outputMode "stdout" atau lainnya — baca as-is
+          // outputMode "stdout" or other — read as-is
           derivedLastMessage = stdoutText.trim() || stderrText.trim();
           if (invocation.outputMode === "stdout" && stdoutText) {
             await fs.writeFile(outputLastMessageFile, stdoutText, "utf8").catch(() => {});
@@ -504,8 +504,8 @@ async function runMission({
   });
 }
 
-// Backward-compat alias — test dan code lama yang call runCodexMission tetap jalan.
-// Semua call baru pakai runMission({ runtimeId, ... }) langsung.
+// Backward-compat alias — old tests and code that call runCodexMission still work.
+// All new calls should use runMission({ runtimeId, ... }) directly.
 async function runCodexMission({ codexCommand = null, repoCwd, prompt, runDir, signal = null, onChildPid = () => {} } = {}) {
   return runMission({ runtimeId: "codex", repoCwd, prompt, runDir, signal, onChildPid });
 }
@@ -513,9 +513,9 @@ async function runCodexMission({ codexCommand = null, repoCwd, prompt, runDir, s
 // ─── Direct task runner ──────────────────────────────────────────────────────
 
 /**
- * Jalankan satu direct task dari execute-queue.
- * Berbeda dengan GitHub issue — tidak ada transition label, tidak ada comment.
- * Hasilnya disimpan langsung di queue entry.
+ * Run a single direct task from execute-queue.
+ * Unlike GitHub issues — no label transitions, no comments.
+ * The result is stored directly in the queue entry.
  */
 async function runDirectTask({
   task,
@@ -582,19 +582,19 @@ async function runDirectTask({
   const status = mission.aborted ? "failed" : mission.exitCode === 0 ? "done" : "failed";
 
   if (status === "failed") {
-    // Coba retry dengan backoff — kalau sudah habis maxRetries, requeueForRetry
-    // akan mark sebagai "failed" secara otomatis.
+    // Retry with backoff — if maxRetries is exhausted, requeueForRetry
+    // will automatically mark the task as "failed".
     await requeueForRetry(task.id, { result: lastMessage || null });
   } else {
     await resolveQueueTask(task.id, { status: "done", result: lastMessage || null });
   }
 
-  // Catat ke learning log
+  // Record to learning log
   await recordRunInsight({
     issueNumber: null,
     taskTitle: task.task,
     runtimeId,
-    profileId: "general", // direct tasks selalu general — tidak ada issue context untuk infer profile
+    profileId: "general", // direct tasks are always general — no issue context to infer a profile
     outcome: status,
     filesChanged: [],
     lastMessage
@@ -651,8 +651,8 @@ export async function executeNextIssue({
   cwd = projectRoot,
   repo = null,
   signal = null,
-  codexCommand = "codex", // backward-compat — diabaikan kalau availableRuntimes disediakan
-  availableRuntimes = null, // null = fallback ke codex saja
+  codexCommand = "codex", // backward-compat — ignored if availableRuntimes is provided
+  availableRuntimes = null, // null = fall back to codex only
   runner = undefined,
   onStateChange = async () => {},
   previewAction = prepareExecuteAction,
@@ -698,12 +698,12 @@ export async function executeNextIssue({
     cwd
   });
   const available = Array.isArray(availableRuntimes) && availableRuntimes.length > 0 ? availableRuntimes : ["codex"];
-  // Adaptive selection: prefer runtime dengan success rate lebih tinggi untuk profile ini.
-  // Fallback ke preference order biasa kalau belum cukup learning data.
+  // Adaptive selection: prefer the runtime with a higher success rate for this profile.
+  // Falls back to the normal preference order when there isn't enough learning data.
   const learningEntries = await getLearningEntries().catch(() => []);
   const initialRuntimeId = selectRuntimeAdaptive(profileId, available, learningEntries, runtimeConfig.preferences);
   const initialRuntimeLabel = getRuntime(initialRuntimeId).RUNTIME_LABEL;
-  // Full ordered list untuk fallback sequence saat rate-limit
+  // Full ordered list for the fallback sequence on rate-limit
   const runtimePlan = resolveRuntimeOrder({
     taskType: profileId,
     preferences: runtimeConfig.preferences,
@@ -798,22 +798,22 @@ export async function executeNextIssue({
   let activeRunDir = runDir;
   let activeRuntimeId = initialRuntimeId;
 
-  // Execution timeout: batalkan misi kalau runtime hang terlalu lama.
-  // Compose dengan outer signal kalau ada (dari worker loop AbortController).
+  // Execution timeout: cancel the mission if the runtime hangs too long.
+  // Compose with the outer signal if present (from the worker loop AbortController).
   const timeoutController = new AbortController();
   const timeoutHandle = setTimeout(() => timeoutController.abort(), EXECUTE_TIMEOUT_MS);
   const missionSignal = signal
     ? AbortSignal.any([signal, timeoutController.signal])
     : timeoutController.signal;
 
-  // Session pinning: kalau issue ini pernah dijalankan sebelumnya dan runtime-nya claude-code,
-  // coba resume dari session terakhir supaya konteks percakapan tidak hilang saat worker crash.
+  // Session pinning: if this issue was previously run with claude-code,
+  // try resuming from the last session so conversation context isn't lost on worker crash.
   const pinnedSessionId = await readSessionPin(preview.target.number).catch(() => null);
 
   for (const [index, runtimeId] of runtimePlan.entries()) {
     const runtimeLabel = getRuntime(runtimeId).RUNTIME_LABEL;
     const attemptRunDir = path.join(runDir, `attempt-${String(index + 1).padStart(2, "0")}-${runtimeId}`);
-    // Hanya pakai session pin untuk attempt pertama dengan claude-code
+    // Only use the session pin for the first attempt with claude-code
     const useSessionId = index === 0 && runtimeId === "claude-code" ? pinnedSessionId : null;
 
     await narrate({
@@ -842,7 +842,7 @@ export async function executeNextIssue({
       }
     });
 
-    // Simpan session_id dari run ini (claude-code only) untuk resume berikutnya
+    // Persist the session_id from this run (claude-code only) for future resumption
     if (mission.sessionId && runtimeId === "claude-code") {
       await writeSessionPin(preview.target.number, mission.sessionId, runtimeId).catch(() => {});
     }
@@ -967,7 +967,7 @@ export async function executeNextIssue({
     runtimeId: activeRuntimeId
   }).catch(() => []);
 
-  // Catat insight ke learning log — best-effort, tidak crash worker kalau gagal
+  // Record insight to learning log — best-effort, won't crash the worker on failure
   await recordRunInsight({
     issueNumber: preview.target.number,
     taskTitle: preview.issue?.title ?? "",
@@ -1007,7 +1007,7 @@ export async function executeNextIssue({
     }).catch(() => {});
   }
 
-  // Issue selesai (apapun hasilnya) — hapus session pin supaya run berikutnya mulai fresh
+  // Issue finished (regardless of outcome) — clear session pin so the next run starts fresh
   await clearSessionPin(preview.target.number).catch(() => {});
 
   // Helper — fire-and-forget webhook notify
@@ -1180,11 +1180,11 @@ export async function executeNextIssue({
 }
 
 /**
- * Saat startup, scan queue untuk task in_progress yang stale (startedAt >
- * STUCK_TASK_THRESHOLD_MS yang lalu) dan kembalikan ke queued.
- * Ini terjadi kalau worker crash saat task sedang berjalan.
+ * At startup, scan the queue for stale in_progress tasks (startedAt >
+ * STUCK_TASK_THRESHOLD_MS ago) and return them to queued state.
+ * This happens when the worker crashes while a task is running.
  *
- * @param stdout — stream untuk warn log
+ * @param stdout — stream for warn log
  */
 export async function recoverStuckTasks({ stdout = process.stdout } = {}) {
   const tasks = await readQueue().catch(() => []);
@@ -1211,7 +1211,7 @@ export async function runExecuteWorker({
   intervalMs = DEFAULT_INTERVAL_SECONDS * 1000,
   signal = null,
   stdout = process.stdout,
-  codexCommand = "codex", // backward-compat
+  codexCommand = "codex", // backward-compat — ignored when availableRuntimes is set
   runner = undefined,
   executeAction = executeNextIssue,
   sleep = sleepWithSignal,
@@ -1222,7 +1222,7 @@ export async function runExecuteWorker({
     cwd
   });
 
-  // Probe runtime yang tersedia di sistem saat startup.
+  // Probe runtimes available on the system at startup.
   const availableRuntimes = await probeAvailableRuntimes(
     codexCommand && codexCommand !== "codex"
       ? {
@@ -1251,13 +1251,13 @@ export async function runExecuteWorker({
     }
   }
 
-  // ID unik per worker instance — untuk multi-worker registry
+  // Unique ID per worker instance — for the multi-worker registry
   const workerId = crypto.randomUUID().slice(0, 8);
 
-  // Register ke workers registry
+  // Register with the workers registry
   await registerWorker({ workerId, pid: process.pid, runtimeId: availableRuntimes[0] ?? "codex" }).catch(() => {});
 
-  // Saat startup, requeue task in_progress yang stale (crash recovery)
+  // At startup, requeue stale in_progress tasks (crash recovery)
   await recoverStuckTasks({ stdout }).catch(() => {});
 
   if (!once) {
@@ -1278,8 +1278,8 @@ export async function runExecuteWorker({
       return 0;
     }
 
-    // Priority 1: cek direct task queue terlebih dahulu.
-    // Direct task = dikirim via /api/execute/submit tanpa GitHub issue.
+    // Priority 1: check the direct task queue first.
+    // Direct task = submitted via /api/execute/submit without a GitHub issue.
     const directTask = await claimNextQueuedTask().catch(() => null);
     if (directTask) {
       const result = await runDirectTask({
@@ -1298,7 +1298,7 @@ export async function runExecuteWorker({
       }
 
       if (once) return 0;
-      // Langsung loop lagi — mungkin ada task lain di queue
+      // Loop immediately — there may be more tasks in the queue
       continue;
     }
 
@@ -1334,7 +1334,7 @@ export async function runExecuteWorker({
     }
   }
   } finally {
-    // Unregister dari workers registry saat keluar (normal atau error)
+    // Unregister from the workers registry on exit (normal or error)
     await unregisterWorker(workerId).catch(() => {});
   }
 }

@@ -99,7 +99,7 @@ export async function probeAvailableRuntimes(env = process.env) {
       }
       available.push(runtime.RUNTIME_ID);
     } catch {
-      // binary tidak ditemukan
+      // binary not found
     }
   }
 
@@ -180,8 +180,8 @@ const RATE_LIMIT_PATTERNS = [
 ];
 
 /**
- * Deteksi apakah output dari runtime mengandung indikasi rate limit / overload.
- * Exported untuk testing dan reuse di worker.
+ * Detect whether runtime output contains a rate limit / overload indication.
+ * Exported for testing and reuse in the worker.
  */
 export function isRateLimitError(text = "") {
   const lower = String(text || "").toLowerCase();
@@ -191,8 +191,8 @@ export function isRateLimitError(text = "") {
 // ─── Fallback runtime ─────────────────────────────────────────────────────────
 
 /**
- * Cari runtime berikutnya dalam preference list setelah `currentRuntimeId` gagal.
- * Return: runtime ID string, atau null kalau tidak ada fallback yang tersedia.
+ * Find the next runtime in the preference list after `currentRuntimeId` fails.
+ * Return: runtime ID string, or null if no fallback is available.
  */
 export function getFallbackRuntime(
   profileId,
@@ -200,8 +200,8 @@ export function getFallbackRuntime(
   availableRuntimes = [],
   preferences = DEFAULT_RUNTIME_PREFERENCES
 ) {
-  // Pakai full preference list (tanpa availability filter) untuk cari posisi current.
-  // Lalu cari runtime berikutnya yang benar-benar tersedia.
+  // Use the full preference list (without availability filter) to find current's position.
+  // Then find the next runtime that is actually available.
   const prefMap = mergeRuntimePreferences(
     typeof preferences === "object" && !Array.isArray(preferences) ? preferences : {},
     DEFAULT_RUNTIME_PREFERENCES
@@ -209,16 +209,16 @@ export function getFallbackRuntime(
   const fullOrder = prefMap[profileId] ?? prefMap.general ?? [...DEFAULT_RUNTIME_PREFERENCES.general];
   const currentIdx = fullOrder.indexOf(currentRuntimeId);
   if (currentIdx === -1) return null;
-  // Cari runtime berikutnya setelah current yang ada di availableRuntimes
+  // Find the next runtime after current that is in availableRuntimes
   return fullOrder.slice(currentIdx + 1).find((r) => availableRuntimes.includes(r)) ?? null;
 }
 
 // ─── Adaptive selection ───────────────────────────────────────────────────────
 
 /**
- * Pilih runtime terbaik berdasarkan preference + histori sukses dari learning log.
- * Kalau belum ada cukup data (< MIN_SAMPLES), pakai urutan preference biasa.
- * Kalau sudah ada data, runtime dengan success rate lebih tinggi diprioritaskan.
+ * Select the best runtime based on preference + success history from the learning log.
+ * If there isn't enough data (< MIN_SAMPLES), use the normal preference order.
+ * When data is available, the runtime with the higher success rate is prioritised.
  */
 export function selectRuntimeAdaptive(
   profileId,
@@ -231,7 +231,7 @@ export function selectRuntimeAdaptive(
 
   if (ordered.length <= 1) return ordered[0] ?? "codex";
 
-  // Hitung statistik per runtime untuk profile ini
+  // Compute per-runtime statistics for this profile
   const stats = {};
   for (const entry of learningEntries) {
     if (entry.profileId !== profileId) continue;
@@ -242,7 +242,7 @@ export function selectRuntimeAdaptive(
     else if (entry.outcome === "failed") stats[r].fail++;
   }
 
-  // Hanya reorder kalau semua candidate punya cukup sample
+  // Only reorder when all candidates have enough samples
   const allHaveSamples = ordered.every((r) => {
     const s = stats[r] ?? { ok: 0, fail: 0 };
     return s.ok + s.fail >= MIN_SAMPLES;
@@ -250,7 +250,7 @@ export function selectRuntimeAdaptive(
 
   if (!allHaveSamples) return ordered[0];
 
-  // Sort by success rate descending; tie → urutan preferensi
+  // Sort by success rate descending; tie → preference order
   return [...ordered].sort((a, b) => {
     const sa = stats[a] ?? { ok: 0, fail: 0 };
     const sb = stats[b] ?? { ok: 0, fail: 0 };

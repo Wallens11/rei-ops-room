@@ -176,14 +176,14 @@ const EXECUTE_SKILL_PROFILES = [
   }
 ];
 
-// 2a: Claim cooldown — hindari double-claim kalau issue baru saja di-update proses lain
+// 2a: Claim cooldown — avoid double-claiming if an issue was just updated by another process
 const EXECUTE_CLAIM_COOLDOWN_SECONDS = 30;
 
-// 2b: Retry policy — blocked issue bisa dicoba ulang dengan backoff
+// 2b: Retry policy — blocked issues can be retried with backoff
 const EXECUTE_MAX_RETRIES = 2;
 const EXECUTE_RETRY_BACKOFF_MINUTES = [5, 30]; // backoff per attempt: 1st retry = 5m, 2nd = 30m
 
-// 2c: Weighted scoring — title sinyal paling kuat, label medium, body luas tapi noisy
+// 2c: Weighted scoring — title is the strongest signal, label medium, body broad but noisy
 const SKILL_WEIGHT_TITLE = 3;
 const SKILL_WEIGHT_LABEL = 2;
 const SKILL_WEIGHT_BODY = 1;
@@ -227,9 +227,9 @@ function isExecuteIssue(issue) {
 }
 
 /**
- * Cek apakah issue sudah di-approve secara eksplisit untuk eksekusi.
- * Issue dengan `mode:execute + status:approved` = approved.
- * Issue dengan `mode:execute + status:todo` (tanpa status:approved) = awaiting approval.
+ * Check whether an issue has been explicitly approved for execution.
+ * Issue with `mode:execute + status:approved` = approved.
+ * Issue with `mode:execute + status:todo` (without status:approved) = awaiting approval.
  */
 function isApprovedExecuteIssue(issue) {
   return isExecuteIssue(issue) && hasLabel(issue?.labels, "status:approved");
@@ -258,7 +258,7 @@ function byTodoPriority(left, right) {
 function summarizeHandoff(handoff = {}) {
   const lines = [];
 
-  // 3: structured fields didahulukan — info paling penting buat agent
+  // 3: structured fields come first — most important info for the agent
   if (handoff.next_focus_zone) {
     lines.push(`- Next Focus Zone: ${handoff.next_focus_zone}`);
   }
@@ -272,7 +272,7 @@ function summarizeHandoff(handoff = {}) {
     lines.push(`- Blockers: ${handoff.blockers.slice(0, 2).join(" | ")}`);
   }
 
-  // Fallback ke sections umum — skip yang sudah dihandle di atas
+  // Fall back to general sections — skip those already handled above
   const HANDLED_SECTION_PATTERNS = ["next focus zone", "focus zone", "blocker", "active issue"];
   const sections = Array.isArray(handoff.sections) ? handoff.sections : [];
   let sectionCount = 0;
@@ -429,12 +429,12 @@ function buildExecuteTrust({
     items.push(`Design authority: ${formatDesignProfileLabel(designProfile)}`);
   }
 
-  // Inject learning signals — sinyal dari histori run nyata
+  // Inject learning signals — signals derived from real run history
   for (const signal of (learningSignals || [])) {
     items.push(signal);
   }
 
-  // Failure pattern warning — muncul sebagai item tersendiri kalau ada
+  // Failure pattern warning — appears as a separate item when present
   if (failurePattern?.hasWarning && failurePattern.patterns?.length > 0) {
     const topPattern = failurePattern.patterns[0];
     items.push(`⚠️ ${topPattern.message}`);
@@ -455,7 +455,7 @@ function resolveSkillBundle(skillIds = []) {
 }
 
 export function selectExecuteSkillProfile(issue = {}) {
-  // 2c: weighted multi-source scoring — title paling kuat, label medium, body luas tapi noisy
+  // 2c: weighted multi-source scoring — title strongest, label medium, body broad but noisy
   const titleText = String(issue?.title || "").toLowerCase();
   const labelText = normalizeLabelNames(issue?.labels || []).join(" ").toLowerCase();
   const bodyText = String(issue?.body || "").toLowerCase();
@@ -500,14 +500,14 @@ export function selectExecuteSkillProfile(issue = {}) {
 }
 
 /**
- * Expose RUNTIME_PREFERENCES dari runtimes/index.mjs lewat bridge
- * supaya caller yang hanya import execute-bridge tidak perlu tahu soal runtimes/.
- * Lazy import supaya tidak ada circular dep.
+ * Expose RUNTIME_PREFERENCES from runtimes/index.mjs through the bridge
+ * so callers that only import execute-bridge don't need to know about runtimes/.
+ * Lazy import to avoid circular deps.
  */
 /**
- * Bangun prompt untuk direct task (submit via /api/execute/submit).
- * Lebih simpel dari buildExecutePrompt — tidak ada GitHub issue context,
- * tidak ada skill profile. Cukup task, context opsional, dan handoff.
+ * Build a prompt for a direct task (submitted via /api/execute/submit).
+ * Simpler than buildExecutePrompt — no GitHub issue context, no skill profile.
+ * Just the task, optional context, and handoff.
  */
 export function buildDirectTaskPrompt({
   task,
@@ -657,14 +657,14 @@ export function getLastExecuteAttemptMs(comments = []) {
     if (!EXECUTE_MARKER_STARTED_RE.test(body)) {
       continue;
     }
-    // reset lastIndex karena global regex stateful
+    // reset lastIndex because global regex is stateful
     EXECUTE_MARKER_STARTED_RE.lastIndex = 0;
     const createdAt = comment?.createdAt ? Date.parse(String(comment.createdAt)) : NaN;
     if (Number.isFinite(createdAt) && (latestMs === null || createdAt > latestMs)) {
       latestMs = createdAt;
     }
   }
-  // reset setelah pemakaian
+  // reset after use
   EXECUTE_MARKER_STARTED_RE.lastIndex = 0;
   return latestMs;
 }
@@ -676,16 +676,16 @@ export function isBlockedIssueRetryEligible(issue, comments = [], { nowMs = Date
 
   const attemptCount = countExecuteAttempts(comments);
   if (attemptCount >= maxRetries) {
-    return false; // sudah habis jatah retry
+    return false; // retry quota exhausted
   }
 
   const lastAttemptMs = getLastExecuteAttemptMs(comments);
   if (lastAttemptMs === null) {
-    return true; // belum pernah ada marker started, boleh retry
+    return true; // no started marker yet, retry is allowed
   }
 
-  // backoff: cek apakah sudah cukup lama sejak last attempt
-  // attemptCount=1 → retry pertama → pakai backoffMinutes[0]; jadi index = attemptCount-1
+  // backoff: check whether enough time has passed since the last attempt
+  // attemptCount=1 → first retry → use backoffMinutes[0]; so index = attemptCount-1
   const backoffIndex = Math.min(Math.max(0, attemptCount - 1), backoffMinutes.length - 1);
   const requiredBackoffMs = backoffMinutes[backoffIndex] * 60 * 1000;
   const elapsedMs = nowMs - lastAttemptMs;
@@ -792,7 +792,7 @@ async function selectRoadmapTarget({ payload = {}, repo, runner }) {
   return null;
 }
 
-// 2a: claim guard — cek apakah issue baru saja di-update (mungkin sedang diklaim proses lain)
+// 2a: claim guard — check whether the issue was just updated (may be claimed by another process)
 function isWithinClaimCooldown(issue, nowMs = Date.now()) {
   const updatedAt = issue?.updatedAt ? Date.parse(String(issue.updatedAt)) : NaN;
   if (!Number.isFinite(updatedAt)) {
@@ -805,8 +805,8 @@ function isWithinClaimCooldown(issue, nowMs = Date.now()) {
 export function selectExecuteTarget(payload = {}, { nowMs = Date.now() } = {}) {
   const executeIssues = (payload.issues || []).filter((issue) => isExecuteIssue(issue));
 
-  // 1. in_progress: ambil yang sudah berjalan, tapi skip yang baru saja di-update
-  //    (mungkin executor lain baru saja claim-nya)
+  // 1. in_progress: pick already-running issues, but skip those just updated
+  //    (another executor may have just claimed them)
   const activeIssue = executeIssues
     .filter((issue) => issueStatus(issue) === "in_progress")
     .filter((issue) => !isWithinClaimCooldown(issue, nowMs))
@@ -819,8 +819,8 @@ export function selectExecuteTarget(payload = {}, { nowMs = Date.now() } = {}) {
     };
   }
 
-  // 2. Approved: mode:execute + status:approved — approval gate eksplisit.
-  //    Hanya issue yang sudah di-approve yang boleh di-execute oleh worker.
+  // 2. Approved: mode:execute + status:approved — explicit approval gate.
+  //    Only approved issues may be executed by the worker.
   const approvedIssue = executeIssues
     .filter((issue) => isApprovedExecuteIssue(issue) && issueStatus(issue) !== "blocked")
     .sort(byTodoPriority)[0];
@@ -832,8 +832,8 @@ export function selectExecuteTarget(payload = {}, { nowMs = Date.now() } = {}) {
     };
   }
 
-  // 3. Awaiting approval: mode:execute + status:todo tapi belum status:approved.
-  //    Ditampilkan di UI sebagai "waiting for approval" — worker TIDAK execute ini.
+  // 3. Awaiting approval: mode:execute + status:todo but without status:approved.
+  //    Shown in UI as "waiting for approval" — the worker does NOT execute these.
   const todoIssue = executeIssues
     .filter((issue) => issueStatus(issue) === "todo")
     .sort(byTodoPriority)[0];
@@ -849,21 +849,21 @@ export function selectExecuteTarget(payload = {}, { nowMs = Date.now() } = {}) {
 }
 
 /**
- * Ekstrak komentar manusia yang ditulis SETELAH run Rei terakhir dimulai.
+ * Extract human comments written AFTER the last Rei run started.
  *
- * Dipakai untuk "comment re-prompting": kalau issue in_progress dan ada komentar
- * baru dari manusia (bukan dari Rei), komentar itu di-inject ke prompt supaya
- * Rei bisa course-correct tanpa harus stop/restart worker.
+ * Used for "comment re-prompting": if an issue is in_progress and there are
+ * new human comments (not from Rei), they are injected into the prompt so
+ * Rei can course-correct without stopping/restarting the worker.
  *
- * @param comments    — array komentar dari GitHub issue (field: body, createdAt, author)
- * @param issueNumber — nomor issue (opsional, tidak dipakai secara fungsional)
+ * @param comments    — array of GitHub issue comments (fields: body, createdAt, author)
+ * @param issueNumber — issue number (optional, not used functionally)
  *
- * Return: array komentar manusia baru, atau [] kalau belum ada run sebelumnya.
+ * Return: array of new human comments, or [] if no previous run exists.
  */
 export function extractNewHumanComments(comments = [], issueNumber = null) {
   const all = Array.isArray(comments) ? comments : [];
 
-  // Cari timestamp komentar Rei terakhir dengan state=started
+  // Find the timestamp of the last Rei comment with state=started
   const startedRe = /<!--\s*rei:execute\s+issue=\d+\s+state=started\s*-->/;
   let lastReiRunMs = null;
 
@@ -875,14 +875,14 @@ export function extractNewHumanComments(comments = [], issueNumber = null) {
     }
   }
 
-  // Belum pernah ada run — fresh start, tidak perlu re-prompt
+  // No previous run — fresh start, no re-prompting needed
   if (lastReiRunMs === null) return [];
 
-  // Komentar setelah last started yang bukan dari Rei sendiri
+  // Comments after the last started marker that are not from Rei itself
   const reiMarkerRe = /<!--\s*rei:execute/;
   return all.filter((comment) => {
     const body = String(comment?.body || "");
-    if (reiMarkerRe.test(body)) return false; // skip komentar Rei
+    if (reiMarkerRe.test(body)) return false; // skip Rei's own comments
     const t = comment?.createdAt ? Date.parse(String(comment.createdAt)) : NaN;
     return Number.isFinite(t) && t > lastReiRunMs;
   });
@@ -1055,7 +1055,7 @@ export async function prepareExecuteAction({
   const designProfile = readRepoDesignProfile(cwd);
   const resolvedContinuity = continuity || (await readExecuteContinuity().catch(() => null));
 
-  // Fetch learning entries sekali — dipakai untuk prompt context, trust signals, dan failure detection
+  // Fetch learning entries once — used for prompt context, trust signals, and failure detection
   const learningEntries = await readLearningLog().catch(() => []);
   const learningContext = formatLearningContext(learningEntries, { limit: 5 });
 
@@ -1087,7 +1087,7 @@ export async function prepareExecuteAction({
   };
 
   // Codebase graph — built once per prepare call, then queried per issue.
-  // Falls back gracefully if the cwd isn't a real repo (e.g. tests).
+  // Falls back gracefully if cwd isn't a real repo (e.g. tests).
   const codebaseGraph = await loadCodebaseGraph({ repoRoot: cwd }).catch(() => null);
   const buildCodebaseContextFor = (issue) => {
     if (!codebaseGraph || !issue) return null;
@@ -1187,7 +1187,7 @@ export async function prepareExecuteAction({
   }
 
   if (!target?.issue) {
-    // 2b: fallback — cek blocked issues yang eligible untuk retry
+    // 2b: fallback — check blocked issues eligible for retry
     const blockedExecuteIssues = (payload.issues || [])
       .filter((issue) => isExecuteIssue(issue) && issueStatus(issue) === "blocked")
       .sort(byUpdatedAtDesc);
@@ -1261,9 +1261,9 @@ export async function prepareExecuteAction({
   const resolvedHandoff = handoff || (await readDailyDeviceHandoff());
   const skillProfile = selectExecuteSkillProfile(issue);
 
-  // Approval gate: kalau issue belum di-approve (status:todo tanpa status:approved),
-  // return "awaiting_approval" — worker tidak akan execute ini.
-  // Hanya issue dengan status:approved yang boleh jalan (atau status:in_progress / retry).
+  // Approval gate: if the issue has not been approved (status:todo without status:approved),
+  // return "awaiting_approval" — the worker will not execute it.
+  // Only issues with status:approved may run (or status:in_progress / retry).
   if (target.status === "awaiting_approval") {
     return {
       repo: resolvedRepo,
@@ -1336,13 +1336,13 @@ export async function prepareExecuteAction({
 }
 
 /**
- * Approve issue untuk eksekusi.
+ * Approve an issue for execution.
  *
- * Menambahkan label `status:approved` dan `mode:execute`, menghapus
- * `mode:report_only` sehingga execute worker bisa pick-up issue ini.
+ * Adds the `status:approved` and `mode:execute` labels, removes
+ * `mode:report_only` so the execute worker can pick up the issue.
  *
- * Operator memanggil ini via POST /api/github/issues/:number/approve
- * atau via tombol "Approve for Execution" di UI.
+ * Called by the operator via POST /api/github/issues/:number/approve
+ * or via the "Approve for Execution" button in the UI.
  */
 export async function approveExecuteIssue({
   runner = defaultRunner(),

@@ -1,23 +1,23 @@
 /**
  * execute-learning.mjs — Post-run learning loop.
  *
- * Tiap execute run (GitHub issue atau direct task) meninggalkan insight:
- *   - file apa yang diubah
+ * Every execute run (GitHub issue or direct task) leaves an insight:
+ *   - which files were changed
  *   - outcome: completed / review_needed / failed
- *   - runtime yang dipakai
- *   - ringkasan singkat dari last message agent
+ *   - which runtime was used
+ *   - a short summary from the agent's last message
  *
- * Insight ini dikumpulkan di .execute-learning.json dan di-inject ke prompt
- * run berikutnya lewat formatLearningContext().
+ * Insights are collected in .execute-learning.json and injected into the
+ * next run's prompt via formatLearningContext().
  *
- * Hasilnya: Rei tau apa yang berhasil, apa yang stuck, dan area mana yang
- * sudah sering disentuh — tanpa perlu baca ulang semua git log.
+ * Result: Rei knows what worked, what got stuck, and which areas have been
+ * touched often — without having to re-read the entire git log.
  *
- * Cross-session note (buat LLM lain yang lanjut):
+ * Cross-session note (for other LLMs continuing this work):
  *   - Learning log: .execute-learning.json (excluded via .gitignore)
- *   - Max entries: 50 (auto-trim yang lama)
- *   - Format context di-inject ke buildExecutePrompt + buildDirectTaskPrompt
- *     via parameter `learningContext` (string)
+ *   - Max entries: 50 (auto-trims oldest)
+ *   - Format context is injected into buildExecutePrompt + buildDirectTaskPrompt
+ *     via the `learningContext` parameter (string)
  */
 
 import fs from "node:fs/promises";
@@ -52,8 +52,8 @@ async function writeLog(entries) {
 }
 
 /**
- * Ekstrak ringkasan singkat dari last message agent.
- * Ambil kalimat pertama yang substantif — bukan heading markdown.
+ * Extract a short summary from the agent's last message.
+ * Takes the first substantive sentence — skips markdown headings.
  */
 export function extractKeySummary(lastMessage = "") {
   const text = String(lastMessage || "").trim();
@@ -73,27 +73,27 @@ export function extractKeySummary(lastMessage = "") {
 // ─── Core API ─────────────────────────────────────────────────────────────────
 
 /**
- * Baca semua learning entries.
+ * Read all learning entries.
  */
 export async function readLearningLog() {
   return readLog();
 }
 
 /**
- * Alias untuk readLearningLog — dipakai oleh adaptive runtime selection.
+ * Alias for readLearningLog — used by adaptive runtime selection.
  */
 export const getLearningEntries = readLearningLog;
 
 /**
- * Catat insight dari satu run yang sudah selesai.
+ * Record an insight from a completed run.
  *
- * @param issueNumber  — nomor GitHub issue (null untuk direct task)
- * @param taskTitle    — judul issue atau deskripsi singkat direct task
+ * @param issueNumber  — GitHub issue number (null for direct tasks)
+ * @param taskTitle    — issue title or short description of the direct task
  * @param runtimeId    — "codex" | "claude-code"
  * @param profileId    — specialist profile: "frontend" | "backend" | "general" | ...
  * @param outcome      — "completed" | "review_needed" | "failed" | "aborted"
- * @param filesChanged — array path relatif file yang berubah
- * @param lastMessage  — teks output terakhir dari agent
+ * @param filesChanged — array of relative paths of changed files
+ * @param lastMessage  — last output text from the agent
  */
 export async function recordRunInsight({
   issueNumber = null,
@@ -114,13 +114,13 @@ export async function recordRunInsight({
     runtimeId,
     profileId: String(profileId || "general"),
     outcome,
-    filesChanged: (filesChanged || []).slice(0, 20), // cap supaya tidak terlalu besar
+    filesChanged: (filesChanged || []).slice(0, 20), // cap to avoid growing too large
     keySummary: extractKeySummary(lastMessage)
   };
 
   entries.push(entry);
 
-  // Trim ke MAX_ENTRIES — buang yang paling lama
+  // Trim to MAX_ENTRIES — discard the oldest
   const trimmed = entries.slice(-MAX_ENTRIES);
   await writeLog(trimmed);
 
@@ -130,15 +130,15 @@ export async function recordRunInsight({
 // ─── Prompt injection ────────────────────────────────────────────────────────
 
 /**
- * Format learning entries menjadi teks yang bisa di-inject ke prompt.
- * Ambil `limit` entries terbaru saja.
+ * Format learning entries into text that can be injected into a prompt.
+ * Takes only the `limit` most recent entries.
  *
- * Return: string siap pakai, atau null kalau tidak ada entries.
+ * Return: ready-to-use string, or null if there are no entries.
  */
 export function formatLearningContext(entries = [], { limit = 5 } = {}) {
   if (!entries || entries.length === 0) return null;
 
-  const recent = entries.slice(-limit).reverse(); // terbaru dulu
+  const recent = entries.slice(-limit).reverse(); // newest first
 
   const lines = recent.map((e) => {
     const ref = e.issueNumber ? `#${e.issueNumber}` : "direct";
@@ -158,7 +158,7 @@ export function formatLearningContext(entries = [], { limit = 5 } = {}) {
 }
 
 /**
- * Baca log dan langsung format — shortcut untuk prompt builders.
+ * Read the log and format immediately — shortcut for prompt builders.
  */
 export async function getLearningContext({ limit = 5 } = {}) {
   const entries = await readLearningLog();
@@ -168,19 +168,19 @@ export async function getLearningContext({ limit = 5 } = {}) {
 // ─── Trust signals ────────────────────────────────────────────────────────────
 
 /**
- * Hitung sinyal kepercayaan dari learning entries untuk ditampilkan di UI.
+ * Compute trust signals from learning entries for display in the UI.
  *
- * @param entries    — semua learning entries
+ * @param entries    — all learning entries
  * @param profileId  — "frontend" | "backend" | "general" | ...
- * @param issueNumber — nomor issue yang sedang diproses (null untuk direct task)
+ * @param issueNumber — number of the issue being processed (null for direct tasks)
  *
- * Return: array of signal strings (max 4), atau [] kalau belum ada data.
+ * Return: array of signal strings (max 4), or [] if there's no data yet.
  */
 export function computeTrustSignals(entries = [], { profileId = "general", issueNumber = null } = {}) {
   const signals = [];
   const allEntries = Array.isArray(entries) ? entries : [];
 
-  // Signal 1: success rate untuk profile type ini (10 run terakhir)
+  // Signal 1: success rate for this profile type (last 10 runs)
   const profileEntries = allEntries.filter((e) => e.profileId === profileId).slice(-10);
   if (profileEntries.length >= 2) {
     const completed = profileEntries.filter((e) => e.outcome === "completed").length;
@@ -188,7 +188,7 @@ export function computeTrustSignals(entries = [], { profileId = "general", issue
     signals.push(`${profileId} tasks: ${completed}/${profileEntries.length} completed (${pct}%)`);
   }
 
-  // Signal 2: runtime terbaik untuk profile ini (kalau ada cukup data)
+  // Signal 2: best runtime for this profile (if enough data is available)
   const runtimeStats = {};
   for (const e of profileEntries) {
     if (!e.runtimeId) continue;
@@ -204,7 +204,7 @@ export function computeTrustSignals(entries = [], { profileId = "general", issue
     signals.push(`best runtime for ${profileId}: ${runtimeId} (${stats.ok}/${stats.total} ok)`);
   }
 
-  // Signal 3: riwayat issue yang sama (kalau ada issueNumber)
+  // Signal 3: history for the same issue (when issueNumber is provided)
   if (issueNumber != null) {
     const issueEntries = allEntries.filter((e) => e.issueNumber === issueNumber);
     if (issueEntries.length > 0) {
@@ -216,10 +216,10 @@ export function computeTrustSignals(entries = [], { profileId = "general", issue
     }
   }
 
-  // Signal 4: global success rate (semua entry, max 20 terakhir)
+  // Signal 4: global success rate (all entries, last 20 max)
   const globalRecent = allEntries.slice(-20);
   if (globalRecent.length >= 5 && profileEntries.length < 2) {
-    // Hanya tampilkan kalau signal profile tidak muncul (menghindari duplikasi)
+    // Only show if the profile signal isn't already present (avoid duplication)
     const globalCompleted = globalRecent.filter((e) => e.outcome === "completed").length;
     const globalPct = Math.round((globalCompleted / globalRecent.length) * 100);
     signals.push(`overall: ${globalCompleted}/${globalRecent.length} tasks completed (${globalPct}%)`);
@@ -231,15 +231,15 @@ export function computeTrustSignals(entries = [], { profileId = "general", issue
 // ─── Failure pattern detection ────────────────────────────────────────────────
 
 /**
- * Deteksi pola kegagalan yang perlu diwaspadai sebelum eksekusi.
+ * Detect failure patterns to watch out for before execution.
  *
- * Pattern 1: issue yang sama gagal 2+ kali → high risk
- * Pattern 2: profile type failure rate tinggi (>60% dalam 5 run terakhir) → medium risk
+ * Pattern 1: same issue failed 2+ times → high risk
+ * Pattern 2: high profile type failure rate (>60% in the last 5 runs) → medium risk
  *
- * @param entries    — semua learning entries
- * @param profileId  — profile task yang akan dijalankan
- * @param issueNumber — nomor issue target (null untuk direct task)
- * @param window     — berapa entry terakhir yang dianalisa untuk profile streak (default 5)
+ * @param entries    — all learning entries
+ * @param profileId  — profile of the task about to run
+ * @param issueNumber — target issue number (null for direct tasks)
+ * @param window     — how many recent entries to analyse for the profile streak (default 5)
  *
  * Return: { hasWarning, riskLevel: "low"|"medium"|"high", patterns: [{type, severity, message}] }
  */
@@ -247,7 +247,7 @@ export function detectFailurePattern(entries = [], { profileId = "general", issu
   const allEntries = Array.isArray(entries) ? entries : [];
   const patterns = [];
 
-  // Pattern 1: issue yang sama gagal berulang kali
+  // Pattern 1: same issue failing repeatedly
   if (issueNumber != null) {
     const issueEntries = allEntries.filter((e) => e.issueNumber === issueNumber);
     const failCount = issueEntries.filter((e) => e.outcome === "failed").length;

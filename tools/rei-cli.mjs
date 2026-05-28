@@ -315,9 +315,9 @@ async function waitForPortRelease(port, attempts = 20) {
 async function startDetachedServer(port) {
   await fs.mkdir(projectRoot, { recursive: true });
 
-  // Windows: fd inheritance tidak bekerja untuk arbitrary file handles.
-  // Pakai stdio:"ignore" supaya server bisa spawn dengan benar.
-  // Unix: redirect ke log file seperti biasa.
+  // Windows: fd inheritance does not work for arbitrary file handles.
+  // Use stdio:"ignore" so the server can spawn correctly.
+  // Unix: redirect to log file as normal.
   const isWin = process.platform === "win32";
   const logHandle = isWin ? null : await fs.open(logFile, "a");
 

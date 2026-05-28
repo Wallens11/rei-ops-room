@@ -84,20 +84,23 @@ docker run -p 4317:4317 \
 Copy the example config and edit:
 
 ```bash
-cp rei.config.example.json rei.config.json
+cp rei.config.json.example rei.config.json
 ```
 
-`rei.config.json` (gitignored):
+`rei.config.json` (gitignored — see `rei.config.json.example` for all options):
 
 ```json
 {
-  "repo": "owner/repo",
-  "workspacePath": "/path/to/your/workspace",
+  "githubRepo": "your-org/your-repo",
+  "workspaceRoot": "/path/to/your/workspace",
+  "runtimes": ["claude-code", "codex"],
   "port": 4317,
-  "claudeBin": "claude",
-  "codexBin": "codex",
   "githubWebhookSecret": "",
-  "dailyHandoffPath": null
+  "webhooks": {
+    "slack": "",
+    "discord": "",
+    "events": "completed,failed,blocked"
+  }
 }
 ```
 

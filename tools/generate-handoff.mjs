@@ -1,26 +1,26 @@
 /**
  * generate-handoff.mjs — Auto-generate daily handoff dari run history.
  *
- * Membaca tiga sumber:
- *   1. .execute-runs/    — last-message.md dari N run terbaru
- *   2. .execute-learning.json  — recent learning entries (insight dari setiap run)
- *   3. .execute-queue.json     — tasks done/failed hari ini
+ * Reads from three sources:
+ *   1. .execute-runs/    — last-message.md from the N most recent runs
+ *   2. .execute-learning.json  — recent learning entries (insight from each run)
+ *   3. .execute-queue.json     — tasks done/failed today
  *
  * Output:
- *   Handoff Markdown yang ditulis ke lokasi yang sama dengan
- *   readDailyDeviceHandoff() di server.mjs — yaitu references/daily-device-handoff.md
- *   di raffi-agent-skill repo.
+ *   Handoff Markdown written to the same location as
+ *   readDailyDeviceHandoff() in server.mjs — i.e. references/daily-device-handoff.md
+ *   in the raffi-agent-skill repo.
  *
- * Bisa di-trigger manual:
+ * Can be triggered manually:
  *   node tools/generate-handoff.mjs
  *
- * Atau via API:
+ * Or via API:
  *   POST /api/handoff/generate
  *
- * Cross-session note (buat LLM lain yang lanjut):
- *   - Output file: sama dengan dailyDeviceHandoffPaths[0] di server.mjs
- *   - Format: append section baru di bawah entry hari terakhir
- *   - Kalau sudah ada entry untuk hari ini, replace-saja seksi yang ada
+ * Cross-session note (for other LLMs continuing this work):
+ *   - Output file: same as dailyDeviceHandoffPaths[0] in server.mjs
+ *   - Format: append a new section below the last day's entry
+ *   - If a section for today already exists, replace it in-place
  */
 
 import fs from "node:fs/promises";
@@ -67,7 +67,7 @@ function extractSectionDateHeader(section = "") {
 }
 
 /**
- * Baca last-message.md dari N run dir terbaru.
+ * Read last-message.md from the N most recent run dirs.
  * Return: array of { runDir, lastMessage }
  */
 async function readRecentRunMessages(limit = MAX_RUNS_TO_READ) {
@@ -78,7 +78,7 @@ async function readRecentRunMessages(limit = MAX_RUNS_TO_READ) {
     return [];
   }
 
-  // Urutkan berdasarkan nama dir (timestamp suffix) — terbaru dulu
+  // Sort by dir name (timestamp suffix) — newest first
   const sorted = entries.sort().reverse().slice(0, limit);
   const results = [];
 
@@ -94,7 +94,7 @@ async function readRecentRunMessages(limit = MAX_RUNS_TO_READ) {
 }
 
 /**
- * Buat ringkasan singkat dari learning entries hari ini.
+ * Build a short summary from today's learning entries.
  */
 function summarizeLearningEntries(entries = []) {
   const today = todayDate();
@@ -115,7 +115,7 @@ function summarizeLearningEntries(entries = []) {
 }
 
 /**
- * Buat ringkasan queue hari ini — tasks done/failed.
+ * Build a summary of today's queue — done/failed tasks.
  */
 function summarizeQueueToday(tasks = []) {
   const today = todayDate();
@@ -138,7 +138,7 @@ function summarizeQueueToday(tasks = []) {
 // ─── Core ─────────────────────────────────────────────────────────────────────
 
 /**
- * Buat object handoff terstruktur dari run history.
+ * Build a structured handoff object from run history.
  *
  * Return: {
  *   date: "YYYY-MM-DD",
@@ -158,7 +158,7 @@ export async function buildHandoffPayload() {
   const learningSummary = summarizeLearningEntries(learningEntries);
   const queueSummary = summarizeQueueToday(queueTasks);
 
-  // Today at a glance — derive dari learning entries
+  // Today at a glance — derived from learning entries
   const today = todayDate();
   const todayLearning = learningEntries.filter((e) => e.date === today);
   const completed = todayLearning.filter((e) => e.outcome === "completed").length;
@@ -175,7 +175,7 @@ export async function buildHandoffPayload() {
     }
   }
 
-  // Active issues dari queue (queued + in_progress)
+  // Active issues from the queue (queued + in_progress)
   const activeQueue = queueTasks.filter(
     (t) => t.status === "queued" || t.status === "in_progress"
   );
@@ -194,7 +194,7 @@ export async function buildHandoffPayload() {
       queue: queueSummary
     },
     activeIssues,
-    blockers: null // bisa di-extend nanti
+    blockers: null // can be extended later
   };
 }
 
@@ -232,21 +232,21 @@ export function formatHandoffSection(payload) {
 }
 
 /**
- * Tulis atau update section hari ini di handoff file.
+ * Write or update today's section in the handoff file.
  *
  * Strategy:
- *   - Kalau sudah ada section `## YYYY-MM-DD` untuk hari ini → replace-nya.
- *   - Kalau belum → append di bawah.
+ *   - If a `## YYYY-MM-DD` section for today already exists → replace it.
+ *   - Otherwise → append below.
  *
- * @param outputPaths — array file path (coba satu per satu, pakai yang pertama berhasil)
- * @param section     — Markdown string dari formatHandoffSection()
+ * @param outputPaths — array of file paths (tries each in order, uses first that succeeds)
+ * @param section     — Markdown string from formatHandoffSection()
  */
 export async function writeHandoffSection(section, outputPaths = handoffOutputPaths) {
   const dateHeader = extractSectionDateHeader(section);
 
   for (const outputPath of outputPaths) {
     try {
-      // Pastikan direktori ada
+      // Ensure the directory exists
       await fs.mkdir(path.dirname(outputPath), { recursive: true });
 
       let existing = "";
@@ -258,9 +258,9 @@ export async function writeHandoffSection(section, outputPaths = handoffOutputPa
 
       let updated;
       if (existing.includes(dateHeader)) {
-        // Replace section hari ini — dari ## YYYY-MM-DD sampai ## berikutnya (atau EOF)
+        // Replace today's section — from ## YYYY-MM-DD to the next ## (or EOF)
         const startIdx = existing.indexOf(dateHeader);
-        // Cari ## berikutnya setelah section ini
+        // Find the next ## after this section
         const afterSection = existing.slice(startIdx + dateHeader.length);
         const nextSectionMatch = afterSection.match(/\n## /);
         const endIdx = nextSectionMatch
@@ -269,14 +269,14 @@ export async function writeHandoffSection(section, outputPaths = handoffOutputPa
 
         updated = existing.slice(0, startIdx) + section + existing.slice(endIdx).replace(/^\n/, "");
       } else {
-        // Append di bawah
+        // Append below
         updated = existing.trimEnd() + (existing.trim() ? "\n\n" : "") + section;
       }
 
       await fs.writeFile(outputPath, updated, "utf8");
       return { written: true, path: outputPath };
     } catch {
-      // Coba path berikutnya
+      // Try the next path
       continue;
     }
   }
