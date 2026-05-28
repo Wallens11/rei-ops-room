@@ -37,6 +37,7 @@ import { extractMemoryFromRun } from "./rei-memory.mjs";
 import { parseTokenUsage, recordRunCost } from "./rei-cost-tracker.mjs";
 import { runSelfReview, formatSelfReview } from "./rei-self-review.mjs";
 import { narrate } from "./rei-narration.mjs";
+import { notifyRun } from "./rei-webhooks.mjs";
 import { clearSessionPin, readSessionPin, writeSessionPin } from "./execute-sessions.mjs";
 import { injectSkills } from "./inject-skills.mjs";
 import { scanRunArtifacts } from "./execute-artifacts.mjs";
@@ -723,6 +724,18 @@ export async function executeNextIssue({
     issueRef: `#${preview.target.number}`
   });
 
+  const __runStartMs = Date.now();
+  await notifyRun({
+    kind: "started",
+    issueNumber: preview.target.number,
+    issueTitle: preview.issue?.title,
+    issueUrl: preview.issue?.url,
+    repo: preview.repo,
+    runtimeId: initialRuntimeLabel,
+    profileId: preview.skillProfile?.id,
+    detail: `Picking ${initialRuntimeLabel}.`
+  }).catch(() => {});
+
   if (runtimePlan.length === 0) {
     const detail = `No configured runtime is available for execute issue #${preview.target.number}.`;
 
@@ -997,7 +1010,21 @@ export async function executeNextIssue({
   // Issue selesai (apapun hasilnya) — hapus session pin supaya run berikutnya mulai fresh
   await clearSessionPin(preview.target.number).catch(() => {});
 
+  // Helper — fire-and-forget webhook notify
+  const __notifyOutcome = (kind, detail) => notifyRun({
+    kind,
+    issueNumber: preview.target.number,
+    issueTitle: preview.issue?.title,
+    issueUrl: preview.issue?.url,
+    repo: preview.repo,
+    runtimeId: activeRuntimeId,
+    profileId,
+    detail,
+    durationMs: Date.now() - __runStartMs
+  }).catch(() => {});
+
   if (mission.aborted) {
+    await __notifyOutcome("aborted", `Stopped while running #${preview.target.number}.`);
     const result = {
       status: "aborted",
       target: preview.target,
@@ -1039,6 +1066,7 @@ export async function executeNextIssue({
       })
     });
 
+    await __notifyOutcome("completed", `PR-ready. ${String(lastMessage || "").slice(0, 300)}`);
     const result = {
       status: "completed",
       target: preview.target,
@@ -1087,6 +1115,7 @@ export async function executeNextIssue({
     });
     const detail = baseDetail;
 
+    await __notifyOutcome("review_needed", baseDetail);
     const result = {
       status: "review_needed",
       target: preview.target,
@@ -1127,6 +1156,7 @@ export async function executeNextIssue({
     })
   });
 
+  await __notifyOutcome("failed", `Exit ${mission.exitCode}. ${String(lastMessage || "").slice(0, 200)}`);
   const result = {
     status: "failed",
     target: preview.target,

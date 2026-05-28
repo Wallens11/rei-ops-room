@@ -139,6 +139,35 @@ Rei wakes up the worker immediately on:
 
 ---
 
+## Outbound Webhooks (Slack / Discord / generic)
+
+Get pinged when Rei finishes (or fails) a run. Set any of these env vars:
+
+```bash
+export REI_SLACK_WEBHOOK_URL=https://hooks.slack.com/services/…
+export REI_DISCORD_WEBHOOK_URL=https://discord.com/api/webhooks/…
+export REI_WEBHOOK_URL=https://example.com/your-relay     # raw JSON POST
+export REI_WEBHOOK_EVENTS=completed,failed,blocked        # default
+```
+
+Or put them under `webhooks:` in `rei.config.json`:
+
+```json
+{
+  "webhooks": {
+    "slack": "https://hooks.slack.com/services/…",
+    "discord": "https://discord.com/api/webhooks/…",
+    "events": "completed,failed,review_needed"
+  }
+}
+```
+
+Supported event kinds: `started`, `completed`, `failed`, `blocked`,
+`review_needed`, `aborted`. Failures are swallowed — Rei never crashes
+because Slack is down.
+
+---
+
 ## GitHub Labels
 
 Rei uses these labels to manage issue state:

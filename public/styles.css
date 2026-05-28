@@ -1295,3 +1295,142 @@ body[data-tone="steady"] #runtime-panel {
   margin-top: 4px;
   height: 12px;
 }
+
+/* ─── Mobile responsive (Wave 4b) ─────────────────────────────────────────── */
+/* Phone-sized screens: single column, full-width chat, touch-friendly. */
+@media (max-width: 560px) {
+  body {
+    font-size: 14px;
+    -webkit-text-size-adjust: 100%;
+  }
+
+  .shell {
+    width: 100%;
+    padding: 10px 10px 80px; /* leave room for collapsed chat handle */
+    gap: 12px;
+  }
+
+  .topbar {
+    grid-template-columns: 1fr;
+    gap: 8px;
+    padding: 10px 12px;
+  }
+
+  .topbar-actions {
+    flex-wrap: wrap;
+    gap: 6px;
+  }
+  .topbar-actions button,
+  .topbar-actions a {
+    min-height: 38px; /* touch target */
+    padding: 8px 10px;
+    font-size: 12px;
+  }
+
+  .panel,
+  .room-card,
+  .panel-grid > * {
+    border-radius: 14px;
+  }
+
+  .panel-grid,
+  .room-layout,
+  .workspace-dock,
+  .inspector,
+  .room-caption {
+    grid-template-columns: 1fr !important;
+    gap: 10px;
+  }
+
+  /* Brain panel: stack subsections, drop hover-only affordances */
+  #rei-brain-panel,
+  .rei-brain-panel {
+    padding: 12px;
+  }
+  #rei-brain-panel .brain-subsection,
+  .rei-brain-panel .brain-subsection {
+    margin-bottom: 10px;
+  }
+
+  /* Canvas / scene: full width, preserve aspect */
+  .stage,
+  .scene canvas,
+  canvas.scene-canvas {
+    width: 100% !important;
+    height: auto !important;
+    max-width: 100%;
+  }
+
+  /* Make scrollable lists shorter so they don't dominate the viewport */
+  .inspector,
+  .legend,
+  .recent-runs,
+  .agent-list {
+    max-height: 240px;
+    overflow-y: auto;
+  }
+
+  /* Chat panel: full width, slightly taller for thumb reach */
+  #rei-chat-panel {
+    right: 0;
+    left: 0;
+    width: 100%;
+    max-width: 100%;
+    border-radius: 12px 12px 0 0;
+    max-height: 60vh;
+  }
+  #rei-chat-panel.collapsed {
+    max-height: 42px;
+  }
+  #rei-chat-header {
+    padding: 12px 14px;
+    font-size: 12px;
+  }
+  #rei-chat-input {
+    font-size: 14px; /* iOS Safari skips zoom when ≥ 14-16px */
+    min-height: 40px;
+    padding: 10px;
+  }
+  #rei-chat-list {
+    font-size: 13px;
+    padding: 10px 12px 6px;
+  }
+
+  /* Hide things that don't survive a 360px viewport */
+  .desktop-only,
+  .topbar-meta,
+  .meta-secondary {
+    display: none !important;
+  }
+}
+
+/* Tablet — keep multi-pane but loosen spacing */
+@media (min-width: 561px) and (max-width: 900px) {
+  .shell {
+    padding: 16px 16px 60px;
+  }
+  .panel-grid,
+  .workspace-dock {
+    grid-template-columns: 1fr;
+  }
+  .inspector {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  #rei-chat-panel {
+    width: 380px;
+    right: 12px;
+  }
+}
+
+/* Touch device tweaks regardless of width — bigger tap targets */
+@media (hover: none) and (pointer: coarse) {
+  button,
+  .button,
+  .panel-action {
+    min-height: 36px;
+  }
+  .rei-chat-msg {
+    padding: 7px 10px;
+  }
+}
+
