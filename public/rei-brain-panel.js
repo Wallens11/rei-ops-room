@@ -6,13 +6,16 @@
  * Self-contained, no external deps.
  */
 
-const POLL_MS = 30_000;
+const POLL_MS = 10_000;
 
 const costSummaryEl     = document.getElementById("brain-cost-summary");
 const costTotalEl       = document.getElementById("brain-cost-total");
 const memorySearchEl    = document.getElementById("brain-memory-search");
 const memoryListEl      = document.getElementById("brain-memory-list");
 const memoryCountEl     = document.getElementById("brain-memory-count");
+const moodBadgeEl       = document.getElementById("brain-mood-badge");
+const moodTaglineEl     = document.getElementById("brain-mood-tagline");
+const thoughtsListEl    = document.getElementById("brain-thoughts-list");
 
 const TYPE_LABEL = {
   fact:     { icon: "📌", color: "#65e4ff" },
@@ -93,8 +96,80 @@ async function pollCosts() {
   } catch {}
 }
 
+const PHASE_COLOR = {
+  start:   "#65e4ff",
+  plan:    "#b8a2ff",
+  explore: "#a8c8ff",
+  edit:    "#ffcc66",
+  verify:  "#7cffba",
+  memory:  "#b8a2ff",
+  summary: "#65e4ff",
+  info:    "#8fa8c6",
+  error:   "#ff907c"
+};
+
+function renderThoughts(entries, phaseIcons = {}) {
+  if (!thoughtsListEl) return;
+  if (!entries || entries.length === 0) {
+    thoughtsListEl.innerHTML = '<span style="font-size:11px;opacity:.5;">Rei hasn’t said anything yet.</span>';
+    return;
+  }
+  thoughtsListEl.innerHTML = entries.slice().reverse().map((e) => {
+    const icon = e.icon || phaseIcons[e.phase] || "•";
+    const color = PHASE_COLOR[e.phase] || "#8fa8c6";
+    const ref = e.issueRef ? `<span style="opacity:.5;margin-left:6px;">${escapeHtml(e.issueRef)}</span>` : "";
+    return `
+      <div style="padding:5px 0;border-bottom:1px solid rgba(255,255,255,0.06);font-size:11px;line-height:1.4;">
+        <span style="color:${color};margin-right:5px;">${icon}</span>${escapeHtml(e.text)}${ref}
+        <div style="font-size:9px;opacity:.45;margin-top:2px;">${timeAgo(e.timestamp)} · ${e.phase}</div>
+      </div>`;
+  }).join("");
+}
+
+async function pollThoughts() {
+  try {
+    const res = await fetch("/api/rei/narration?limit=8");
+    if (!res.ok) return;
+    const data = await res.json();
+    renderThoughts(data.entries || [], data.phaseIcons || {});
+  } catch {}
+}
+
+let lastMoodSeen = null;
+async function pollPersonality() {
+  try {
+    const res = await fetch("/api/rei/personality");
+    if (!res.ok) return;
+    const p = await res.json();
+    const icon = p.voice?.icon || "•";
+    const color = p.voice?.color || "#edf3ff";
+    if (moodBadgeEl) {
+      moodBadgeEl.innerHTML = `<span style="color:${color};">${icon}</span>&nbsp;${p.mood}`;
+      moodBadgeEl.style.color = color;
+    }
+    if (moodTaglineEl) {
+      moodTaglineEl.textContent = p.tagline || p.voice?.tagline || "";
+    }
+    // Expose on window for the canvas day/night + animation density
+    if (typeof window !== "undefined") {
+      window.reiPersonality = p;
+      // Trigger a one-off thought puff burst when mood shifts to playful
+      if (p.mood !== lastMoodSeen && p.mood === "playful" && typeof window.reiSpawnBurst === "function") {
+        // Burst near a default position; canvas chooses actor when available
+        window.reiSpawnBurst("thought", 320, 200, 4);
+      }
+      lastMoodSeen = p.mood;
+    }
+  } catch {}
+}
+
 export async function pollRei() {
-  await Promise.all([pollCosts(), searchMemory(memorySearchEl?.value || "")]);
+  await Promise.all([
+    pollCosts(),
+    searchMemory(memorySearchEl?.value || ""),
+    pollThoughts(),
+    pollPersonality()
+  ]);
 }
 
 if (memorySearchEl) {

@@ -26,5 +26,6 @@ rei.config.json
 .execute-artifacts.json
 .rei-memory/
 .rei-costs.jsonl
+.rei-narration.jsonl
 demo-frames/
 public/demo.gif

@@ -36,6 +36,7 @@ import { getLearningEntries, recordRunInsight } from "./execute-learning.mjs";
 import { extractMemoryFromRun } from "./rei-memory.mjs";
 import { parseTokenUsage, recordRunCost } from "./rei-cost-tracker.mjs";
 import { runSelfReview, formatSelfReview } from "./rei-self-review.mjs";
+import { narrate } from "./rei-narration.mjs";
 import { clearSessionPin, readSessionPin, writeSessionPin } from "./execute-sessions.mjs";
 import { injectSkills } from "./inject-skills.mjs";
 import { scanRunArtifacts } from "./execute-artifacts.mjs";
@@ -716,6 +717,12 @@ export async function executeNextIssue({
     });
   }
 
+  await narrate({
+    text: `Starting #${preview.target.number} — "${(preview.issue?.title || "untitled").slice(0, 80)}". Picking ${initialRuntimeLabel}.`,
+    phase: "start",
+    issueRef: `#${preview.target.number}`
+  });
+
   if (runtimePlan.length === 0) {
     const detail = `No configured runtime is available for execute issue #${preview.target.number}.`;
 
@@ -795,6 +802,14 @@ export async function executeNextIssue({
     const attemptRunDir = path.join(runDir, `attempt-${String(index + 1).padStart(2, "0")}-${runtimeId}`);
     // Hanya pakai session pin untuk attempt pertama dengan claude-code
     const useSessionId = index === 0 && runtimeId === "claude-code" ? pinnedSessionId : null;
+
+    await narrate({
+      text: index === 0
+        ? `Running on ${runtimeLabel}${useSessionId ? " (resuming previous session)" : ""}.`
+        : `Switching to ${runtimeLabel} after the previous runtime tapped out.`,
+      phase: index === 0 ? "plan" : "info",
+      issueRef: `#${preview.target.number}`
+    });
 
     mission = await runMissionImpl({
       runtimeId,
@@ -894,6 +909,11 @@ export async function executeNextIssue({
   // human eyeballs it before the issue auto-closes.
   let selfReview = null;
   if (outcome === "completed") {
+    await narrate({
+      text: `Mission exit clean. Running self-review on ${newChanges.length} change${newChanges.length === 1 ? "" : "s"}.`,
+      phase: "verify",
+      issueRef: `#${preview.target.number}`
+    });
     selfReview = await runSelfReview({
       cwd,
       changedFiles: newChanges,
@@ -901,7 +921,30 @@ export async function executeNextIssue({
     }).catch(() => null);
     if (selfReview && !selfReview.ok) {
       outcome = "review_needed";
+      await narrate({
+        text: `Self-review flagged ${selfReview.issues.length} issue${selfReview.issues.length === 1 ? "" : "s"} — punting to human review.`,
+        phase: "error",
+        issueRef: `#${preview.target.number}`
+      });
+    } else if (selfReview && selfReview.ok) {
+      await narrate({
+        text: `Self-review passed. ${selfReview.notes[0] || "Clean diff."}`,
+        phase: "verify",
+        issueRef: `#${preview.target.number}`
+      });
     }
+  } else if (outcome === "review_needed") {
+    await narrate({
+      text: `Mission exit clean but no meaningful changes landed — flagging for review.`,
+      phase: "info",
+      issueRef: `#${preview.target.number}`
+    });
+  } else if (outcome === "failed") {
+    await narrate({
+      text: `Run did not complete cleanly. Will requeue or retry per policy.`,
+      phase: "error",
+      issueRef: `#${preview.target.number}`
+    });
   }
 
   // Scan for HTML artifacts generated during this run (visual-explainer skill output)
@@ -923,12 +966,19 @@ export async function executeNextIssue({
   }).catch(() => {});
 
   // Extract durable memory from agent's output
-  await extractMemoryFromRun({
+  const extracted = await extractMemoryFromRun({
     lastMessage,
     outcome: outcome === "completed" ? "completed" : "failed",
     issueNumber: preview.target.number,
     changedFiles: newChanges
-  }).catch(() => {});
+  }).catch(() => []);
+  if (Array.isArray(extracted) && extracted.length > 0) {
+    await narrate({
+      text: `Filed ${extracted.length} new memor${extracted.length === 1 ? "y" : "ies"} from this run.`,
+      phase: "memory",
+      issueRef: `#${preview.target.number}`
+    });
+  }
 
   // Record run cost (parse token usage from agent output)
   const usage = parseTokenUsage(`${mission.stdoutText || ""}\n${mission.stderrText || ""}`);

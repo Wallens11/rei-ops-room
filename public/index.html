@@ -313,16 +313,20 @@
         <article class="panel">
           <p class="panel-label">Rei's Brain</p>
           <div class="item-head">
-            <strong>Memory + cost</strong>
+            <strong id="brain-mood-badge" style="text-transform:capitalize;">— mood</strong>
             <span id="brain-memory-count" class="item-chip" style="font-variant-numeric:tabular-nums;">0</span>
           </div>
-          <p id="brain-cost-summary" class="dim mono" style="font-size:11px;margin-top:2px;">no runs yet</p>
+          <p id="brain-mood-tagline" class="dim" style="font-size:11px;margin-top:2px;font-style:italic;">…</p>
+          <p id="brain-cost-summary" class="dim mono" style="font-size:11px;margin-top:6px;">no runs yet</p>
           <p id="brain-cost-total" class="dim mono" style="font-size:10px;opacity:.55;margin-top:1px;">all-time: $0.000</p>
+          <div class="mini-divider"></div>
+          <p class="panel-label" style="margin-bottom:4px;">Rei's thoughts</p>
+          <div id="brain-thoughts-list" style="max-height:180px;overflow-y:auto;"></div>
           <div class="mini-divider"></div>
           <input id="brain-memory-search" type="text"
                  placeholder="Search Rei's memory..."
                  style="width:100%;background:rgba(8,20,34,0.5);border:1px solid rgba(255,255,255,0.08);color:#edf3ff;padding:5px 8px;font-size:11px;border-radius:4px;font-family:'IBM Plex Mono',monospace;outline:none;" />
-          <div id="brain-memory-list" style="margin-top:8px;max-height:260px;overflow-y:auto;"></div>
+          <div id="brain-memory-list" style="margin-top:8px;max-height:240px;overflow-y:auto;"></div>
         </article>
 
         <article class="panel">

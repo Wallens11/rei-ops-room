@@ -13,7 +13,7 @@ function makeThread(overrides = {}) {
     repoName: "codex-pixel-agent",
     gitBranch: "codex/rei-ops-room",
     updatedAt: 1710000000,
-    updatedAgo: "2 mnt lalu",
+    updatedAgo: "2m ago",
     updatedAgeSeconds: 120,
     ...overrides
   };
@@ -24,7 +24,7 @@ function makeActivity(overrides = {}) {
     summary: "Parsing runtime logs and mapping active repo session",
     source: "tool",
     lastLogAgeSeconds: 12,
-    lastLogAgo: "12 dtk lalu",
+    lastLogAgo: "12s ago",
     ...overrides
   };
 }
@@ -82,14 +82,14 @@ test("planning huddle is used when a new request still has low focus confidence"
     thread: makeThread({
       title: "Need a plan for this room refactor",
       updatedAgeSeconds: 18,
-      updatedAgo: "18 dtk lalu"
+      updatedAgo: "18s ago"
     }),
     repoContext: null,
     recentThreads: [],
     activity: makeActivity({
       summary: "Sketch scope and outline next steps",
       lastLogAgeSeconds: 18,
-      lastLogAgo: "18 dtk lalu"
+      lastLogAgo: "18s ago"
     }),
     logs: [{ ts: 1710000000, message: "Need plan before implementation" }]
   });
@@ -113,14 +113,14 @@ test("planning huddle keeps the room staged in lab while exposing the next assig
     thread: makeThread({
       title: "Need a plan for docs review labels before implementation",
       updatedAgeSeconds: 12,
-      updatedAgo: "12 dtk lalu"
+      updatedAgo: "12s ago"
     }),
     repoContext: null,
     recentThreads: [],
     activity: makeActivity({
       summary: "Brief the squad and outline review labels before implementation",
       lastLogAgeSeconds: 12,
-      lastLogAgo: "12 dtk lalu"
+      lastLogAgo: "12s ago"
     }),
     logs: [{ ts: 1710000000, message: "Need plan for review labels before implementation" }]
   });
@@ -158,14 +158,14 @@ test("active execution evidence breaks out of planning huddle even on a fresh re
     thread: makeThread({
       title: "Need a plan for backend runtime state fix",
       updatedAgeSeconds: 14,
-      updatedAgo: "14 dtk lalu"
+      updatedAgo: "14s ago"
     }),
     repoContext: null,
     recentThreads: [],
     activity: makeActivity({
       summary: "Apply patch to room-state and run npm test for the backend runtime fix",
       lastLogAgeSeconds: 4,
-      lastLogAgo: "4 dtk lalu"
+      lastLogAgo: "4s ago"
     }),
     logs: [
       { ts: 1710000000, message: "ToolCall: functions.apply_patch" },
@@ -188,7 +188,7 @@ test("live runtime work outweighs a stale thread opener when choosing the active
     thread: makeThread({
       title: "Need docs review and issue cleanup for the room",
       updatedAgeSeconds: 35,
-      updatedAgo: "35 dtk lalu"
+      updatedAgo: "35s ago"
     }),
     repoContext: null,
     recentThreads: [],
@@ -196,7 +196,7 @@ test("live runtime work outweighs a stale thread opener when choosing the active
       summary: "Menjalankan: apply_patch public/room-state.js dan npm test untuk backend state fix",
       source: "tool",
       lastLogAgeSeconds: 6,
-      lastLogAgo: "6 dtk lalu"
+      lastLogAgo: "6s ago"
     }),
     logs: [
       { ts: 1710000000, message: 'ToolCall: functions.exec_command {"cmd":"npm test"}' },
@@ -221,7 +221,7 @@ test("workspace-root runtime activity does not inherit a stale review-heavy repo
       cwdDisplay: "workspace root",
       repoName: "workspace",
       updatedAgeSeconds: 20,
-      updatedAgo: "20 dtk lalu"
+      updatedAgo: "20s ago"
     }),
     repoContext: makeThread({
       id: "thread_old_review_repo",
@@ -231,7 +231,7 @@ test("workspace-root runtime activity does not inherit a stale review-heavy repo
       cwdDisplay: "fun-base",
       repoName: "fun-base",
       updatedAgeSeconds: 4 * 60,
-      updatedAgo: "4 mnt lalu"
+      updatedAgo: "4m ago"
     }),
     recentThreads: [],
     activity: makeActivity({
@@ -239,7 +239,7 @@ test("workspace-root runtime activity does not inherit a stale review-heavy repo
         "session_loop{thread_id=019cfae1-df1f-73b2-a96a-7439e0c1576d}:submission_dispatch{otel...}",
       source: "codex_core::stream_events_utils",
       lastLogAgeSeconds: 4,
-      lastLogAgo: "4 dtk lalu"
+      lastLogAgo: "4s ago"
     }),
     logs: [
       {
@@ -263,7 +263,7 @@ test("generic runtime commands like npm start still pull the room into execution
     thread: makeThread({
       title: "Need docs review and issue cleanup for the room",
       updatedAgeSeconds: 18,
-      updatedAgo: "18 dtk lalu"
+      updatedAgo: "18s ago"
     }),
     repoContext: null,
     recentThreads: [],
@@ -271,7 +271,7 @@ test("generic runtime commands like npm start still pull the room into execution
       summary: "Menjalankan: npm start",
       source: "tool",
       lastLogAgeSeconds: 5,
-      lastLogAgo: "5 dtk lalu"
+      lastLogAgo: "5s ago"
     }),
     logs: [
       { ts: 1710000000, message: 'Received message {"type":"response.function_call_arguments.done","arguments":"{\\"cmd\\":\\"npm start\\"}"}' },
@@ -421,14 +421,14 @@ test("generic result wording does not synthesize a returned-result event without
     thread: makeThread({
       title: "Review final room wording and keep the layout tidy",
       updatedAgeSeconds: 160,
-      updatedAgo: "2 mnt lalu"
+      updatedAgo: "2m ago"
     }),
     repoContext: null,
     recentThreads: [],
     activity: makeActivity({
       summary: "Review notes are done and the room is settling down",
       lastLogAgeSeconds: 95,
-      lastLogAgo: "1 mnt lalu"
+      lastLogAgo: "1m ago"
     }),
     logs: [{ ts: 1710000000, message: "Done checking room wording" }]
   });
@@ -589,14 +589,14 @@ test("fresh lane completion stays in a stable result-return review wrap before c
       title: "Wrap up multi-lane room stabilization",
       updatedAt: 1710000060,
       updatedAgeSeconds: 20,
-      updatedAgo: "20 dtk lalu"
+      updatedAgo: "20s ago"
     }),
     repoContext: null,
     recentThreads: [],
     activity: makeActivity({
       summary: "Worker results returned and review wrap is starting",
       lastLogAgeSeconds: 20,
-      lastLogAgo: "20 dtk lalu"
+      lastLogAgo: "20s ago"
     }),
     logs: [{ ts: 1710000060, message: "Result returned from worker lane" }],
     agentJobs: [
@@ -640,14 +640,14 @@ test("review wrap regroups workers briefly before the room settles into cooldown
       title: "Wrap up multi-lane room stabilization",
       updatedAt: 1710000100,
       updatedAgeSeconds: 55,
-      updatedAgo: "55 dtk lalu"
+      updatedAgo: "55s ago"
     }),
     repoContext: null,
     recentThreads: [],
     activity: makeActivity({
       summary: "Review wrap is consolidating returned lanes",
       lastLogAgeSeconds: 55,
-      lastLogAgo: "55 dtk lalu"
+      lastLogAgo: "55s ago"
     }),
     logs: [{ ts: 1710000100, message: "Review wrap is consolidating returned lanes" }],
     agentJobs: [
@@ -796,7 +796,7 @@ test("workspace state keeps one active room and groups other repos into sleeping
       repoName: "budget-app",
       cwdDisplay: "project/budget-app",
       title: "Budget app OCR issue",
-      updatedAgo: "6 mnt lalu",
+      updatedAgo: "6m ago",
       updatedAgeSeconds: 360
     },
     recentThreads: [
@@ -805,7 +805,7 @@ test("workspace state keeps one active room and groups other repos into sleeping
         repoName: "rei-ops-room",
         cwdDisplay: "rei-ops-room",
         title: "Refactor active room dock behavior",
-        updatedAgo: "12 dtk lalu",
+        updatedAgo: "12s ago",
         updatedAgeSeconds: 12
       }),
       makeThread({
@@ -813,7 +813,7 @@ test("workspace state keeps one active room and groups other repos into sleeping
         repoName: "rei-ops-room",
         cwdDisplay: "rei-ops-room",
         title: "Fix room overflow follow-up",
-        updatedAgo: "4 mnt lalu",
+        updatedAgo: "4m ago",
         updatedAgeSeconds: 240
       }),
       makeThread({
@@ -821,7 +821,7 @@ test("workspace state keeps one active room and groups other repos into sleeping
         repoName: "budget-app",
         cwdDisplay: "project/budget-app",
         title: "Budget app OCR issue",
-        updatedAgo: "6 mnt lalu",
+        updatedAgo: "6m ago",
         updatedAgeSeconds: 360
       }),
       makeThread({
@@ -829,7 +829,7 @@ test("workspace state keeps one active room and groups other repos into sleeping
         repoName: "pids-onprem-dashboard",
         cwdDisplay: "project/pids-onprem-dashboard",
         title: "Dashboard polish and release prep",
-        updatedAgo: "19 mnt lalu",
+        updatedAgo: "19m ago",
         updatedAgeSeconds: 1140
       })
     ],
@@ -858,7 +858,7 @@ test("workspace dock falls back to Workspace Hub when the room is dormant and th
       repoName: "fun-base",
       cwdDisplay: "fun-base",
       title: "Issue follow-up in fun-base",
-      updatedAgo: "2 jam lalu",
+      updatedAgo: "2h ago",
       updatedAgeSeconds: 2 * 60 * 60
     }),
     repoContext: null,
@@ -868,7 +868,7 @@ test("workspace dock falls back to Workspace Hub when the room is dormant and th
         repoName: "fun-base",
         cwdDisplay: "fun-base",
         title: "Issue follow-up in fun-base",
-        updatedAgo: "2 jam lalu",
+        updatedAgo: "2h ago",
         updatedAgeSeconds: 2 * 60 * 60
       }),
       makeThread({
@@ -877,7 +877,7 @@ test("workspace dock falls back to Workspace Hub when the room is dormant and th
         cwd: "/Users/funtoco/workSpace",
         cwdDisplay: "workspace root",
         title: "General workspace chat",
-        updatedAgo: "40 dtk lalu",
+        updatedAgo: "40s ago",
         updatedAgeSeconds: 40
       }),
       makeThread({
@@ -885,7 +885,7 @@ test("workspace dock falls back to Workspace Hub when the room is dormant and th
         repoName: "budget-app",
         cwdDisplay: "budget-app",
         title: "Budget OCR follow-up",
-        updatedAgo: "8 mnt lalu",
+        updatedAgo: "8m ago",
         updatedAgeSeconds: 8 * 60
       })
     ],
@@ -893,7 +893,7 @@ test("workspace dock falls back to Workspace Hub when the room is dormant and th
       summary: "Standby di room aktif",
       source: "thread",
       lastLogAgeSeconds: 26 * 60,
-      lastLogAgo: "26 mnt lalu"
+      lastLogAgo: "26m ago"
     }),
     logs: []
   });
@@ -979,7 +979,7 @@ test("current objective summarizes the active goal instead of echoing the raw th
     activity: makeActivity({
       summary: "Sketch room behavior and define the first pixel agent flow",
       lastLogAgeSeconds: 14,
-      lastLogAgo: "14 dtk lalu"
+      lastLogAgo: "14s ago"
     }),
     logs: [{ ts: 1710000000, message: "Planning pixel room behavior" }]
   });
@@ -999,7 +999,7 @@ test("workspace and objective cards use cleaned display titles when codex stores
       cwdDisplay: "workspace root",
       repoName: "workSpace",
       updatedAgeSeconds: 4,
-      updatedAgo: "4 dtk lalu"
+      updatedAgo: "4s ago"
     }),
     repoContext: makeThread({
       id: "thread_fun_base_latest",
@@ -1009,7 +1009,7 @@ test("workspace and objective cards use cleaned display titles when codex stores
       cwdDisplay: "fun-base",
       repoName: "fun-base",
       updatedAgeSeconds: 3600,
-      updatedAgo: "1 jam lalu"
+      updatedAgo: "1h ago"
     }),
     recentThreads: [
       makeThread({
@@ -1019,7 +1019,7 @@ test("workspace and objective cards use cleaned display titles when codex stores
         cwdDisplay: "workspace root",
         repoName: "workSpace",
         updatedAgeSeconds: 4,
-        updatedAgo: "4 dtk lalu"
+        updatedAgo: "4s ago"
       }),
       makeThread({
         id: "thread_fun_base_latest",
@@ -1029,14 +1029,14 @@ test("workspace and objective cards use cleaned display titles when codex stores
         cwdDisplay: "fun-base",
         repoName: "fun-base",
         updatedAgeSeconds: 3600,
-        updatedAgo: "1 jam lalu"
+        updatedAgo: "1h ago"
       })
     ],
     activity: makeActivity({
       summary: "Standby di room aktif",
       source: "thread",
       lastLogAgeSeconds: 45 * 60,
-      lastLogAgo: "45 mnt lalu"
+      lastLogAgo: "45m ago"
     }),
     logs: []
   });
@@ -1059,7 +1059,7 @@ test("runtime trail decays a finished command into last finished instead of keep
     activity: makeActivity({
       summary: "Menjalankan: ipconfig getifaddr en1",
       lastLogAgeSeconds: 26,
-      lastLogAgo: "26 dtk lalu"
+      lastLogAgo: "26s ago"
     }),
     logs: [
       {
@@ -1093,7 +1093,7 @@ test("verification bursts keep the live task anchored to the underlying implemen
       summary: "Menjalankan: npm test",
       source: "tool",
       lastLogAgeSeconds: 4,
-      lastLogAgo: "4 dtk lalu"
+      lastLogAgo: "4s ago"
     }),
     logs: [
       {
@@ -1130,7 +1130,7 @@ test("observer status checks do not replace the current objective during short n
       summary: "Menjalankan: curl -s http://localhost:4317/api/status | jq .room.phase",
       source: "tool",
       lastLogAgeSeconds: 6,
-      lastLogAgo: "6 dtk lalu"
+      lastLogAgo: "6s ago"
     }),
     logs: [
       {
@@ -1168,7 +1168,7 @@ test("generic verification commands do not yank focus away from the clearer desk
       summary: "Menjalankan: npm test",
       source: "tool",
       lastLogAgeSeconds: 5,
-      lastLogAgo: "5 dtk lalu"
+      lastLogAgo: "5s ago"
     }),
     logs: [
       {
@@ -1207,7 +1207,7 @@ test("pure self-QA bursts fall back to the objective headline when no clearer ta
       summary: "Menjalankan: npm test",
       source: "tool",
       lastLogAgeSeconds: 4,
-      lastLogAgo: "4 dtk lalu"
+      lastLogAgo: "4s ago"
     }),
     logs: [
       {
@@ -1231,7 +1231,7 @@ test("runtime trail ignores low-level transport noise when there is no meaningfu
       cwdDisplay: "workspace root",
       repoName: "workSpace",
       updatedAgeSeconds: 0,
-      updatedAgo: "baru saja"
+      updatedAgo: "just now"
     }),
     repoContext: makeThread({
       id: "thread_repo_context",
@@ -1246,7 +1246,7 @@ test("runtime trail ignores low-level transport noise when there is no meaningfu
       source: "thread",
       kind: "thread",
       lastLogAgeSeconds: 0,
-      lastLogAgo: "baru saja"
+      lastLogAgo: "just now"
     },
     logs: [
       {
@@ -1271,7 +1271,7 @@ test("cooldown rest mode returns the room to standby with a visible break state"
     thread: makeThread({
       title: "Refactor room visuals",
       updatedAgeSeconds: 320,
-      updatedAgo: "5 mnt lalu"
+      updatedAgo: "5m ago"
     }),
     repoContext: null,
     recentThreads: [],
@@ -1280,7 +1280,7 @@ test("cooldown rest mode returns the room to standby with a visible break state"
       source: "presence",
       kind: "rest",
       lastLogAgeSeconds: 320,
-      lastLogAgo: "5 mnt lalu"
+      lastLogAgo: "5m ago"
     }),
     logs: []
   });
@@ -1308,7 +1308,7 @@ test("review wrap only opens the rest corner after the room settles", () => {
     activity: makeActivity({
       summary: "Review returned results, summarize labels, and prepare final wrap",
       lastLogAgeSeconds: 12,
-      lastLogAgo: "12 dtk lalu"
+      lastLogAgo: "12s ago"
     }),
     logs: [
       { ts: 1710000000, message: "ToolCall: functions.wait_agent" },
@@ -1323,14 +1323,14 @@ test("review wrap only opens the rest corner after the room settles", () => {
     thread: makeThread({
       title: "Review final copy and wrap the room state refactor",
       updatedAgeSeconds: 220,
-      updatedAgo: "3 mnt lalu"
+      updatedAgo: "3m ago"
     }),
     repoContext: null,
     recentThreads: [],
     activity: makeActivity({
       summary: "Results wrapped and room is settling down",
       lastLogAgeSeconds: 130,
-      lastLogAgo: "2 mnt lalu"
+      lastLogAgo: "2m ago"
     }),
     logs: [
       { ts: 1710000000, message: "Result returned from review lane" },
@@ -1348,7 +1348,7 @@ test("standby distributes workers across home zones instead of parking everyone 
     thread: makeThread({
       title: "Room is quiet while waiting for the next request",
       updatedAgeSeconds: 1800,
-      updatedAgo: "30 mnt lalu"
+      updatedAgo: "30m ago"
     }),
     repoContext: null,
     recentThreads: [],
@@ -1356,7 +1356,7 @@ test("standby distributes workers across home zones instead of parking everyone 
       summary: "Waiting for the next request and watching the room",
       source: "thread",
       lastLogAgeSeconds: 1800,
-      lastLogAgo: "30 mnt lalu"
+      lastLogAgo: "30m ago"
     }),
     logs: []
   });
@@ -1477,14 +1477,14 @@ test("cooldown cleans active review/request visuals into passive aftermath", () 
     thread: makeThread({
       title: "Review final copy and wrap the room state refactor",
       updatedAgeSeconds: 180,
-      updatedAgo: "3 mnt lalu"
+      updatedAgo: "3m ago"
     }),
     repoContext: null,
     recentThreads: [],
     activity: makeActivity({
       summary: "Review returned results and the room is cooling down",
       lastLogAgeSeconds: 95,
-      lastLogAgo: "1 mnt lalu"
+      lastLogAgo: "1m ago"
     }),
     logs: [
       { ts: 1710000000, message: "ToolCall: functions.wait_agent" },

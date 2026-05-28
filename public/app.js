@@ -2717,6 +2717,21 @@ function drawRoomBase(tone = "calm") {
 
   // Floating dust particles (ambient life)
   drawDustParticles(renderState.frame, tone);
+
+  // Mood-tinted vignette — very faint colour wash that biases the whole scene.
+  // Driven by /api/rei/personality (refreshed every 10s in the brain panel).
+  const moodTint = {
+    frustrated: "rgba(255, 60, 40, 0.025)",
+    tired:      "rgba(110, 140, 200, 0.020)",
+    playful:    "rgba(80, 255, 160, 0.022)",
+    thoughtful: "rgba(140, 170, 240, 0.018)",
+    curious:    "rgba(180, 140, 255, 0.018)",
+    focused:    null  // no extra tint — already neutral
+  }[(typeof window !== "undefined" && window.reiPersonality?.mood) || "focused"];
+  if (moodTint) {
+    context.fillStyle = moodTint;
+    context.fillRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+  }
 }
 
 function drawRouteMarkers(points, color, { intensity = "medium", live = false } = {}) {
@@ -3916,20 +3931,50 @@ function drawScene() {
     if (agent) maybeSpawnActivityParticles(actor, agent);
   }
 
-  // Micro-pose scheduling — every ~10s, give an idle/seated actor a moment of life
+  // Micro-pose scheduling — mood-aware moment-of-life triggers.
+  // Mood (from /api/rei/personality, refreshed every 10s in the brain panel)
+  // biases what actors do during slow stretches:
+  //   tired      → more yawns, fewer coffees
+  //   playful    → frequent thought puffs near the lead
+  //   frustrated → occasional spark pings around the active actor
+  //   focused    → minimal interruptions (default)
+  const mood = (typeof window !== "undefined" && window.reiPersonality?.mood) || "focused";
+
   if (renderState.frame % 300 === 0) {
     for (const actor of renderState.actors) {
-      if (actor.microPose) continue; // already in a micro-pose
+      if (actor.microPose) continue;
       const agent = renderState.data?.agents?.find?.((a) => a.id === actor.id);
       if (!agent) continue;
       const idle = !agent.activity || agent.activity === "idle";
       const seatedBase = ["sit", "type", "read"].includes(actor.pose) ||
         actor.motionState === "SEATED" || actor.motionState === "REST";
       if (!seatedBase) continue;
-      // 30% chance each cycle (rate-limit by only checking every 300 frames)
-      if (Math.random() < (idle ? 0.4 : 0.12)) {
-        actor.microPose = Math.random() < 0.55 ? "coffee" : "yawn";
+
+      // Base trigger probability biased by mood
+      let baseProb = idle ? 0.4 : 0.12;
+      if (mood === "tired") baseProb *= 1.4;
+      else if (mood === "playful") baseProb *= 0.8;
+      else if (mood === "focused") baseProb *= 0.7;
+
+      if (Math.random() < baseProb) {
+        // Coffee vs yawn ratio shifts with mood
+        const yawnBias = mood === "tired" ? 0.75 : mood === "thoughtful" ? 0.3 : 0.45;
+        actor.microPose = Math.random() < yawnBias ? "yawn" : "coffee";
         actor.microPoseUntil = renderState.frame + (60 + Math.floor(Math.random() * 60));
+      }
+    }
+  }
+
+  // Mood-driven ambient particles (very rate-limited)
+  if (renderState.frame % 240 === 0) {
+    const lead = renderState.actors?.find?.((a) => a.id === "lead") || renderState.actors?.[0];
+    if (lead) {
+      if (mood === "playful" && Math.random() < 0.5) {
+        spawnBurst("thought", lead.x, lead.y - 56, 3);
+      } else if (mood === "frustrated" && Math.random() < 0.3) {
+        spawnBurst("sparks", lead.x, lead.y - 16, 4);
+      } else if (mood === "thoughtful" && Math.random() < 0.4) {
+        spawnBurst("thought", lead.x, lead.y - 56, 2);
       }
     }
   }

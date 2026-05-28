@@ -2442,24 +2442,24 @@ function formatRelativeAge(secondsAgo) {
   }
 
   if (secondsAgo < 5) {
-    return "baru saja";
+    return "just now";
   }
 
   if (secondsAgo < 60) {
-    return `${Math.floor(secondsAgo)} dtk lalu`;
+    return `${Math.floor(secondsAgo)}s ago`;
   }
 
   const minutes = Math.floor(secondsAgo / 60);
   if (minutes < 60) {
-    return `${minutes} mnt lalu`;
+    return `${minutes}m ago`;
   }
 
   const hours = Math.floor(minutes / 60);
   if (hours < 24) {
-    return `${hours} jam lalu`;
+    return `${hours}h ago`;
   }
 
-  return `${Math.floor(hours / 24)} hari lalu`;
+  return `${Math.floor(hours / 24)}d ago`;
 }
 
 function buildRuntimeState(taskIntelligence, room, activity, logs = [], nowSeconds = null) {

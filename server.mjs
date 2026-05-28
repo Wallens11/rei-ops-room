@@ -760,25 +760,25 @@ function repoNameFromCwd(cwd) {
 
 function relativeTime(secondsAgo) {
   if (secondsAgo < 5) {
-    return "baru saja";
+    return "just now";
   }
 
   if (secondsAgo < 60) {
-    return `${Math.floor(secondsAgo)} dtk lalu`;
+    return `${Math.floor(secondsAgo)}s ago`;
   }
 
   const minutes = Math.floor(secondsAgo / 60);
   if (minutes < 60) {
-    return `${minutes} mnt lalu`;
+    return `${minutes}m ago`;
   }
 
   const hours = Math.floor(minutes / 60);
   if (hours < 24) {
-    return `${hours} jam lalu`;
+    return `${hours}h ago`;
   }
 
   const days = Math.floor(hours / 24);
-  return `${days} hari lalu`;
+  return `${days}d ago`;
 }
 
 function decodeEmbeddedString(raw) {
@@ -2237,6 +2237,67 @@ export function createServer({
       } catch (error) {
         writeJson(response, 400, {
           error: "Failed to record memory",
+          detail: error instanceof Error ? error.message : String(error)
+        });
+      }
+      return;
+    }
+
+    // ─── Personality ──────────────────────────────────────────────────────────
+    // GET /api/rei/personality — mood + energy + focus + confidence
+    if (url.pathname === "/api/rei/personality" && request.method === "GET") {
+      try {
+        const { getPersonality, moodTagline } = await import("./tools/rei-personality.mjs");
+        const profile = await getPersonality();
+        writeJson(response, 200, {
+          ...profile,
+          tagline: moodTagline(profile)
+        });
+      } catch (error) {
+        writeJson(response, 500, {
+          error: "Failed to compute personality",
+          detail: error instanceof Error ? error.message : String(error)
+        });
+      }
+      return;
+    }
+
+    // GET /api/rei/narration?limit=12&after=ISO — tail of Rei's thoughts log
+    if (url.pathname === "/api/rei/narration" && request.method === "GET") {
+      try {
+        const { readNarration, PHASE_ICONS } = await import("./tools/rei-narration.mjs");
+        const limit = Math.max(1, Math.min(50, Number(url.searchParams.get("limit") || 12)));
+        const after = url.searchParams.get("after") || null;
+        const entries = await readNarration({ limit, after });
+        writeJson(response, 200, { entries, phaseIcons: PHASE_ICONS });
+      } catch (error) {
+        writeJson(response, 500, {
+          error: "Failed to read narration",
+          detail: error instanceof Error ? error.message : String(error)
+        });
+      }
+      return;
+    }
+
+    // POST /api/rei/narration — manually write a thought (debug or chat seed)
+    if (url.pathname === "/api/rei/narration" && request.method === "POST") {
+      try {
+        const body = await readJsonRequestBody(request);
+        const { narrate } = await import("./tools/rei-narration.mjs");
+        const entry = await narrate({
+          text: body.text,
+          phase: body.phase || "info",
+          issueRef: body.issueRef || null,
+          icon: body.icon || null
+        });
+        if (!entry) {
+          writeJson(response, 400, { error: "text is required" });
+          return;
+        }
+        writeJson(response, 201, { entry });
+      } catch (error) {
+        writeJson(response, 400, {
+          error: "Failed to write narration",
           detail: error instanceof Error ? error.message : String(error)
         });
       }
