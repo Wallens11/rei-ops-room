@@ -361,6 +361,20 @@
       </section>
     </main>
 
+    <!-- ── Floating Rei chat panel (bottom-right) ───────────────────────── -->
+    <aside id="rei-chat-panel">
+      <div id="rei-chat-header" role="button" tabindex="0">
+        <strong>💬 chat with rei <span id="rei-chat-unread" hidden></span></strong>
+        <span id="rei-chat-toggle" style="opacity:.55;">collapse</span>
+      </div>
+      <div id="rei-chat-list"></div>
+      <form id="rei-chat-form" autocomplete="off">
+        <textarea id="rei-chat-input" rows="1" placeholder="say something to rei — try /help" maxlength="1500"></textarea>
+        <div id="rei-chat-hint">enter to send · shift+enter for newline · /help for commands</div>
+      </form>
+    </aside>
+
     <script type="module" src="/app.js"></script>
+    <script type="module" src="/rei-chat-panel.js"></script>
   </body>
 </html>

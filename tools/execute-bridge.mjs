@@ -20,6 +20,11 @@ import {
   readLearningLog
 } from "./execute-learning.mjs";
 import { formatMemoryContext, searchMemory } from "./rei-memory.mjs";
+import {
+  advanceChatCursor,
+  formatChatInjection,
+  readUnconsumedUserMessages
+} from "./rei-chat.mjs";
 import { createGithubRunner } from "./github-api.mjs";
 
 const execFileAsync = promisify(execFile);
@@ -505,6 +510,7 @@ export function buildDirectTaskPrompt({
   handoff = null,
   learningContext = null,
   memoryContext = null,
+  chatContext = null,
   continuity = null,
   designProfile = readRepoDesignProfile(repoCwd)
 } = {}) {
@@ -529,6 +535,7 @@ export function buildDirectTaskPrompt({
       : null,
     learningContext ? `\n${learningContext}` : null,
     memoryContext ? `\n${memoryContext}` : null,
+    chatContext ? `\n${chatContext}` : null,
     ...continuityLines,
     designGuidanceLines.length > 0 ? "" : null,
     ...designGuidanceLines,
@@ -877,6 +884,7 @@ export function buildExecutePrompt({
   handoff,
   learningContext = null,
   memoryContext = null,
+  chatContext = null,
   continuity = null,
   designProfile = readRepoDesignProfile(repoCwd),
   humanComments = []
@@ -936,6 +944,7 @@ export function buildExecutePrompt({
       : null,
     learningContext ? `\n${learningContext}` : null,
     memoryContext ? `\n${memoryContext}` : null,
+    chatContext ? `\n${chatContext}` : null,
     ...continuityLines,
     designGuidanceLines.length > 0 ? "" : null,
     ...designGuidanceLines,
@@ -1049,6 +1058,16 @@ export async function prepareExecuteAction({
   const learningEntries = await readLearningLog().catch(() => []);
   const learningContext = formatLearningContext(learningEntries, { limit: 5 });
 
+  // Operator chat messages received since the last worker iteration — these
+  // get treated as live human corrections by the agent, similar to GitHub
+  // comments but faster (no round-trip).
+  const unconsumedChat = await readUnconsumedUserMessages().catch(() => []);
+  const chatContext = formatChatInjection(unconsumedChat);
+  if (unconsumedChat.length > 0) {
+    const lastTs = unconsumedChat[unconsumedChat.length - 1]?.timestamp;
+    if (lastTs) await advanceChatCursor(lastTs).catch(() => {});
+  }
+
   // Helper: build memory context relevant to a given issue (title+body+labels)
   const buildMemoryContextFor = async (issue) => {
     if (!issue) return null;
@@ -1104,6 +1123,7 @@ export async function prepareExecuteAction({
           handoff: resolvedHandoff,
           learningContext,
           memoryContext,
+          chatContext,
           continuity: resolvedContinuity,
           designProfile,
           humanComments: extractNewHumanComments(issue?.comments || [], issue?.number)
@@ -1164,6 +1184,7 @@ export async function prepareExecuteAction({
           handoff: resolvedHandoff,
           learningContext,
           memoryContext,
+          chatContext,
           continuity: resolvedContinuity,
           designProfile,
           humanComments: extractNewHumanComments(fullIssue?.comments || [], fullIssue?.number)
@@ -1249,6 +1270,7 @@ export async function prepareExecuteAction({
     handoff: resolvedHandoff,
     learningContext,
     memoryContext,
+    chatContext,
     continuity: resolvedContinuity,
     designProfile,
     humanComments: extractNewHumanComments(issue?.comments || [], issue?.number)

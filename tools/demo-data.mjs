@@ -405,7 +405,7 @@ export function buildDemoRoomStatus() {
       kind: "coding",
       lastLogAt: Math.floor((now - 3 * 60 * 1000) / 1000),
       lastLogAtIso: minsAgo(3),
-      lastLogAgo: "3 mnt lalu",
+      lastLogAgo: "3m ago",
       lastLogAgeSeconds: 180
     },
     phase: {

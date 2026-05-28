@@ -27,5 +27,9 @@ rei.config.json
 .rei-memory/
 .rei-costs.jsonl
 .rei-narration.jsonl
+.rei-chat.jsonl
+.rei-chat-cursor.json
+.rei-chat-pause
+.rei-chat-focus
 demo-frames/
 public/demo.gif

@@ -2243,6 +2243,102 @@ export function createServer({
       return;
     }
 
+    // ─── Chat ────────────────────────────────────────────────────────────────
+    // GET /api/rei/chat?limit=&after=  — tail of the operator ↔ Rei thread
+    if (url.pathname === "/api/rei/chat" && request.method === "GET") {
+      try {
+        const { readMessages } = await import("./tools/rei-chat.mjs");
+        const limit = Math.max(1, Math.min(200, Number(url.searchParams.get("limit") || 40)));
+        const after = url.searchParams.get("after") || null;
+        const messages = await readMessages({ limit, after });
+        writeJson(response, 200, { messages });
+      } catch (error) {
+        writeJson(response, 500, {
+          error: "Failed to read chat",
+          detail: error instanceof Error ? error.message : String(error)
+        });
+      }
+      return;
+    }
+
+    // POST /api/rei/chat — send a new operator message. Handles slash commands
+    // locally and returns the resulting system/rei messages.
+    if (url.pathname === "/api/rei/chat" && request.method === "POST") {
+      try {
+        const body = await readJsonRequestBody(request);
+        const text = String(body?.text || "").trim();
+        if (!text) {
+          writeJson(response, 400, { error: "text is required" });
+          return;
+        }
+
+        const {
+          appendMessage,
+          parseSlashCommand,
+          renderSlashHelp,
+          chatFile
+        } = await import("./tools/rei-chat.mjs");
+        const { getPersonality, moodTagline } = await import("./tools/rei-personality.mjs");
+
+        const userEntry = await appendMessage({ role: "user", text });
+        const replies = [];
+
+        const slash = parseSlashCommand(text);
+        if (slash) {
+          if (!slash.valid) {
+            replies.push(await appendMessage({ role: "system", text: slash.help }));
+          } else if (slash.command === "help") {
+            replies.push(await appendMessage({ role: "system", text: renderSlashHelp() }));
+          } else if (slash.command === "clear") {
+            await fs.rm(chatFile, { force: true });
+            replies.push(await appendMessage({ role: "system", text: "Chat history cleared." }));
+          } else if (slash.command === "status") {
+            const profile = await getPersonality();
+            replies.push(await appendMessage({
+              role: "system",
+              text: `Mood: ${profile.mood} ${profile.voice.icon} — ${moodTagline(profile)} (focus ${profile.focus}, confidence ${profile.confidence}, today: $${profile.costToday})`
+            }));
+          } else if (slash.command === "pause") {
+            await fs.writeFile(path.join(workspaceRoot, "rei-ops-room", ".rei-chat-pause"), new Date().toISOString(), "utf8").catch(async () => {
+              await fs.writeFile(path.join(__dirname, ".rei-chat-pause"), new Date().toISOString(), "utf8");
+            });
+            replies.push(await appendMessage({ role: "system", text: "Worker will pause after the current run." }));
+          } else if (slash.command === "resume") {
+            await fs.rm(path.join(__dirname, ".rei-chat-pause"), { force: true });
+            replies.push(await appendMessage({ role: "system", text: "Worker resumed." }));
+          } else if (slash.command === "focus") {
+            await fs.writeFile(path.join(__dirname, ".rei-chat-focus"), slash.rest.slice(0, 500), "utf8");
+            replies.push(await appendMessage({
+              role: "system",
+              text: `Focus hint set: "${slash.rest.slice(0, 80)}". Rei will pick this up on the next run.`
+            }));
+          }
+        } else {
+          // Plain operator message → Rei acknowledges in mood-aware voice.
+          // The worker will inject the actual message into the next prompt.
+          const profile = await getPersonality();
+          const ackPool = {
+            focused:    ["Heard. Adjusting course.", "Got it.", "On it."],
+            curious:    ["Interesting — let me look.", "Noted, exploring now.", "Hmm, hold on."],
+            playful:    ["Got it ✨", "On it — easy.", "Aye aye."],
+            tired:      ["Noted. Slowing down to read this.", "Got it, processing.", "Okay."],
+            frustrated: ["Got it. Trying a different angle.", "Heard. Rethinking.", "Okay, noted."],
+            thoughtful: ["Reading carefully…", "Got it, taking a beat.", "Noted."]
+          }[profile.mood] || ["Got it."];
+          const ack = ackPool[Math.floor(Math.random() * ackPool.length)];
+          replies.push(await appendMessage({ role: "rei", text: ack, meta: { mood: profile.mood } }));
+        }
+
+        writeJson(response, 201, { user: userEntry, replies: replies.filter(Boolean) });
+      } catch (error) {
+        writeJson(response, 400, {
+          error: "Failed to send message",
+          detail: error instanceof Error ? error.message : String(error)
+        });
+      }
+      return;
+    }
+
     // ─── Personality ──────────────────────────────────────────────────────────
     // GET /api/rei/personality — mood + energy + focus + confidence
     if (url.pathname === "/api/rei/personality" && request.method === "GET") {
