@@ -1,5 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 
 import {
   buildExecutePrompt,
@@ -13,6 +15,9 @@ import {
   getLastExecuteAttemptMs,
   isBlockedIssueRetryEligible
 } from "../tools/execute-bridge.mjs";
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const CURSOR_DESIGN_FIXTURE = path.join(__dirname, "fixtures", "cursor-design-repo");
 
 test("selectExecuteTarget prefers an active execute issue and ignores report-only work", () => {
   const target = selectExecuteTarget({
@@ -77,7 +82,7 @@ test("buildExecutePrompt folds issue scope and handoff context into one launch p
 });
 
 test("readRepoDesignProfile reads the local repo DESIGN.md when present", () => {
-  const profile = readRepoDesignProfile("/Users/funtoco/workSpace/codex-pixel-agent");
+  const profile = readRepoDesignProfile(CURSOR_DESIGN_FIXTURE);
 
   assert.equal(profile.brand, "Cursor");
   assert.match(profile.title, /Cursor/i);
@@ -120,7 +125,7 @@ test("selectExecuteSkillProfile prefers backend specialist when integration keyw
 test("buildExecutePrompt includes the recommended specialist profile and skills", () => {
   const prompt = buildExecutePrompt({
     repo: "example-org/my-project",
-    repoCwd: "/Users/funtoco/workSpace/codex-pixel-agent",
+    repoCwd: CURSOR_DESIGN_FIXTURE,
     issue: {
       number: 19,
       title: "Polish the Execute Agent panel layout",
