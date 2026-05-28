@@ -1,8 +1,11 @@
 {
   "name": "rei-ops-room",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "type": "module",
   "license": "MIT",
+  "engines": {
+    "node": ">=22"
+  },
   "description": "Autonomous agent ops room — Rei watches your GitHub issues, routes to the right AI runtime, and executes tasks through a real-time pixel art UI.",
   "homepage": "https://github.com/Wallens11/rei-ops-room",
   "repository": {

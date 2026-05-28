@@ -6,7 +6,7 @@
  *   2. rei.config.json in project root (gitignored)
  *   3. Built-in defaults
  *
- * OSS users: copy rei.config.example.json → rei.config.json and fill in your values.
+ * OSS users: copy rei.config.json.example → rei.config.json and fill in your values.
  * Existing env-var setups are unaffected — env vars always win.
  */
 

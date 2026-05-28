@@ -69,7 +69,7 @@ docker run -p 4317:4317 \
 
 ## Requirements
 
-- Node.js 20+
+- Node.js 22+
 - GitHub access — either:
   - `GITHUB_TOKEN` env var (recommended, works in Docker / CI)
   - or `gh` CLI authenticated (`gh auth login`)
