@@ -2166,6 +2166,83 @@ export function createServer({
       return;
     }
 
+    // ─── Cost Ledger ──────────────────────────────────────────────────────────
+    // GET /api/rei/costs — aggregated token spend (today / week / total)
+    if (url.pathname === "/api/rei/costs" && request.method === "GET") {
+      try {
+        const { getCostStats, formatCostSummary } = await import("./tools/rei-cost-tracker.mjs");
+        const stats = await getCostStats();
+        writeJson(response, 200, {
+          ...stats,
+          summary: formatCostSummary(stats)
+        });
+      } catch (error) {
+        writeJson(response, 500, {
+          error: "Failed to read cost stats",
+          detail: error instanceof Error ? error.message : String(error)
+        });
+      }
+      return;
+    }
+
+    // ─── Memory Bank ──────────────────────────────────────────────────────────
+    // GET /api/rei/memory?q=...&limit=10 — search memory; without q, returns recent entries
+    if (url.pathname === "/api/rei/memory" && request.method === "GET") {
+      try {
+        const { searchMemory, getRecentMemories } = await import("./tools/rei-memory.mjs");
+        const q = (url.searchParams.get("q") || "").trim();
+        const limit = Math.max(1, Math.min(50, Number(url.searchParams.get("limit") || 10)));
+        const types = (url.searchParams.get("types") || "")
+          .split(",")
+          .filter(Boolean);
+
+        let entries;
+        if (q) {
+          const results = await searchMemory(q, {
+            limit,
+            types: types.length > 0 ? types : null
+          });
+          entries = results.map((r) => ({ ...r.entry, score: Number(r.score.toFixed(3)) }));
+        } else {
+          entries = await getRecentMemories({
+            limit,
+            types: types.length > 0 ? types : null
+          });
+        }
+
+        writeJson(response, 200, { entries, query: q });
+      } catch (error) {
+        writeJson(response, 500, {
+          error: "Failed to read memory",
+          detail: error instanceof Error ? error.message : String(error)
+        });
+      }
+      return;
+    }
+
+    // POST /api/rei/memory — manually record a memory entry
+    if (url.pathname === "/api/rei/memory" && request.method === "POST") {
+      try {
+        const body = await readJsonRequestBody(request);
+        const { recordMemory } = await import("./tools/rei-memory.mjs");
+        const entry = await recordMemory({
+          type: body.type || "fact",
+          topic: body.topic || "",
+          content: body.content || "",
+          source: body.source || "manual",
+          tags: Array.isArray(body.tags) ? body.tags : [],
+          importance: typeof body.importance === "number" ? body.importance : 0.5
+        });
+        writeJson(response, 201, { entry });
+      } catch (error) {
+        writeJson(response, 400, {
+          error: "Failed to record memory",
+          detail: error instanceof Error ? error.message : String(error)
+        });
+      }
+      return;
+    }
+
     // ─── Run Usage Ledger ─────────────────────────────────────────────────────
     // GET /api/execute/ledger — ringkasan usage dari learning log (issue #17)
 

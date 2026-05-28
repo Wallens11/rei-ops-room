@@ -19,6 +19,7 @@ import {
   formatLearningContext,
   readLearningLog
 } from "./execute-learning.mjs";
+import { formatMemoryContext, searchMemory } from "./rei-memory.mjs";
 import { createGithubRunner } from "./github-api.mjs";
 
 const execFileAsync = promisify(execFile);
@@ -503,6 +504,7 @@ export function buildDirectTaskPrompt({
   repoCwd,
   handoff = null,
   learningContext = null,
+  memoryContext = null,
   continuity = null,
   designProfile = readRepoDesignProfile(repoCwd)
 } = {}) {
@@ -526,6 +528,7 @@ export function buildDirectTaskPrompt({
       ? `Known blockers:\n${handoff.blockers.map((b) => `- ${b}`).join("\n")}`
       : null,
     learningContext ? `\n${learningContext}` : null,
+    memoryContext ? `\n${memoryContext}` : null,
     ...continuityLines,
     designGuidanceLines.length > 0 ? "" : null,
     ...designGuidanceLines,
@@ -873,6 +876,7 @@ export function buildExecutePrompt({
   issue,
   handoff,
   learningContext = null,
+  memoryContext = null,
   continuity = null,
   designProfile = readRepoDesignProfile(repoCwd),
   humanComments = []
@@ -931,6 +935,7 @@ export function buildExecutePrompt({
       ? `Known blockers from handoff:\n${handoff.blockers.map((b) => `- ${b}`).join("\n")}\nAvoid re-attempting these without a plan to resolve them.`
       : null,
     learningContext ? `\n${learningContext}` : null,
+    memoryContext ? `\n${memoryContext}` : null,
     ...continuityLines,
     designGuidanceLines.length > 0 ? "" : null,
     ...designGuidanceLines,
@@ -1043,6 +1048,23 @@ export async function prepareExecuteAction({
   // Fetch learning entries sekali — dipakai untuk prompt context, trust signals, dan failure detection
   const learningEntries = await readLearningLog().catch(() => []);
   const learningContext = formatLearningContext(learningEntries, { limit: 5 });
+
+  // Helper: build memory context relevant to a given issue (title+body+labels)
+  const buildMemoryContextFor = async (issue) => {
+    if (!issue) return null;
+    const query = [
+      issue.title,
+      String(issue.body || "").slice(0, 800),
+      (issue.labels || []).join(" ")
+    ].filter(Boolean).join(" ");
+    if (!query.trim()) return null;
+    try {
+      const hits = await searchMemory(query, { limit: 4, minScore: 0.5 });
+      return hits.length > 0 ? formatMemoryContext(hits, { title: "Relevant memory from past runs" }) : null;
+    } catch {
+      return null;
+    }
+  };
   const target = selectExecuteTarget(payload);
 
   if (!target?.issue) {
@@ -1071,6 +1093,7 @@ export async function prepareExecuteAction({
       });
       const skillProfile = selectExecuteSkillProfile(issue);
       const resolvedHandoff = handoff || (await readDailyDeviceHandoff());
+      const memoryContext = await buildMemoryContextFor(issue);
         const prompt = buildExecutePrompt({
           repo: resolvedRepo,
           repoCwd: cwd,
@@ -1080,6 +1103,7 @@ export async function prepareExecuteAction({
           },
           handoff: resolvedHandoff,
           learningContext,
+          memoryContext,
           continuity: resolvedContinuity,
           designProfile,
           humanComments: extractNewHumanComments(issue?.comments || [], issue?.number)
@@ -1132,12 +1156,14 @@ export async function prepareExecuteAction({
       if (isBlockedIssueRetryEligible(fullIssue, fullIssue.comments || [])) {
         const skillProfile = selectExecuteSkillProfile(fullIssue);
         const resolvedHandoff = handoff || (await readDailyDeviceHandoff());
+        const memoryContext = await buildMemoryContextFor(fullIssue);
         const prompt = buildExecutePrompt({
           repo: resolvedRepo,
           repoCwd: cwd,
           issue: fullIssue,
           handoff: resolvedHandoff,
           learningContext,
+          memoryContext,
           continuity: resolvedContinuity,
           designProfile,
           humanComments: extractNewHumanComments(fullIssue?.comments || [], fullIssue?.number)
@@ -1215,12 +1241,14 @@ export async function prepareExecuteAction({
     };
   }
 
+  const memoryContext = await buildMemoryContextFor(issue);
   const prompt = buildExecutePrompt({
     repo: resolvedRepo,
     repoCwd: cwd,
     issue,
     handoff: resolvedHandoff,
     learningContext,
+    memoryContext,
     continuity: resolvedContinuity,
     designProfile,
     humanComments: extractNewHumanComments(issue?.comments || [], issue?.number)

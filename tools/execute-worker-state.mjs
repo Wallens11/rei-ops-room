@@ -3,7 +3,10 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-export const projectRoot = path.resolve(__dirname, "..");
+// Honor REI_PROJECT_ROOT override so tests (and remote workers) can redirect state to a tmp dir
+export const projectRoot = process.env.REI_PROJECT_ROOT
+  ? path.resolve(process.env.REI_PROJECT_ROOT)
+  : path.resolve(__dirname, "..");
 export const executeWorkerPidFile = path.join(projectRoot, ".execute-worker.pid");
 export const executeWorkerLogFile = path.join(projectRoot, ".execute-worker.log");
 export const executeWorkerStateFile = path.join(projectRoot, ".execute-worker-state.json");

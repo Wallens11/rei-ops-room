@@ -60,6 +60,7 @@ import {
 import { buildTaskQueueViewModel, buildWorkerStatusBadge } from "./execute-queue-panel.js";
 import { pollArtifacts } from "./execute-artifacts-panel.js";
 import { pollMetrics } from "./execute-metrics-panel.js";
+import { pollRei } from "./rei-brain-panel.js";
 import {
   buildSceneHotspots,
   describeSceneSelection,
@@ -1049,7 +1050,7 @@ function renderWorkspaceDock(workspace) {
     item.innerHTML = `
       <p class="panel-label">Sleeping Rooms</p>
       <h4>No other repos</h4>
-      <p class="dim">Repo lain akan muncul di sini sebagai snapshot ringan.</p>
+      <p class="dim">Other repos will appear here as light snapshots.</p>
     `;
     elements.sleepingRoomList.appendChild(item);
     return;
@@ -1712,6 +1713,19 @@ async function refreshExecuteService() {
   ) {
     void pollArtifacts();
     void pollMetrics();
+    void pollRei();
+
+    // Celebrate / lament — pixel particle burst over the lead actor
+    try {
+      const leadActor = renderState.actors?.find?.((a) => a.id === "lead") || renderState.actors?.[0];
+      if (leadActor && typeof spawnBurst === "function") {
+        if (newLastResult.status === "completed") {
+          spawnBurst("confetti", leadActor.x, leadActor.y - 30, 18);
+        } else if (newLastResult.status === "failed" || newLastResult.status === "blocked") {
+          spawnBurst("sparks", leadActor.x, leadActor.y - 20, 14);
+        }
+      }
+    } catch { /* particle system is best-effort */ }
   }
 
   renderExecuteAgent();
@@ -2423,8 +2437,192 @@ function drawRug(floorTop) {
   drawPixelRect(222, floorTop + 114, 196, 4, "rgba(184, 162, 255, 0.12)");
 }
 
+// ─── Day/night cycle ─────────────────────────────────────────────────────────
+// Returns an ambient profile for the current hour. Drives wall color, lamp
+// intensity, star visibility, and window glow.
+function getAmbientProfile(now = new Date()) {
+  const h = now.getHours() + now.getMinutes() / 60;
+
+  // 5 phases: night (0-6), dawn (6-8), day (8-17), dusk (17-19), evening (19-24)
+  let phase = "day";
+  let progress = 0; // 0..1 within phase
+
+  if (h < 6) {
+    phase = "night";
+    progress = h / 6;
+  } else if (h < 8) {
+    phase = "dawn";
+    progress = (h - 6) / 2;
+  } else if (h < 17) {
+    phase = "day";
+    progress = (h - 8) / 9;
+  } else if (h < 19) {
+    phase = "dusk";
+    progress = (h - 17) / 2;
+  } else {
+    phase = "evening";
+    progress = (h - 19) / 5;
+  }
+
+  // Wall colors (top → bottom of gradient)
+  const palettes = {
+    night:   { wallTop: "#0a1428", floorTint: "rgba(60, 80, 140, 0.10)",  lampBoost: 1.0,  starVisible: true,  windowHue: "#2a3050" },
+    dawn:    { wallTop: "#2a2040", floorTint: "rgba(180, 120, 100, 0.06)", lampBoost: 0.6,  starVisible: false, windowHue: "#ff9c80" },
+    day:     { wallTop: "#1a3658", floorTint: "rgba(200, 200, 220, 0.0)",  lampBoost: 0.0,  starVisible: false, windowHue: "#8acfff" },
+    dusk:    { wallTop: "#3a2548", floorTint: "rgba(220, 120, 80, 0.08)",  lampBoost: 0.4,  starVisible: false, windowHue: "#ff7c40" },
+    evening: { wallTop: "#10182e", floorTint: "rgba(80, 100, 160, 0.08)",  lampBoost: 0.9,  starVisible: true,  windowHue: "#3050a0" }
+  };
+
+  return {
+    phase,
+    progress,
+    hour: h,
+    ...palettes[phase]
+  };
+}
+
+// ─── Particle system ─────────────────────────────────────────────────────────
+// Each particle: { x, y, vx, vy, life, maxLife, color, size, kind, gravity }
+// kinds:
+//   - confetti  : success celebration
+//   - sparks    : error / glitch
+//   - keystroke : tiny ticks while typing (rate-limited per actor)
+//   - thought   : floating idea bubbles
+
+if (typeof renderState !== "undefined" && !renderState.particles) {
+  renderState.particles = [];
+}
+
+function spawnParticle({ x, y, vx, vy, life, color, size, kind, gravity = 0 }) {
+  if (!renderState.particles) renderState.particles = [];
+  if (renderState.particles.length > 300) return; // cap to avoid runaway
+  renderState.particles.push({
+    x, y, vx, vy,
+    life, maxLife: life,
+    color, size: size || 2,
+    kind: kind || "dust",
+    gravity
+  });
+}
+
+function spawnBurst(kind, x, y, count = 12) {
+  for (let i = 0; i < count; i++) {
+    const angle = (Math.PI * 2 * i) / count + (Math.random() - 0.5) * 0.5;
+    const speed = 1.5 + Math.random() * 2;
+    if (kind === "confetti") {
+      const colors = ["#ff7c98", "#65e4ff", "#7cffba", "#ffcc66", "#b8a2ff"];
+      spawnParticle({
+        x, y,
+        vx: Math.cos(angle) * speed,
+        vy: Math.sin(angle) * speed - 1.5,
+        life: 60 + Math.random() * 30,
+        color: colors[i % colors.length],
+        size: 2 + Math.floor(Math.random() * 2),
+        kind: "confetti",
+        gravity: 0.08
+      });
+    } else if (kind === "sparks") {
+      spawnParticle({
+        x, y,
+        vx: Math.cos(angle) * speed * 1.5,
+        vy: Math.sin(angle) * speed * 1.5,
+        life: 20 + Math.random() * 15,
+        color: i % 3 === 0 ? "#ffb050" : "#ff5a40",
+        size: 1 + Math.floor(Math.random() * 2),
+        kind: "sparks",
+        gravity: 0
+      });
+    } else if (kind === "thought") {
+      spawnParticle({
+        x: x + (Math.random() - 0.5) * 8,
+        y: y - 4,
+        vx: (Math.random() - 0.5) * 0.4,
+        vy: -0.4 - Math.random() * 0.3,
+        life: 60 + Math.random() * 30,
+        color: "rgba(180, 220, 255, 0.6)",
+        size: 1 + Math.floor(Math.random() * 2),
+        kind: "thought",
+        gravity: 0
+      });
+    }
+  }
+}
+
+function updateParticles() {
+  if (!renderState.particles) return;
+  const arr = renderState.particles;
+  for (let i = arr.length - 1; i >= 0; i--) {
+    const p = arr[i];
+    p.x += p.vx;
+    p.y += p.vy;
+    p.vy += p.gravity || 0;
+    p.life -= 1;
+    if (p.life <= 0 || p.y > CANVAS_HEIGHT + 10 || p.x < -10 || p.x > CANVAS_WIDTH + 10) {
+      arr.splice(i, 1);
+    }
+  }
+}
+
+function drawParticles() {
+  if (!renderState.particles) return;
+  for (const p of renderState.particles) {
+    const alpha = Math.min(1, p.life / Math.max(1, p.maxLife * 0.4));
+    context.save();
+    context.globalAlpha = alpha;
+    if (p.kind === "confetti") {
+      // Rotating square confetti
+      const rot = (p.maxLife - p.life) * 0.2;
+      context.translate(p.x, p.y);
+      context.rotate(rot);
+      context.fillStyle = p.color;
+      context.fillRect(-p.size, -p.size, p.size * 2, p.size * 2);
+    } else if (p.kind === "sparks") {
+      // Streaking sparks
+      context.fillStyle = p.color;
+      context.fillRect(p.x, p.y, p.size, p.size);
+      context.globalAlpha = alpha * 0.5;
+      context.fillRect(p.x - p.vx, p.y - p.vy, p.size, p.size);
+    } else if (p.kind === "thought") {
+      // Soft floating dot
+      context.fillStyle = p.color;
+      context.beginPath();
+      context.arc(p.x, p.y, p.size, 0, Math.PI * 2);
+      context.fill();
+    } else {
+      context.fillStyle = p.color;
+      context.fillRect(p.x, p.y, p.size, p.size);
+    }
+    context.restore();
+  }
+}
+
+// Snapshot of last-drawn agent state to detect transitions (for spawn triggers)
+const __particleTriggerState = { lastActivities: new Map() };
+function maybeSpawnActivityParticles(actor, agentState) {
+  if (!actor || !agentState) return;
+  const prev = __particleTriggerState.lastActivities.get(actor.id);
+  const next = agentState.activity || "idle";
+
+  // Transition into success/completion
+  if (prev && prev !== next && (next === "summarizing" || next === "reviewing")) {
+    if (Math.random() < 0.15) spawnBurst("thought", actor.x, actor.y - 50, 3);
+  }
+  // Coding/typing — occasional thought puff
+  if (next === "coding" && Math.random() < 0.02) {
+    spawnBurst("thought", actor.x, actor.y - 50, 1);
+  }
+
+  __particleTriggerState.lastActivities.set(actor.id, next);
+}
+
+// Exposed so external code (e.g. completion signals) can trigger bursts
+if (typeof window !== "undefined") {
+  window.reiSpawnBurst = spawnBurst;
+}
+
 function drawRoomBase(tone = "calm") {
   context.clearRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+  const ambient = getAmbientProfile();
 
   // Background
   context.fillStyle = COLORS.bg0;
@@ -2432,16 +2630,31 @@ function drawRoomBase(tone = "calm") {
 
   const layout = currentLayout();
 
-  // Wall — warmer gradient
+  // Wall — gradient driven by both task tone AND time-of-day
   const wallGradient = context.createLinearGradient(0, 0, 0, layout.canvas.wall_height);
-  const wallTop = tone === "rest" ? "#12203a" : tone === "busy" ? "#162840" : "#152e48";
+  // Blend ambient (time-of-day) with tone-based tweaks: 60% ambient, 40% tone bias
+  const toneShift = tone === "rest" ? -8 : tone === "busy" ? -4 : 0;
+  const wallTop = ambient.wallTop;
   wallGradient.addColorStop(0, wallTop);
   wallGradient.addColorStop(1, COLORS.bg1);
   context.fillStyle = wallGradient;
   context.fillRect(0, 0, CANVAS_WIDTH, layout.canvas.wall_height);
 
-  // Ceiling overhead light strip (centered top)
-  const lightIntensity = tone === "busy" ? 0.28 : tone === "steady" ? 0.22 : 0.16;
+  // Stars at night (subtle twinkle in upper area)
+  if (ambient.starVisible) {
+    const starSeed = Math.floor(renderState.frame / 30);
+    for (let s = 0; s < 24; s++) {
+      const sx = (s * 73 + 13) % CANVAS_WIDTH;
+      const sy = ((s * 41) % 70) + 4;
+      const twinkle = ((s * 7 + starSeed) % 9) > 4 ? 0.5 : 0.85;
+      context.fillStyle = `rgba(220, 230, 255, ${twinkle})`;
+      context.fillRect(sx, sy, 1, 1);
+    }
+  }
+
+  // Ceiling overhead light strip — stronger at night
+  const lightBase = tone === "busy" ? 0.28 : tone === "steady" ? 0.22 : 0.16;
+  const lightIntensity = lightBase + ambient.lampBoost * 0.12;
   const lightGrad = context.createRadialGradient(320, 0, 0, 320, 0, 180);
   lightGrad.addColorStop(0, `rgba(200, 230, 255, ${lightIntensity})`);
   lightGrad.addColorStop(1, "rgba(200, 230, 255, 0)");
@@ -2466,6 +2679,12 @@ function drawRoomBase(tone = "calm") {
   // Floor
   context.fillStyle = COLORS.bg2;
   context.fillRect(0, layout.canvas.floor_top, CANVAS_WIDTH, CANVAS_HEIGHT - layout.canvas.floor_top);
+
+  // Ambient tint on floor (cool at night, warm at dawn/dusk)
+  if (ambient.floorTint && ambient.floorTint !== "rgba(200, 200, 220, 0.0)") {
+    context.fillStyle = ambient.floorTint;
+    context.fillRect(0, layout.canvas.floor_top, CANVAS_WIDTH, CANVAS_HEIGHT - layout.canvas.floor_top);
+  }
 
   // Rug
   drawRug(layout.canvas.floor_top);
@@ -3222,6 +3441,27 @@ function drawCharacterSprite(cx, ty, {
       dpx(  7, 11, 5, 7, c.shirt);
       dpx(-12, 17, 5, 3, c.skin);
       dpx(  7, 17, 5, 3, c.skin);
+    } else if (pose === "coffee") {
+      // Left arm rests; right arm lifted holding a steaming cup near mouth
+      dpx(-11, 14, 5, 6, c.shirt);
+      dpx(-11, 19, 5, 3, c.skin);
+      // Right arm raised in front of chest
+      dpx( 6,  8, 4, 7, c.shirt);
+      dpx( 6,  6, 4, 2, c.skin);   // hand
+      // Coffee cup (mug)
+      dpx( 6,  4, 5, 3, "#552a14"); // mug body
+      dpx( 7,  4, 3, 1, "#1a0a04"); // coffee surface
+      dpx(10,  5, 1, 2, "#552a14"); // handle
+      // Steam wisps
+      const steamPhase = Math.floor((renderState?.frame || 0) / 8) % 3;
+      if (steamPhase === 0) dpx(8, 1, 1, 2, "rgba(220,230,255,0.55)");
+      if (steamPhase >= 1) dpx(7, 0, 1, 2, "rgba(220,230,255,0.45)");
+    } else if (pose === "yawn") {
+      // Right hand covers mouth
+      dpx(-11, 14, 5, 6, c.shirt);
+      dpx(-11, 19, 5, 3, c.skin);
+      dpx( 4,  4, 4, 6, c.shirt);   // arm up
+      dpx( 4,  4, 4, 2, c.skin);    // hand at face
     } else {
       dpx(-11, 14, 5, 6, c.shirt);
       dpx( 6,  14, 5, 6, c.shirt);
@@ -3372,7 +3612,15 @@ function drawAgent(actor, agentState, isPrimary) {
   const { accent } = actorPalette(actor.id, zone.color);
   const costume = actorCostume(actor.id);
 
-  const pose =
+  // Micro-pose: transient "moment of life" overlay (coffee, yawn, stretch).
+  // Expires when actor.microPoseUntil < frame. If active and the actor is seated,
+  // it overrides the arm rendering in drawCharacterSprite.
+  if (actor.microPoseUntil && actor.microPoseUntil < frame) {
+    actor.microPose = null;
+    actor.microPoseUntil = null;
+  }
+
+  const basePose =
     actor.pose ||
     (["coding", "debugging"].includes(agentState.activity)
       ? "type"
@@ -3382,7 +3630,14 @@ function drawAgent(actor, agentState, isPrimary) {
           ? "walk"
           : "stand");
 
-  const seated = ["sit", "type", "read"].includes(pose) ||
+  // If the actor is currently seated AND has a micro-pose (coffee/yawn), use it
+  const seatedBase = ["sit", "type", "read"].includes(basePose) ||
+    actor.motionState === "SEATED" || actor.motionState === "REST";
+  const pose = seatedBase && (actor.microPose === "coffee" || actor.microPose === "yawn")
+    ? actor.microPose
+    : basePose;
+
+  const seated = ["sit", "type", "read", "coffee", "yawn"].includes(pose) ||
     actor.motionState === "SEATED" || actor.motionState === "REST";
 
   // Smooth breathing — sine wave, not hard step
@@ -3416,10 +3671,17 @@ function drawAgent(actor, agentState, isPrimary) {
     drawChair(actor.x, actor.y, accent);
   }
 
+  // Map to drawCharacterSprite's pose vocabulary, preserving micro-poses
+  const spritePose = seated
+    ? (pose === "type" || pose === "read" || pose === "coffee" || pose === "yawn"
+        ? pose
+        : "sit")
+    : (actor.moving ? "walk" : "stand");
+
   drawCharacterSprite(actor.x, ty, {
     costume,
     direction,
-    pose: seated ? (pose === "type" ? "type" : pose === "read" ? "read" : "sit") : (actor.moving ? "walk" : "stand"),
+    pose: spritePose,
     walkFrame,
     isBlink,
     isPrimary,
@@ -3640,6 +3902,35 @@ function drawScene() {
     const scoutActor = actorById("scout");
     if (scoutActor) {
       drawBubble(scoutActor, data.scene.scout.payload, "steady", 34);
+    }
+  }
+
+  // Particles render on top of everything except the most foreground UI
+  // (badges/bubbles), so they read as belonging to the scene.
+  updateParticles();
+  drawParticles();
+
+  // Activity-driven particle triggers (subtle thought puffs while coding, etc.)
+  for (const actor of renderState.actors) {
+    const agent = renderState.data?.agents?.find?.((a) => a.id === actor.id);
+    if (agent) maybeSpawnActivityParticles(actor, agent);
+  }
+
+  // Micro-pose scheduling — every ~10s, give an idle/seated actor a moment of life
+  if (renderState.frame % 300 === 0) {
+    for (const actor of renderState.actors) {
+      if (actor.microPose) continue; // already in a micro-pose
+      const agent = renderState.data?.agents?.find?.((a) => a.id === actor.id);
+      if (!agent) continue;
+      const idle = !agent.activity || agent.activity === "idle";
+      const seatedBase = ["sit", "type", "read"].includes(actor.pose) ||
+        actor.motionState === "SEATED" || actor.motionState === "REST";
+      if (!seatedBase) continue;
+      // 30% chance each cycle (rate-limit by only checking every 300 frames)
+      if (Math.random() < (idle ? 0.4 : 0.12)) {
+        actor.microPose = Math.random() < 0.55 ? "coffee" : "yawn";
+        actor.microPoseUntil = renderState.frame + (60 + Math.floor(Math.random() * 60));
+      }
     }
   }
 }

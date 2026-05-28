@@ -33,6 +33,9 @@ import {
   updateWorkerActivity
 } from "./execute-queue.mjs";
 import { getLearningEntries, recordRunInsight } from "./execute-learning.mjs";
+import { extractMemoryFromRun } from "./rei-memory.mjs";
+import { parseTokenUsage, recordRunCost } from "./rei-cost-tracker.mjs";
+import { runSelfReview, formatSelfReview } from "./rei-self-review.mjs";
 import { clearSessionPin, readSessionPin, writeSessionPin } from "./execute-sessions.mjs";
 import { injectSkills } from "./inject-skills.mjs";
 import { scanRunArtifacts } from "./execute-artifacts.mjs";
@@ -595,6 +598,28 @@ async function runDirectTask({
     lastMessage
   }).catch(() => {});
 
+  // Extract durable memory from agent output
+  await extractMemoryFromRun({
+    lastMessage,
+    outcome: status === "done" ? "completed" : "failed",
+    issueNumber: null,
+    changedFiles: []
+  }).catch(() => {});
+
+  // Record run cost (parse token usage from stdout+stderr)
+  const usage = parseTokenUsage(`${mission.stdoutText || ""}\n${mission.stderrText || ""}`);
+  if (usage) {
+    await recordRunCost({
+      runtimeId,
+      issueNumber: null,
+      profileId: "general",
+      inputTokens: usage.inputTokens,
+      outputTokens: usage.outputTokens,
+      model: usage.model,
+      outcome: status === "done" ? "completed" : "failed"
+    }).catch(() => {});
+  }
+
   if (workerId) {
     await updateWorkerActivity(workerId, { taskId: null, runtimeId: null });
   }
@@ -859,10 +884,25 @@ export async function executeNextIssue({
     beforePaths: baselineWorktreePaths,
     afterPaths: nextWorktreePaths
   });
-  const outcome = classifyExecuteMissionResult({
+  let outcome = classifyExecuteMissionResult({
     mission,
     newChanges
   });
+
+  // Self-review gate: when the agent thinks it succeeded, run cheap heuristics
+  // on the diff. Anything sketchy downgrades "completed" → "review_needed" so a
+  // human eyeballs it before the issue auto-closes.
+  let selfReview = null;
+  if (outcome === "completed") {
+    selfReview = await runSelfReview({
+      cwd,
+      changedFiles: newChanges,
+      requireChanges: true
+    }).catch(() => null);
+    if (selfReview && !selfReview.ok) {
+      outcome = "review_needed";
+    }
+  }
 
   // Scan for HTML artifacts generated during this run (visual-explainer skill output)
   const artifacts = await scanRunArtifacts({
@@ -881,6 +921,28 @@ export async function executeNextIssue({
     filesChanged: newChanges,
     lastMessage
   }).catch(() => {});
+
+  // Extract durable memory from agent's output
+  await extractMemoryFromRun({
+    lastMessage,
+    outcome: outcome === "completed" ? "completed" : "failed",
+    issueNumber: preview.target.number,
+    changedFiles: newChanges
+  }).catch(() => {});
+
+  // Record run cost (parse token usage from agent output)
+  const usage = parseTokenUsage(`${mission.stdoutText || ""}\n${mission.stderrText || ""}`);
+  if (usage) {
+    await recordRunCost({
+      runtimeId: activeRuntimeId,
+      issueNumber: preview.target.number,
+      profileId,
+      inputTokens: usage.inputTokens,
+      outputTokens: usage.outputTokens,
+      model: usage.model,
+      outcome: outcome === "completed" ? "completed" : "failed"
+    }).catch(() => {});
+  }
 
   // Issue selesai (apapun hasilnya) — hapus session pin supaya run berikutnya mulai fresh
   await clearSessionPin(preview.target.number).catch(() => {});
@@ -951,7 +1013,10 @@ export async function executeNextIssue({
   }
 
   if (outcome === "review_needed") {
-    const detail = `Codex exited cleanly for issue #${preview.target.number} but left no new meaningful repo changes.`;
+    const baseDetail = selfReview && !selfReview.ok
+      ? `Self-review flagged ${selfReview.issues.length} issue${selfReview.issues.length === 1 ? "" : "s"} for issue #${preview.target.number}.`
+      : `Codex exited cleanly for issue #${preview.target.number} but left no new meaningful repo changes.`;
+    const reviewBlock = selfReview && !selfReview.ok ? formatSelfReview(selfReview) : "";
 
     await transitionIssueToBlocked({
       runner,
@@ -965,11 +1030,12 @@ export async function executeNextIssue({
       body: buildExecuteCompletionComment({
         issue: preview.issue,
         outcome: "review_needed",
-        lastMessage: [detail, String(lastMessage || "").trim()].filter(Boolean).join("\n\n"),
+        lastMessage: [baseDetail, reviewBlock, String(lastMessage || "").trim()].filter(Boolean).join("\n\n"),
         runDir: activeRunDir,
         runtimeId: activeRuntimeId
       })
     });
+    const detail = baseDetail;
 
     const result = {
       status: "review_needed",

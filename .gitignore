@@ -24,5 +24,7 @@ docs/
 rei.config.json
 .execute-sessions.json
 .execute-artifacts.json
+.rei-memory/
+.rei-costs.jsonl
 demo-frames/
 public/demo.gif
