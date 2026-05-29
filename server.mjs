@@ -17,6 +17,7 @@ import {
 } from "./tools/execute-queue.mjs";
 import { readArtifactFile, readArtifacts } from "./tools/execute-artifacts.mjs";
 import { createGithubRunner } from "./tools/github-api.mjs";
+import { buildHealthPayload } from "./tools/health.mjs";
 
 const execFileAsync = promisify(execFile);
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -1752,6 +1753,18 @@ export function createServer({
 } = {}) {
   return http.createServer(async (request, response) => {
     const url = new URL(request.url || "/", `http://${request.headers.host || "localhost"}`);
+
+    if (url.pathname === "/api/health" && request.method === "GET") {
+      try {
+        writeJson(response, 200, await buildHealthPayload());
+      } catch (error) {
+        writeJson(response, 500, {
+          error: "Failed to read health status",
+          detail: error instanceof Error ? error.message : String(error)
+        });
+      }
+      return;
+    }
 
     if (url.pathname === "/api/status") {
       try {
