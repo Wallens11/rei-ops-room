@@ -74,6 +74,15 @@ tests/
   *.test.mjs            All unit tests (Node built-in test runner)
 ```
 
+### How memory works
+
+Rei stores persistent memory in `.rei-memory/knowledge.jsonl`.
+That file is append-only during normal writes, with one JSON entry per line.
+Memory search uses BM25-style keyword scoring: no embeddings and no API key.
+Entries are typed as `fact`, `pattern`, `decision`, `warning`, or `solution`.
+When the file grows past 1000 entries, Rei auto-compacts it.
+Compaction keeps the most important and recent entries so retrieval stays fast.
+
 ---
 
 ## Running tests
