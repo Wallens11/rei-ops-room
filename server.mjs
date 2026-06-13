@@ -206,6 +206,20 @@ let statusStreamSequence = 0;
 let statusStreamInflight = null;
 let logsMessageColumnPromise = null;
 
+// ─── Live panel stream ────────────────────────────────────────────────────────
+// One SSE channel that pushes the cheap, local panel data (queue + metrics +
+// costs) so the dashboard feels real-time instead of polling every 10-30s.
+// Change-detected: a frame is only emitted when the payload signature changes,
+// with a periodic heartbeat to keep the connection (and proxies) alive.
+const LIVE_STREAM_INTERVAL_MS = Number(process.env.LIVE_STREAM_INTERVAL_MS || 2000);
+const LIVE_STREAM_HEARTBEAT_MS = 20000;
+const liveStreamClients = new Set();
+let liveStreamTimer = null;
+let liveStreamSequence = 0;
+let liveStreamInflight = null;
+let liveStreamLastSignature = null;
+let liveStreamLastBeat = 0;
+
 function quoteSql(value) {
   return `'${String(value).replaceAll("'", "''")}'`;
 }
@@ -1168,11 +1182,21 @@ async function getStatus() {
     LIMIT 5;
   `;
 
-  const [latestThreadRows, latestRepoRows, recentRows] = await Promise.all([
-    sqliteJson(stateDb, latestThreadSql),
-    sqliteJson(stateDb, latestRepoSql),
-    sqliteJson(stateDb, recentThreadsSql)
-  ]);
+  // Codex's local DBs are only one of two activity sources — when they are
+  // missing or their schema drifts, the room must keep running on execute
+  // worker signals alone instead of 500-ing the whole status endpoint.
+  let latestThreadRows = [];
+  let latestRepoRows = [];
+  let recentRows = [];
+  try {
+    [latestThreadRows, latestRepoRows, recentRows] = await Promise.all([
+      sqliteJson(stateDb, latestThreadSql),
+      sqliteJson(stateDb, latestRepoSql),
+      sqliteJson(stateDb, recentThreadsSql)
+    ]);
+  } catch {
+    // no codex state available — execute signals below still animate the room
+  }
   const [latestThreadRow] = latestThreadRows;
   const [latestRepoRow] = latestRepoRows;
   const latestThread = mapThread(latestThreadRow, nowSeconds);
@@ -1185,27 +1209,52 @@ async function getStatus() {
   };
   let lastLogAt = latestThread?.updatedAt || 0;
   let threadLogs = [];
-  const logsMessageColumn = await detectLogsMessageColumn(logsDb);
 
   if (latestThread?.id) {
-    const logSql = buildThreadLogsSql(latestThread.id, 500, 320, logsMessageColumn);
+    try {
+      const logsMessageColumn = await detectLogsMessageColumn(logsDb);
+      const logSql = buildThreadLogsSql(latestThread.id, 500, 320, logsMessageColumn);
 
-    let globalLogs;
-    [threadLogs, globalLogs] = await Promise.all([
-      sqliteJson(logsDb, logSql),
-      sqliteJson(logsDb, buildGlobalRuntimeLogsSql(120, 320, logsMessageColumn))
-    ]);
-    const meaningfulLogs = selectActivityLogs(threadLogs, globalLogs, { nowSeconds });
-    if (meaningfulLogs.length > 0) {
-      lastLogAt = Number(meaningfulLogs[0].ts || lastLogAt);
-      activity = summarizeActivity(meaningfulLogs);
-      threadLogs = meaningfulLogs;
+      const [rawThreadLogs, globalLogs] = await Promise.all([
+        sqliteJson(logsDb, logSql),
+        sqliteJson(logsDb, buildGlobalRuntimeLogsSql(120, 320, logsMessageColumn))
+      ]);
+      const meaningfulLogs = selectActivityLogs(rawThreadLogs, globalLogs, { nowSeconds });
+      if (meaningfulLogs.length > 0) {
+        lastLogAt = Number(meaningfulLogs[0].ts || lastLogAt);
+        activity = summarizeActivity(meaningfulLogs);
+        threadLogs = meaningfulLogs;
+      }
+    } catch {
+      // codex logs unreadable — fall through to execute signals
+    }
+  }
+
+  // Execute worker signals (runtime-agnostic): running queue tasks + the
+  // narration trail animate the room for Claude Code runs exactly like the
+  // codex logs do for Codex runs — and for both at once.
+  const executeSignals = await buildExecuteSignals(nowSeconds);
+  if (executeSignals.logs.length > 0) {
+    threadLogs = [...executeSignals.logs, ...threadLogs]
+      .sort((left, right) => Number(right.ts || 0) - Number(left.ts || 0))
+      .slice(0, 500);
+    if (executeSignals.latestTs >= lastLogAt) {
+      lastLogAt = executeSignals.latestTs;
+      activity = {
+        summary: executeSignals.latestText || activity.summary,
+        source: "execute",
+        kind: "execute"
+      };
     }
   }
 
   let agentJobs = [];
   if (latestThread?.id) {
-    agentJobs = await sqliteJson(stateDb, buildAgentJobItemsSql(latestThread.id));
+    try {
+      agentJobs = await sqliteJson(stateDb, buildAgentJobItemsSql(latestThread.id));
+    } catch {
+      // optional enrichment only
+    }
   }
 
   const activityAgeSeconds = Math.max(0, nowSeconds - lastLogAt);
@@ -1234,12 +1283,178 @@ async function getStatus() {
     logs: threadLogs,
     agentJobs
   });
+  applyExecuteOverlay(roomState, executeSignals);
 
   return {
     generatedAt: new Date().toISOString(),
     workspaceRoot,
     ...roomState
   };
+}
+
+// ─── Execute worker → room bridge ─────────────────────────────────────────────
+// The room used to be animated only by Codex's local sqlite logs. These two
+// helpers feed the same pipeline from the execute worker (queue + narration),
+// so Claude Code runs — or both runtimes at once — light the room up too.
+
+export const EXECUTE_NARRATION_WINDOW_SECONDS = 45 * 60;
+
+/**
+ * @typedef {Object} ExecuteSignalLog
+ * @property {number} ts        unix seconds
+ * @property {string} level
+ * @property {string} target
+ * @property {string} message
+ *
+ * @typedef {Object} ExecuteSignals
+ * @property {ExecuteSignalLog[]} logs        synthetic activity log lines
+ * @property {Array<any>} runningTasks        queue tasks currently running/launching
+ * @property {string|null} latestText         most recent human-readable beat
+ * @property {number} latestTs                unix seconds of the latest signal
+ */
+
+/**
+ * Gather runtime-agnostic activity signals from the execute worker (queue +
+ * narration) so the room animates for Claude Code runs — and both runtimes at
+ * once — exactly like Codex's sqlite logs already do. Dependencies are
+ * injectable so this is unit-testable without touching the filesystem.
+ *
+ * @param {number} nowSeconds  current time in unix seconds
+ * @param {Object} [deps]
+ * @param {() => Promise<Array<any>>} [deps.readQueueImpl]
+ * @param {(opts: { limit: number }) => Promise<Array<any>>} [deps.readNarrationImpl]
+ * @returns {Promise<ExecuteSignals>}
+ */
+export async function buildExecuteSignals(nowSeconds, deps = {}) {
+  const readQueueImpl = deps.readQueueImpl || readQueue;
+  const readNarrationImpl =
+    deps.readNarrationImpl ||
+    (async (opts) => {
+      const { readNarration } = await import("./tools/rei-narration.mjs");
+      return readNarration(opts);
+    });
+
+  /** @type {ExecuteSignals} */
+  const signals = { logs: [], runningTasks: [], latestText: null, latestTs: 0 };
+
+  try {
+    const tasks = await readQueueImpl();
+    signals.runningTasks = (tasks || []).filter(
+      (task) => task.status === "running" || task.status === "launching"
+    );
+  } catch {
+    // no queue file yet
+  }
+
+  try {
+    const entries = await readNarrationImpl({ limit: 40 });
+    for (const entry of entries || []) {
+      const ts = Math.floor(new Date(entry.timestamp).getTime() / 1000);
+      if (!Number.isFinite(ts) || nowSeconds - ts > EXECUTE_NARRATION_WINDOW_SECONDS) {
+        continue;
+      }
+      signals.logs.push({
+        ts,
+        level: "info",
+        target: `execute:${entry.phase || "info"}`,
+        message: `${entry.phase || "info"}: ${entry.text || ""}${entry.issueRef ? ` (${entry.issueRef})` : ""}`
+      });
+      if (ts > signals.latestTs) {
+        signals.latestTs = ts;
+        signals.latestText = entry.text || null;
+      }
+    }
+  } catch {
+    // no narration log yet
+  }
+
+  // A running task is itself a strong "right now" signal, even between
+  // narration beats — without it presence decays while a long run is quiet.
+  for (const task of signals.runningTasks) {
+    signals.logs.push({
+      ts: nowSeconds,
+      level: "info",
+      target: `execute:${task.runtimeId || "auto"}`,
+      message: `running: ${String(task.prompt || task.id || "task").slice(0, 200)}`
+    });
+    signals.latestTs = nowSeconds;
+    if (!signals.latestText) {
+      signals.latestText = String(task.prompt || "").slice(0, 140) || null;
+    }
+  }
+
+  return signals;
+}
+
+export const RUNTIME_VISUAL_MAP = {
+  "claude-code": { agentId: "ui", zone: "frontend" },
+  codex: { agentId: "api", zone: "backend" }
+};
+
+/**
+ * Overlay live execute-run state onto a room snapshot: seat the runtime's agent
+ * at its desk and set it coding, highlight that zone, wake the lead, and lift
+ * the room out of standby/cooldown. Mutates `roomState` in place.
+ *
+ * @param {any} roomState               room snapshot from buildRoomState()
+ * @param {ExecuteSignals} executeSignals
+ * @returns {void}
+ */
+export function applyExecuteOverlay(roomState, executeSignals) {
+  const running = executeSignals?.runningTasks || [];
+  if (running.length === 0 || !roomState) {
+    return;
+  }
+
+  const highlightZones = new Set(roomState.scene?.desk_highlights || []);
+
+  for (const task of running) {
+    const visual = RUNTIME_VISUAL_MAP[task.runtimeId] || RUNTIME_VISUAL_MAP["claude-code"];
+    const agent = roomState.agents?.find((entry) => entry.id === visual.agentId);
+    if (agent) {
+      agent.activity = "coding";
+      agent.assigned_zone = visual.zone;
+      agent.idle_behavior = null;
+      agent.runtime = task.runtimeId || "auto";
+    }
+    highlightZones.add(visual.zone);
+  }
+
+  // Lead supervises from the lab while runs are live.
+  const lead = roomState.agents?.find((entry) => entry.id === "lead");
+  if (lead && (lead.activity === "idle" || lead.activity === "waiting")) {
+    lead.activity = "reviewing";
+    lead.idle_behavior = null;
+  }
+
+  if (roomState.scene) {
+    roomState.scene.desk_highlights = Array.from(highlightZones);
+    if (roomState.scene.tone === "calm" || roomState.scene.tone === "rest") {
+      roomState.scene.tone = "busy";
+    }
+    if (roomState.scene.resting) {
+      roomState.scene.resting = false;
+    }
+  }
+
+  if (roomState.room) {
+    if (roomState.room.phase === "standby") {
+      roomState.room.phase = "execution";
+      roomState.room.phase_reason = `Execute worker lagi jalan (${running
+        .map((task) => task.runtimeId || "auto")
+        .join(", ")}).`;
+    }
+    roomState.room.resting = false;
+    if (roomState.room.substate === "cooldown") {
+      roomState.room.substate = null;
+    }
+  }
+
+  if (roomState.phase?.mode === "standby") {
+    roomState.phase.mode = roomState.room?.phase || "execution";
+    roomState.phase.title = "Execution";
+    roomState.phase.reason = roomState.room?.phase_reason || roomState.phase.reason;
+  }
 }
 
 function compactExecuteContinuityText(value, maxLength = 140) {
@@ -1400,6 +1615,134 @@ async function attachStatusStream(response) {
   statusStreamClients.add(response);
   ensureStatusStreamTimer();
   await broadcastStatusSnapshot();
+}
+
+// ─── Live panel stream plumbing ───────────────────────────────────────────────
+
+async function buildLivePanelsPayload() {
+  const [queue, metrics, costs] = await Promise.all([
+    readQueue().catch(() => []),
+    defaultGetMetrics().catch(() => null),
+    (async () => {
+      try {
+        const { getCostStats, formatCostSummary } = await import("./tools/rei-cost-tracker.mjs");
+        const stats = await getCostStats();
+        return { ...stats, summary: formatCostSummary(stats) };
+      } catch {
+        return null;
+      }
+    })()
+  ]);
+
+  return {
+    generatedAt: new Date().toISOString(),
+    queue: { tasks: Array.isArray(queue) ? queue : [] },
+    metrics,
+    costs
+  };
+}
+
+// Compact signature so we only push frames when something actually changed.
+function livePanelsSignature(payload) {
+  const tasks = payload.queue?.tasks || [];
+  const queueSig = tasks
+    .map((task) => `${task.id}:${task.status}:${task.result ? 1 : 0}`)
+    .join("|");
+  const metricsSig = payload.metrics
+    ? `${payload.metrics.totalRuns}:${payload.metrics.successRate}`
+    : "none";
+  const costSig = payload.costs?.total
+    ? `${payload.costs.total.runs}:${payload.costs.total.cost}`
+    : "none";
+  return `${queueSig}#${metricsSig}#${costSig}`;
+}
+
+function writeLiveStreamFrame(response, event, payload) {
+  response.write(
+    createSseFrame({
+      event,
+      retry: STATUS_STREAM_RETRY_MS,
+      id: `live-${++liveStreamSequence}`,
+      data: payload
+    })
+  );
+}
+
+async function broadcastLivePanels({ force = false } = {}) {
+  if (liveStreamClients.size === 0) {
+    return;
+  }
+
+  if (liveStreamInflight) {
+    return liveStreamInflight;
+  }
+
+  liveStreamInflight = (async () => {
+    try {
+      const payload = await buildLivePanelsPayload();
+      const signature = livePanelsSignature(payload);
+      const now = Date.now();
+      const changed = force || signature !== liveStreamLastSignature;
+      const beatDue = now - liveStreamLastBeat >= LIVE_STREAM_HEARTBEAT_MS;
+
+      if (!changed && !beatDue) {
+        return;
+      }
+
+      liveStreamLastSignature = signature;
+      liveStreamLastBeat = now;
+      const event = changed ? "panels" : "heartbeat";
+
+      for (const client of liveStreamClients) {
+        try {
+          writeLiveStreamFrame(client, event, payload);
+        } catch {
+          liveStreamClients.delete(client);
+        }
+      }
+    } catch {
+      // transient — next tick will retry
+    } finally {
+      liveStreamInflight = null;
+    }
+  })();
+
+  return liveStreamInflight;
+}
+
+function ensureLiveStreamTimer() {
+  if (liveStreamTimer || liveStreamClients.size === 0) {
+    return;
+  }
+
+  liveStreamTimer = setInterval(() => {
+    void broadcastLivePanels();
+  }, LIVE_STREAM_INTERVAL_MS);
+}
+
+function cleanupLiveStreamTimer() {
+  if (liveStreamClients.size > 0 || !liveStreamTimer) {
+    return;
+  }
+
+  clearInterval(liveStreamTimer);
+  liveStreamTimer = null;
+}
+
+async function attachLiveStream(response) {
+  response.writeHead(200, {
+    "Content-Type": "text/event-stream; charset=utf-8",
+    "Cache-Control": "no-cache, no-transform",
+    Connection: "keep-alive",
+    "X-Accel-Buffering": "no"
+  });
+  response.flushHeaders?.();
+  response.write(": connected\n\n");
+
+  liveStreamClients.add(response);
+  liveStreamLastSignature = null; // force a fresh frame for the new client
+  ensureLiveStreamTimer();
+  await broadcastLivePanels({ force: true });
 }
 
 export function contentType(filePath) {
@@ -2628,6 +2971,19 @@ export function createServer({
       });
 
       await attachStatusStream(response);
+      return;
+    }
+
+    if (url.pathname === "/api/live/stream") {
+      request.socket.setTimeout(0);
+      request.socket.setNoDelay(true);
+
+      request.on("close", () => {
+        liveStreamClients.delete(response);
+        cleanupLiveStreamTimer();
+      });
+
+      await attachLiveStream(response);
       return;
     }
 

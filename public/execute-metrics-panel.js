@@ -19,13 +19,13 @@ const dotsEl    = document.getElementById("metrics-recent-dots");
 
 // ── Outcome → colour ─────────────────────────────────────────────────────────
 const OUTCOME_COLOR = {
-  completed:     "#7cffba",
-  failed:        "#ff907c",
-  review_needed: "#ff907c",
-  aborted:       "#8fa8c6"
+  completed:     "var(--mint)",
+  failed:        "var(--rose)",
+  review_needed: "var(--rose)",
+  aborted:       "var(--muted)"
 };
 function outcomeColor(outcome) {
-  return OUTCOME_COLOR[outcome] ?? "#8fa8c6";
+  return OUTCOME_COLOR[outcome] ?? "var(--muted)";
 }
 
 // ── SVG bar chart (runtime comparison) ───────────────────────────────────────
@@ -49,8 +49,8 @@ function buildRuntimeBars(byRuntime) {
     const pct = s.total > 0 ? Math.round((s.completed / s.total) * 100) : 0;
     return `
       <text x="0" y="${y + ROW_H - 3}" font-size="10" fill="currentColor" font-family="monospace" opacity=".8">${id}</text>
-      <rect x="${LABEL_W}" y="${y}" width="${Math.max(cW, 0)}" height="${ROW_H}" fill="#7cffba" rx="3"/>
-      <rect x="${LABEL_W + cW}" y="${y}" width="${Math.max(fW, 0)}" height="${ROW_H}" fill="#ff907c" rx="3"/>
+      <rect x="${LABEL_W}" y="${y}" width="${Math.max(cW, 0)}" height="${ROW_H}" fill="var(--mint)" rx="3"/>
+      <rect x="${LABEL_W + cW}" y="${y}" width="${Math.max(fW, 0)}" height="${ROW_H}" fill="var(--rose)" rx="3"/>
       <text x="${LABEL_W + cW + fW + 5}" y="${y + ROW_H - 3}" font-size="10" fill="currentColor" font-family="monospace" opacity=".55">${pct}%</text>
     `;
   });
@@ -83,7 +83,7 @@ function render(data) {
   const pct = Math.round((data.successRate ?? 0) * 100);
   if (badgeEl) {
     badgeEl.textContent = `${pct}%`;
-    badgeEl.style.color = pct >= 70 ? "#7cffba" : pct >= 40 ? "#ffcc66" : "#ff907c";
+    badgeEl.style.color = pct >= 70 ? "var(--mint)" : pct >= 40 ? "var(--amber)" : "var(--rose)";
   }
 
   // Total runs subtitle
@@ -111,3 +111,10 @@ export async function pollMetrics() {
 
 pollMetrics();
 setInterval(pollMetrics, POLL_MS);
+
+// Real-time push from the live stream (rei-live.js). The poll above stays as a
+// fallback for when SSE is unavailable.
+window.addEventListener("rei-live:panels", (event) => {
+  const metrics = event.detail?.metrics;
+  if (metrics) render(metrics);
+});

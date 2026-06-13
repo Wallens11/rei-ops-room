@@ -2,8 +2,8 @@ export const ROOM_LAYOUT = {
   canvas: {
     width: 640,
     height: 420,
-    wall_height: 220,
-    floor_top: 220
+    wall_height: 118,
+    floor_top: 118
   },
   hallway: {
     center: { x: 322, y: 228 }
@@ -21,7 +21,7 @@ export const ROOM_LAYOUT = {
   rest_corner: {
     id: "rest_corner",
     title: "Recharge Nook",
-    origin: { x: 322, y: 112 },
+    origin: { x: 322, y: 150 },
     hotspot: { x: -50, y: -24, width: 112, height: 56 },
     rects: [
       { x: -76, y: -26, w: 152, h: 56, fill_active: "rest_glow", fill_inactive: "rest_glow_idle" },

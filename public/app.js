@@ -76,19 +76,31 @@ const context = canvas.getContext("2d");
 context.imageSmoothingEnabled = false;
 
 const COLORS = {
-  bg0: "#07111a",
-  bg1: "#0e1f31",
-  bg2: "#163450",
-  wallGlow: "rgba(101, 228, 255, 0.16)",
-  floorLine: "rgba(101, 228, 255, 0.08)",
-  white: "#edf3ff",
-  ink: "#041018",
+  bg0: "#171210",
+  bg1: "#2c2118",
+  bg2: "#3d2e21",
+  wallGlow: "rgba(255, 196, 110, 0.14)",
+  floorLine: "rgba(255, 214, 150, 0.06)",
+  white: "#f2ead9",
+  ink: "#120c08",
   cyan: "#65e4ff",
   mint: "#7cffba",
   amber: "#ffcc66",
   rose: "#ff907c",
   violet: "#b8a2ff"
 };
+
+// ─── House architecture (dollhouse cutaway) ──────────────────────────────────
+// Fixed visual constants — independent of the editable zone layout so custom
+// layouts saved with older wall heights still render correctly.
+const ARCH = {
+  ceilBottom: 26,    // ceiling beam strip 0..26
+  floorTop: 118,     // back wall ends, floor starts
+  cutBandTop: 402,   // front cutaway band at the bottom
+  sideWall: 10,      // left/right cut wall posts
+  door: { x: 42, w: 48, top: 38 } // front door on the back wall
+};
+const DOOR_ENTRY = { x: ARCH.door.x + ARCH.door.w / 2, y: ARCH.floorTop + 16 };
 
 const ACTIVITY_LABELS = {
   idle: "Idle",
@@ -2054,6 +2066,19 @@ async function refreshTaskQueue() {
   renderTaskQueue();
 }
 
+// Real-time queue updates pushed from the live stream (rei-live.js). Renders
+// from the pushed payload directly — no extra fetch. The poll in
+// startGithubInboxPolling() stays as a fallback for when SSE is unavailable.
+if (typeof window !== "undefined") {
+  window.addEventListener("rei-live:panels", (event) => {
+    const tasks = event.detail?.queue?.tasks;
+    if (Array.isArray(tasks)) {
+      renderState.taskQueue.tasks = tasks;
+      renderTaskQueue();
+    }
+  });
+}
+
 async function refreshWorkerStatus() {
   if (typeof fetch !== "function") return;
   if (!elements.workerStatusBadge) return;
@@ -2207,22 +2232,28 @@ function drawLayoutRects(origin, rects = [], palette = {}, { active = false } = 
 // ─── Cozy ambient elements ────────────────────────────────────────────────────
 
 function drawWarmLamp(x, y, frame) {
-  // Lamp pole
-  drawPixelRect(x - 2, y, 4, 28, COLORS.bg1);
+  const on = !renderState.lampOff;
+  // Lamp pole + base
+  drawPixelRect(x - 2, y, 4, 30, "#221710");
+  drawPixelRect(x - 8, y + 28, 16, 4, "#221710");
   // Lamp shade
-  drawPixelRect(x - 10, y - 8, 20, 8, COLORS.amber);
-  drawPixelRect(x - 8, y - 12, 16, 6, COLORS.amber);
-  // Warm glow cone — flickering slightly
-  const flicker = 0.18 + Math.sin(frame * 0.07 + x) * 0.04;
-  context.save();
-  const grad = context.createRadialGradient(x, y, 2, x, y + 20, 38);
-  grad.addColorStop(0, `rgba(255, 200, 100, ${flicker})`);
-  grad.addColorStop(1, "rgba(255, 200, 100, 0)");
-  context.fillStyle = grad;
-  context.fillRect(x - 38, y, 76, 60);
-  context.restore();
-  // Bulb
-  drawPixelRect(x - 3, y - 2, 6, 4, "rgba(255, 240, 180, 0.9)");
+  drawPixelRect(x - 10, y - 8, 20, 8, on ? COLORS.amber : "#4a3a26");
+  drawPixelRect(x - 8, y - 12, 16, 6, on ? COLORS.amber : "#4a3a26");
+  if (on) {
+    // Warm glow cone — flickering slightly
+    const flicker = 0.20 + Math.sin(frame * 0.07 + x) * 0.05;
+    context.save();
+    const grad = context.createRadialGradient(x, y, 2, x, y + 20, 44);
+    grad.addColorStop(0, `rgba(255, 200, 100, ${flicker})`);
+    grad.addColorStop(1, "rgba(255, 200, 100, 0)");
+    context.fillStyle = grad;
+    context.fillRect(x - 44, y - 4, 88, 70);
+    context.restore();
+    // Bulb
+    drawPixelRect(x - 3, y - 2, 6, 4, "rgba(255, 240, 180, 0.9)");
+  } else {
+    drawPixelRect(x - 3, y - 2, 6, 4, "rgba(140, 120, 90, 0.5)");
+  }
 }
 
 function drawPlant(x, y) {
@@ -2302,35 +2333,36 @@ function drawBookshelf(x, y) {
 }
 
 function drawClock(x, y, frame) {
-  // Clock face
-  drawPixelRect(x - 12, y - 12, 24, 24, COLORS.bg1);
-  drawPixelRect(x - 10, y - 10, 20, 20, "rgba(13, 31, 49, 0.9)");
-  drawPixelRect(x - 11, y - 11, 22, 2, COLORS.cyan);
-  drawPixelRect(x - 11, y + 9, 22, 2, COLORS.cyan);
-  drawPixelRect(x - 11, y - 11, 2, 22, COLORS.cyan);
-  drawPixelRect(x + 9, y - 11, 2, 22, COLORS.cyan);
-  // Clock hands (animated slowly)
-  const seconds = (frame / 30) % 60; // ~30fps
-  const minutes = seconds / 60;
-  const minuteAngle = minutes * Math.PI * 2 - Math.PI / 2;
-  const hourAngle = (minutes / 12) * Math.PI * 2 - Math.PI / 2;
+  // Wooden wall clock — hands follow real local time
+  drawPixelRect(x - 13, y - 13, 26, 26, "#221710");
+  drawPixelRect(x - 11, y - 11, 22, 22, "#4a3522");
+  drawPixelRect(x - 9, y - 9, 18, 18, "#f2ead9");
+  // Hour ticks
+  drawPixelRect(x - 1, y - 8, 2, 2, "#3a2c20");
+  drawPixelRect(x - 1, y + 6, 2, 2, "#3a2c20");
+  drawPixelRect(x - 8, y - 1, 2, 2, "#3a2c20");
+  drawPixelRect(x + 6, y - 1, 2, 2, "#3a2c20");
+
+  const now = new Date();
+  const minuteAngle = ((now.getMinutes() + now.getSeconds() / 60) / 60) * Math.PI * 2 - Math.PI / 2;
+  const hourAngle = (((now.getHours() % 12) + now.getMinutes() / 60) / 12) * Math.PI * 2 - Math.PI / 2;
   context.save();
   // Minute hand
-  context.strokeStyle = COLORS.white;
+  context.strokeStyle = "#2a1c10";
   context.lineWidth = 1.5;
   context.beginPath();
   context.moveTo(x, y);
   context.lineTo(x + Math.cos(minuteAngle) * 7, y + Math.sin(minuteAngle) * 7);
   context.stroke();
   // Hour hand
-  context.strokeStyle = COLORS.cyan;
-  context.lineWidth = 1.5;
+  context.strokeStyle = "#7a4a20";
+  context.lineWidth = 2;
   context.beginPath();
   context.moveTo(x, y);
   context.lineTo(x + Math.cos(hourAngle) * 5, y + Math.sin(hourAngle) * 5);
   context.stroke();
-  // Center dot
-  context.fillStyle = COLORS.white;
+  // Center pin
+  context.fillStyle = COLORS.amber;
   context.fillRect(x - 1, y - 1, 2, 2);
   context.restore();
 }
@@ -2355,86 +2387,92 @@ function drawDustParticles(frame, tone) {
 }
 
 function drawWindowWithLight(frame, tone) {
-  // Window frame
-  drawPixelRect(220, 20, 200, 72, COLORS.bg2);
-  drawPixelRect(222, 22, 196, 68, "rgba(101, 228, 255, 0.06)");
+  // Window on the back wall, right of the planning board
+  const wx = 398, wy = 34, ww = 116, wh = 70;
+
+  // Outer wooden frame
+  drawPixelRect(wx - 4, wy - 4, ww + 8, wh + 8, "#221710");
+  drawPixelRect(wx - 2, wy - 2, ww + 4, wh + 4, "#4a3522");
 
   // Sky color varies by tone
   const skyColor = tone === "rest"
-    ? "rgba(30, 20, 80, 0.9)"
+    ? "rgba(24, 18, 58, 0.95)"
     : tone === "busy"
-      ? "rgba(20, 60, 100, 0.85)"
-      : "rgba(15, 40, 80, 0.8)";
-  drawPixelRect(224, 24, 192, 64, skyColor);
+      ? "rgba(18, 48, 84, 0.92)"
+      : "rgba(14, 34, 66, 0.9)";
+  drawPixelRect(wx, wy, ww, wh, skyColor);
 
-  // Window panes (cross dividers)
-  drawPixelRect(318, 24, 4, 64, COLORS.bg2);  // vertical
-  drawPixelRect(224, 55, 192, 4, COLORS.bg2); // horizontal
-
-  // Stars in night mode
-  if (tone === "rest") {
-    [[250, 36], [290, 44], [340, 32], [380, 50], [420, 40], [460, 35]].forEach(([sx, sy]) => {
-      const twinkle = 0.5 + Math.sin(frame * 0.04 + sx * 0.1) * 0.5;
-      drawPixelRect(sx, sy, 2, 2, `rgba(237, 243, 255, ${twinkle * 0.8})`);
-    });
-  } else {
-    // City lights / horizon glow
-    const glowAlpha = tone === "busy" ? 0.3 : 0.2;
-    context.save();
-    const horizGrad = context.createLinearGradient(224, 50, 224, 88);
-    horizGrad.addColorStop(0, `rgba(101, 228, 255, 0)`);
-    horizGrad.addColorStop(1, `rgba(101, 228, 255, ${glowAlpha})`);
-    context.fillStyle = horizGrad;
-    context.fillRect(224, 50, 192, 38);
-    context.restore();
-
-    // Distant building silhouettes
-    [[240, 52, 8, 16], [256, 58, 6, 10], [270, 50, 10, 18], [310, 55, 7, 13],
-     [360, 48, 9, 20], [395, 54, 6, 14], [420, 50, 11, 18], [450, 56, 7, 12]].forEach(([bx, by, bw, bh]) => {
-      drawPixelRect(bx, by, bw, bh, "rgba(5, 15, 30, 0.7)");
-      // Window lights on buildings
-      if (bh > 14) {
-        drawPixelRect(bx + 2, by + 3, 2, 2, "rgba(255, 200, 100, 0.5)");
-        drawPixelRect(bx + 5, by + 7, 2, 2, "rgba(255, 200, 100, 0.3)");
-      }
-    });
+  // Moon at night
+  if (tone === "rest" || tone === "calm") {
+    drawPixelRect(wx + 86, wy + 12, 10, 10, "rgba(242, 234, 217, 0.85)");
+    drawPixelRect(wx + 88, wy + 14, 4, 4, skyColor);
   }
 
-  // Window sill
-  drawPixelRect(218, 92, 204, 5, COLORS.bg1);
+  // Stars
+  [[wx + 14, wy + 10], [wx + 38, wy + 18], [wx + 62, wy + 8], [wx + 50, wy + 30], [wx + 96, wy + 34], [wx + 24, wy + 28]].forEach(([sx, sy]) => {
+    const twinkle = 0.4 + Math.sin(frame * 0.04 + sx * 0.13) * 0.35;
+    drawPixelRect(sx, sy, 2, 2, `rgba(242, 234, 217, ${twinkle})`);
+  });
 
-  // Light rays from window (only calm/steady)
-  if (!renderState.reducedMotion && (tone === "calm" || tone === "steady")) {
-    const rayAlpha = 0.04 + Math.sin(frame * 0.025) * 0.02;
+  // Distant city silhouettes + lit windows
+  [[wx + 6, wy + 44, 12, 26], [wx + 24, wy + 52, 9, 18], [wx + 40, wy + 46, 14, 24],
+   [wx + 60, wy + 54, 10, 16], [wx + 76, wy + 48, 13, 22], [wx + 94, wy + 56, 11, 14]].forEach(([bx, by, bw, bh]) => {
+    drawPixelRect(bx, by, bw, bh, "rgba(6, 12, 26, 0.85)");
+    if (bh > 16) {
+      drawPixelRect(bx + 2, by + 4, 2, 2, "rgba(255, 200, 100, 0.55)");
+      drawPixelRect(bx + bw - 4, by + 8, 2, 2, "rgba(255, 200, 100, 0.35)");
+    }
+  });
+
+  // Window panes (cross dividers)
+  drawPixelRect(wx + ww / 2 - 2, wy, 4, wh, "#4a3522");
+  drawPixelRect(wx, wy + wh / 2 - 2, ww, 4, "#4a3522");
+
+  // Window sill with a tiny succulent
+  drawPixelRect(wx - 8, wy + wh + 4, ww + 16, 5, "#4a3522");
+  drawPixelRect(wx + 10, wy + wh - 4, 8, 8, COLORS.rose);
+  drawPixelRect(wx + 12, wy + wh - 10, 4, 6, COLORS.mint);
+
+  // Moonlight pooling onto the floor below the window
+  if (!renderState.reducedMotion && (tone === "calm" || tone === "steady" || tone === "rest")) {
+    const rayAlpha = 0.035 + Math.sin(frame * 0.025) * 0.015;
     context.save();
-    context.fillStyle = `rgba(101, 228, 255, ${rayAlpha})`;
-    // Two angled light beams
+    context.fillStyle = `rgba(180, 200, 255, ${rayAlpha})`;
     context.beginPath();
-    context.moveTo(260, 88);
-    context.lineTo(280, 88);
-    context.lineTo(180, 280);
-    context.lineTo(160, 280);
-    context.fill();
-    context.beginPath();
-    context.moveTo(360, 88);
-    context.lineTo(380, 88);
-    context.lineTo(480, 280);
-    context.lineTo(460, 280);
+    context.moveTo(wx + 8, wy + wh);
+    context.lineTo(wx + ww - 8, wy + wh);
+    context.lineTo(wx + ww + 34, ARCH.floorTop + 110);
+    context.lineTo(wx - 34, ARCH.floorTop + 110);
     context.fill();
     context.restore();
   }
 }
 
-function drawRug(floorTop) {
-  // Simple decorative rug in the center of the floor
-  drawPixelRect(220, floorTop + 40, 200, 80, "rgba(184, 162, 255, 0.06)");
-  drawPixelRect(222, floorTop + 42, 196, 76, "rgba(184, 162, 255, 0.04)");
-  // Rug border pattern
-  for (let i = 0; i < 10; i++) {
-    drawPixelRect(222 + i * 20, floorTop + 42, 2, 76, "rgba(184, 162, 255, 0.08)");
+function drawRug(labZone) {
+  // Woven rug under the lab table — follows the (editable) lab zone position
+  const cx = labZone?.x ?? 322;
+  const cy = (labZone?.y ?? 216) + 14;
+  const rw = 208;
+  const rh = 96;
+  const x = cx - rw / 2;
+  const y = cy - rh / 2;
+
+  drawPixelRect(x, y, rw, rh, "rgba(196, 130, 90, 0.10)");
+  drawPixelRect(x + 4, y + 4, rw - 8, rh - 8, "rgba(184, 162, 255, 0.05)");
+  // Border bands
+  drawPixelRect(x, y, rw, 4, "rgba(214, 158, 110, 0.16)");
+  drawPixelRect(x, y + rh - 4, rw, 4, "rgba(214, 158, 110, 0.16)");
+  drawPixelRect(x, y, 4, rh, "rgba(214, 158, 110, 0.12)");
+  drawPixelRect(x + rw - 4, y, 4, rh, "rgba(214, 158, 110, 0.12)");
+  // Woven stripes
+  for (let i = 1; i < 6; i++) {
+    drawPixelRect(x + 8, y + i * (rh / 6), rw - 16, 2, "rgba(184, 162, 255, 0.06)");
   }
-  drawPixelRect(222, floorTop + 42, 196, 4, "rgba(184, 162, 255, 0.12)");
-  drawPixelRect(222, floorTop + 114, 196, 4, "rgba(184, 162, 255, 0.12)");
+  // Fringe
+  for (let fx = x + 4; fx < x + rw - 4; fx += 8) {
+    drawPixelRect(fx, y - 3, 3, 3, "rgba(214, 158, 110, 0.14)");
+    drawPixelRect(fx, y + rh, 3, 3, "rgba(214, 158, 110, 0.14)");
+  }
 }
 
 // ─── Day/night cycle ─────────────────────────────────────────────────────────
@@ -2464,13 +2502,13 @@ function getAmbientProfile(now = new Date()) {
     progress = (h - 19) / 5;
   }
 
-  // Wall colors (top → bottom of gradient)
+  // Wall colors (top → bottom of gradient) — warm plaster, shifts with the day
   const palettes = {
-    night:   { wallTop: "#0a1428", floorTint: "rgba(60, 80, 140, 0.10)",  lampBoost: 1.0,  starVisible: true,  windowHue: "#2a3050" },
-    dawn:    { wallTop: "#2a2040", floorTint: "rgba(180, 120, 100, 0.06)", lampBoost: 0.6,  starVisible: false, windowHue: "#ff9c80" },
-    day:     { wallTop: "#1a3658", floorTint: "rgba(200, 200, 220, 0.0)",  lampBoost: 0.0,  starVisible: false, windowHue: "#8acfff" },
-    dusk:    { wallTop: "#3a2548", floorTint: "rgba(220, 120, 80, 0.08)",  lampBoost: 0.4,  starVisible: false, windowHue: "#ff7c40" },
-    evening: { wallTop: "#10182e", floorTint: "rgba(80, 100, 160, 0.08)",  lampBoost: 0.9,  starVisible: true,  windowHue: "#3050a0" }
+    night:   { wallTop: "#241c2e", floorTint: "rgba(90, 80, 160, 0.08)",   lampBoost: 1.0,  starVisible: true,  windowHue: "#2a3050" },
+    dawn:    { wallTop: "#3c2a30", floorTint: "rgba(220, 140, 100, 0.06)", lampBoost: 0.6,  starVisible: false, windowHue: "#ff9c80" },
+    day:     { wallTop: "#3a322e", floorTint: "rgba(240, 220, 180, 0.04)", lampBoost: 0.0,  starVisible: false, windowHue: "#8acfff" },
+    dusk:    { wallTop: "#42282a", floorTint: "rgba(230, 140, 80, 0.07)",  lampBoost: 0.4,  starVisible: false, windowHue: "#ff7c40" },
+    evening: { wallTop: "#2a2030", floorTint: "rgba(110, 100, 180, 0.06)", lampBoost: 0.9,  starVisible: true,  windowHue: "#3050a0" }
   };
 
   return {
@@ -2612,12 +2650,151 @@ function maybeSpawnActivityParticles(actor, agentState) {
     spawnBurst("thought", actor.x, actor.y - 50, 1);
   }
 
+  // Keystroke ticks — tiny sparks popping off the keyboard while typing.
+  // This is the main "she's actually working" tell, so it fires often.
+  if (
+    !renderState.reducedMotion &&
+    (next === "coding" || next === "debugging") &&
+    (actor.pose === "type" || actor.motionState === "SEATED") &&
+    Math.random() < 0.35
+  ) {
+    const side = Math.random() < 0.5 ? -1 : 1;
+    spawnParticle({
+      x: actor.x + side * (6 + Math.random() * 6),
+      y: actor.y - 14,
+      vx: side * (0.2 + Math.random() * 0.3),
+      vy: -0.6 - Math.random() * 0.5,
+      life: 8 + Math.random() * 6,
+      color: next === "debugging" ? "rgba(255, 144, 124, 0.8)" : "rgba(255, 214, 150, 0.8)",
+      size: 1,
+      kind: "keystroke",
+      gravity: 0.04
+    });
+  }
+
   __particleTriggerState.lastActivities.set(actor.id, next);
 }
 
 // Exposed so external code (e.g. completion signals) can trigger bursts
 if (typeof window !== "undefined") {
   window.reiSpawnBurst = spawnBurst;
+}
+
+function drawCeiling(frame, ambient) {
+  // Exposed beam ceiling — the "attic" edge of the dollhouse cutaway
+  drawPixelRect(0, 0, CANVAS_WIDTH, ARCH.ceilBottom, "#1d150f");
+  // Joists
+  for (let jx = 24; jx < CANVAS_WIDTH; jx += 76) {
+    drawPixelRect(jx, 0, 6, ARCH.ceilBottom, "#15100b");
+    drawPixelRect(jx + 6, 0, 1, ARCH.ceilBottom, "rgba(255, 214, 150, 0.06)");
+  }
+  // Main beam along the bottom edge
+  drawPixelRect(0, ARCH.ceilBottom - 5, CANVAS_WIDTH, 5, "#241a12");
+  drawPixelRect(0, ARCH.ceilBottom - 5, CANVAS_WIDTH, 1, "rgba(255, 214, 150, 0.10)");
+
+  // String lights hanging from the beam — glow after dark
+  const lit = ambient.lampBoost > 0.3;
+  for (let lx = 150; lx < CANVAS_WIDTH - 30; lx += 38) {
+    const sway = renderState.reducedMotion ? 0 : Math.sin(frame * 0.02 + lx) * 1.5;
+    const hue = (lx / 38) % 3 === 0 ? COLORS.amber : (lx / 38) % 3 === 1 ? COLORS.mint : COLORS.rose;
+    drawPixelRect(lx + sway, ARCH.ceilBottom - 1, 1, 4, "rgba(255,255,255,0.16)");
+    if (lit) {
+      const flicker = 0.55 + Math.sin(frame * 0.06 + lx * 0.7) * 0.2;
+      drawPixelRect(lx + sway - 1, ARCH.ceilBottom + 3, 3, 3, withAlpha(hue, flicker));
+      drawPixelRect(lx + sway - 3, ARCH.ceilBottom + 1, 7, 7, withAlpha(hue, 0.08));
+    } else {
+      drawPixelRect(lx + sway - 1, ARCH.ceilBottom + 3, 3, 3, "rgba(255,255,255,0.14)");
+    }
+  }
+}
+
+function drawFrontDoor(frame) {
+  const { x, w, top } = ARCH.door;
+  const h = ARCH.floorTop - top;
+
+  // Animate: door eases open when someone is near it (or walking in)
+  const target = (renderState.actors || []).some((a) =>
+    Math.hypot(a.x - DOOR_ENTRY.x, a.y - DOOR_ENTRY.y) < 42
+  ) ? 1 : 0;
+  renderState.doorAnim = (renderState.doorAnim ?? 0) + (target - (renderState.doorAnim ?? 0)) * 0.18;
+  const open = renderState.doorAnim;
+
+  // Door frame
+  drawPixelRect(x - 6, top - 6, w + 12, h + 6, "#221710");
+  drawPixelRect(x - 3, top - 3, w + 6, h + 3, "#4a3522");
+  // Dark hallway behind the door (revealed as it opens)
+  drawPixelRect(x, top, w, h, "#0c0805");
+  if (open > 0.05) {
+    // Warm hallway light spills in
+    drawPixelRect(x + 2, top + 2, w - 4, h - 2, withAlpha("#ffcc66", 0.05 + open * 0.07));
+  }
+
+  // Door panel — slides/folds toward the hinge as it opens (pixel fake-3D)
+  const panelW = Math.max(6, Math.round(w * (1 - open * 0.82)));
+  drawPixelRect(x, top, panelW, h, "#5a4028");
+  drawPixelRect(x, top, panelW, 3, "#6e4e30");
+  // Panel insets
+  if (panelW > 18) {
+    drawPixelRect(x + 5, top + 10, panelW - 10, 22, "#4a3522");
+    drawPixelRect(x + 5, top + 42, panelW - 10, 26, "#4a3522");
+  }
+  // Door knob
+  if (panelW > 10) {
+    drawPixelRect(x + panelW - 7, top + Math.round(h / 2), 3, 3, COLORS.amber);
+  }
+
+  // Doormat just inside the room
+  drawPixelRect(x - 2, ARCH.floorTop + 6, w + 4, 14, "rgba(214, 158, 110, 0.18)");
+  drawPixelRect(x + 2, ARCH.floorTop + 9, w - 4, 8, "rgba(120, 80, 50, 0.30)");
+}
+
+function drawFloorPlanks(ambient) {
+  // Warm wood planks with perspective — rows grow taller toward the viewer
+  let y = ARCH.floorTop;
+  let rowH = 12;
+  let rowIndex = 0;
+  while (y < CANVAS_HEIGHT) {
+    const t = (y - ARCH.floorTop) / (CANVAS_HEIGHT - ARCH.floorTop);
+    const r = Math.round(74 - t * 34);
+    const g = Math.round(54 - t * 26);
+    const b = Math.round(38 - t * 20);
+    drawPixelRect(0, y, CANVAS_WIDTH, rowH, `rgb(${r}, ${g}, ${b})`);
+    // Plank seam
+    drawPixelRect(0, y, CANVAS_WIDTH, 1, "rgba(0, 0, 0, 0.30)");
+    // Staggered vertical joints
+    const stagger = (rowIndex % 2) * 70;
+    for (let jx = stagger + 40; jx < CANVAS_WIDTH; jx += 140) {
+      drawPixelRect(jx, y + 1, 2, rowH - 1, "rgba(0, 0, 0, 0.16)");
+    }
+    // Faint grain highlight
+    drawPixelRect(0, y + 1, CANVAS_WIDTH, 1, "rgba(255, 214, 150, 0.035)");
+    y += rowH;
+    rowH += 2;
+    rowIndex += 1;
+  }
+
+  // Time-of-day tint pooled over the wood
+  if (ambient.floorTint) {
+    context.fillStyle = ambient.floorTint;
+    context.fillRect(0, ARCH.floorTop, CANVAS_WIDTH, CANVAS_HEIGHT - ARCH.floorTop);
+  }
+}
+
+function drawHouseCut() {
+  // Left/right cut walls + front cut band — frames the scene as a dollhouse
+  const grad = context.createLinearGradient(0, ARCH.ceilBottom, 0, CANVAS_HEIGHT);
+  grad.addColorStop(0, "#241a12");
+  grad.addColorStop(1, "#171210");
+  context.fillStyle = grad;
+  context.fillRect(0, 0, ARCH.sideWall, CANVAS_HEIGHT);
+  context.fillRect(CANVAS_WIDTH - ARCH.sideWall, 0, ARCH.sideWall, CANVAS_HEIGHT);
+  // Inner edge highlights
+  drawPixelRect(ARCH.sideWall - 1, ARCH.ceilBottom, 1, CANVAS_HEIGHT, "rgba(255, 214, 150, 0.10)");
+  drawPixelRect(CANVAS_WIDTH - ARCH.sideWall, ARCH.ceilBottom, 1, CANVAS_HEIGHT, "rgba(255, 214, 150, 0.10)");
+
+  // Front cutaway band along the bottom
+  drawPixelRect(0, ARCH.cutBandTop, CANVAS_WIDTH, CANVAS_HEIGHT - ARCH.cutBandTop, "#1a120c");
+  drawPixelRect(0, ARCH.cutBandTop, CANVAS_WIDTH, 2, "rgba(255, 214, 150, 0.10)");
 }
 
 function drawRoomBase(tone = "calm") {
@@ -2628,92 +2805,51 @@ function drawRoomBase(tone = "calm") {
   context.fillStyle = COLORS.bg0;
   context.fillRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
 
-  const layout = currentLayout();
-
-  // Wall — gradient driven by both task tone AND time-of-day
-  const wallGradient = context.createLinearGradient(0, 0, 0, layout.canvas.wall_height);
-  // Blend ambient (time-of-day) with tone-based tweaks: 60% ambient, 40% tone bias
-  const toneShift = tone === "rest" ? -8 : tone === "busy" ? -4 : 0;
-  const wallTop = ambient.wallTop;
-  wallGradient.addColorStop(0, wallTop);
+  // Back wall — warm plaster, gradient driven by time-of-day
+  const wallGradient = context.createLinearGradient(0, ARCH.ceilBottom, 0, ARCH.floorTop);
+  wallGradient.addColorStop(0, ambient.wallTop);
   wallGradient.addColorStop(1, COLORS.bg1);
   context.fillStyle = wallGradient;
-  context.fillRect(0, 0, CANVAS_WIDTH, layout.canvas.wall_height);
+  context.fillRect(0, ARCH.ceilBottom, CANVAS_WIDTH, ARCH.floorTop - ARCH.ceilBottom);
 
-  // Stars at night (subtle twinkle in upper area)
-  if (ambient.starVisible) {
-    const starSeed = Math.floor(renderState.frame / 30);
-    for (let s = 0; s < 24; s++) {
-      const sx = (s * 73 + 13) % CANVAS_WIDTH;
-      const sy = ((s * 41) % 70) + 4;
-      const twinkle = ((s * 7 + starSeed) % 9) > 4 ? 0.5 : 0.85;
-      context.fillStyle = `rgba(220, 230, 255, ${twinkle})`;
-      context.fillRect(sx, sy, 1, 1);
-    }
+  // Wall paneling lines
+  for (let px = 36; px < CANVAS_WIDTH; px += 64) {
+    drawPixelRect(px, ARCH.ceilBottom, 1, ARCH.floorTop - ARCH.ceilBottom - 6, "rgba(0, 0, 0, 0.10)");
   }
 
-  // Ceiling overhead light strip — stronger at night
-  const lightBase = tone === "busy" ? 0.28 : tone === "steady" ? 0.22 : 0.16;
-  const lightIntensity = lightBase + ambient.lampBoost * 0.12;
-  const lightGrad = context.createRadialGradient(320, 0, 0, 320, 0, 180);
-  lightGrad.addColorStop(0, `rgba(200, 230, 255, ${lightIntensity})`);
-  lightGrad.addColorStop(1, "rgba(200, 230, 255, 0)");
+  // Warm pool of light on the wall (overhead glow)
+  const lightBase = tone === "busy" ? 0.20 : tone === "steady" ? 0.16 : 0.12;
+  const lightIntensity = lightBase + ambient.lampBoost * 0.10;
+  const lightGrad = context.createRadialGradient(320, ARCH.ceilBottom, 0, 320, ARCH.ceilBottom, 200);
+  lightGrad.addColorStop(0, `rgba(255, 214, 150, ${lightIntensity})`);
+  lightGrad.addColorStop(1, "rgba(255, 214, 150, 0)");
   context.fillStyle = lightGrad;
-  context.fillRect(0, 0, CANVAS_WIDTH, layout.canvas.wall_height);
-  // Light fixture pixel art
-  drawPixelRect(240, 0, 160, 2, "rgba(255,255,255,0.15)");
-  drawPixelRect(260, 0, 120, 5, "rgba(220,240,255,0.22)");
+  context.fillRect(0, ARCH.ceilBottom, CANVAS_WIDTH, ARCH.floorTop - ARCH.ceilBottom);
 
-  // Decorative bookshelf on left wall
-  drawBookshelf(12, 30);
+  // Floor — wood planks with perspective
+  drawFloorPlanks(ambient);
 
-  // Window with city view (replaces old simple glow)
+  // Baseboard where wall meets floor
+  drawPixelRect(0, ARCH.floorTop - 6, CANVAS_WIDTH, 6, "#2e2118");
+  drawPixelRect(0, ARCH.floorTop - 6, CANVAS_WIDTH, 1, "rgba(255, 214, 150, 0.12)");
+
+  // Wall furniture & openings
+  drawFrontDoor(renderState.frame);
+  drawBookshelf(108, 40);
   drawWindowWithLight(renderState.frame, tone);
+  drawClock(600, 52, renderState.frame);
 
-  // Clock on right wall
-  drawClock(590, 52, renderState.frame);
+  // Ceiling beams + string lights (drawn over wall top edge)
+  drawCeiling(renderState.frame, ambient);
 
-  // Warm lamp glow (right side of room)
+  // Floor lamp (right side, interactive — click to toggle)
   drawWarmLamp(555, 125, renderState.frame);
 
-  // Floor
-  context.fillStyle = COLORS.bg2;
-  context.fillRect(0, layout.canvas.floor_top, CANVAS_WIDTH, CANVAS_HEIGHT - layout.canvas.floor_top);
+  // Rug under the lab table
+  drawRug(zoneById("lab"));
 
-  // Ambient tint on floor (cool at night, warm at dawn/dusk)
-  if (ambient.floorTint && ambient.floorTint !== "rgba(200, 200, 220, 0.0)") {
-    context.fillStyle = ambient.floorTint;
-    context.fillRect(0, layout.canvas.floor_top, CANVAS_WIDTH, CANVAS_HEIGHT - layout.canvas.floor_top);
-  }
-
-  // Rug
-  drawRug(layout.canvas.floor_top);
-
-  // Floor grid lines
-  for (let row = 0; row < 12; row += 1) {
-    context.strokeStyle = COLORS.floorLine;
-    context.lineWidth = 0.5;
-    context.beginPath();
-    context.moveTo(0, layout.canvas.floor_top + row * 18);
-    context.lineTo(CANVAS_WIDTH, layout.canvas.floor_top + row * 18);
-    context.stroke();
-  }
-
-  // Diagonal floor lines (subtle perspective)
-  for (let col = 0; col < 18; col += 1) {
-    context.strokeStyle = "rgba(255, 255, 255, 0.018)";
-    context.lineWidth = 0.5;
-    context.beginPath();
-    context.moveTo(col * 36, layout.canvas.floor_top);
-    context.lineTo(col * 36 + 20, CANVAS_HEIGHT);
-    context.stroke();
-  }
-
-  // Plant in bottom-left corner
-  drawPlant(38, layout.canvas.floor_top + 30);
-
-  // Coffee on the lab desk area (approximate position)
-  drawCoffee(310, layout.canvas.floor_top + 12, renderState.frame);
+  // Dollhouse cut frame
+  drawHouseCut();
 
   // Floating dust particles (ambient life)
   drawDustParticles(renderState.frame, tone);
@@ -2892,12 +3028,59 @@ function drawHandoffTrail(scene) {
 }
 
 function drawZoneLabel(zone, active) {
-  context.fillStyle = active ? zone.color || COLORS.cyan : "rgba(237, 243, 255, 0.16)";
-  context.fillRect(zone.labelX, zone.labelY, zone.labelWidth || 84, zone.labelHeight || 12);
+  const w = zone.labelWidth || 84;
+  const h = zone.labelHeight || 12;
+  const x = zone.labelX;
+  const y = zone.labelY;
 
-  context.fillStyle = COLORS.ink;
-  context.font = "10px monospace";
-  context.fillText(zone.id.toUpperCase(), zone.labelX + 8, zone.labelY + 9);
+  // Hanging wooden name sign
+  drawPixelRect(x + 8, y - 4, 1, 4, "rgba(255, 214, 150, 0.25)");
+  drawPixelRect(x + w - 9, y - 4, 1, 4, "rgba(255, 214, 150, 0.25)");
+  drawPixelRect(x, y, w, h + 2, "#221710");
+  drawPixelRect(x + 1, y + 1, w - 2, h, active ? "#4a3522" : "#332417");
+  // Zone color pip
+  drawPixelRect(x + 4, y + 4, 5, 5, active ? zone.color : withAlpha(zone.color, 0.45));
+
+  context.fillStyle = active ? COLORS.white : "rgba(242, 234, 217, 0.55)";
+  context.font = "8px monospace";
+  context.fillText(zone.id.toUpperCase(), x + 13, y + 10);
+}
+
+function drawZoneRoom(zone, active, hovered) {
+  // Each zone reads as its own little room: tinted floor area, corner posts.
+  if (zone.id === "lab") return; // the lab is the open hub — it gets the rug
+
+  const hs = zone.hotspot || { x: -66, y: -58, width: 132, height: 108 };
+  const rx = zone.x + hs.x;
+  const ryRaw = zone.y + hs.y;
+  const ry = Math.max(ryRaw, ARCH.floorTop + 4); // never climb the wall
+  const rw = hs.width;
+  const rh = ryRaw + hs.height - ry;
+  if (rh < 24) return;
+
+  // Room floor mat
+  drawPixelRect(rx, ry, rw, rh, withAlpha(zone.color, active ? 0.09 : 0.045));
+  // Skirting border
+  drawPixelRect(rx, ry, rw, 2, withAlpha(zone.color, active ? 0.30 : 0.14));
+  drawPixelRect(rx, ry + rh - 2, rw, 2, withAlpha(zone.color, active ? 0.22 : 0.10));
+  drawPixelRect(rx, ry, 2, rh, withAlpha(zone.color, active ? 0.22 : 0.10));
+  drawPixelRect(rx + rw - 2, ry, 2, rh, withAlpha(zone.color, active ? 0.22 : 0.10));
+
+  // Corner posts (little wooden pillars with a colored cap)
+  [[rx, ry], [rx + rw - 5, ry], [rx, ry + rh - 12], [rx + rw - 5, ry + rh - 12]].forEach(([px, py]) => {
+    drawPixelRect(px, py, 5, 12, "#2e2118");
+    drawPixelRect(px, py, 5, 3, withAlpha(zone.color, active ? 0.85 : 0.35));
+  });
+
+  // Hover: glowing outline so the room feels touchable
+  if (hovered) {
+    const pulse = 0.35 + Math.sin(renderState.frame * 0.15) * 0.15;
+    context.save();
+    context.strokeStyle = withAlpha(zone.color, pulse);
+    context.lineWidth = 2;
+    context.strokeRect(rx - 3, ry - 3, rw + 6, rh + 6);
+    context.restore();
+  }
 }
 
 function drawDesk(x, y, accent, active) {
@@ -3187,90 +3370,58 @@ function actorPalette(actorId, accent) {
   return { body: COLORS.cyan, accent };
 }
 
-// --- Matrix spawn/despawn effect ---
+// --- Door-entry spawn ---
+// New agents don't materialise out of thin air: they wait behind the front
+// door, step in one at a time (staggered), and walk to their desk. The
+// movement engine handles the walk — we just start them at the doorway.
 
-// Per-agent spawn animation state
-const agentSpawnState = new Map(); // agentId → { startFrame, active }
+const agentSpawnState = new Map(); // agentId → { releaseFrame, entering, burstDone }
+const SPAWN_STAGGER_FRAMES = 7;
 
-function getOrInitSpawnState(agentId, frame) {
-  if (!agentSpawnState.has(agentId)) {
-    agentSpawnState.set(agentId, { startFrame: frame, active: true });
-  }
-  return agentSpawnState.get(agentId);
-}
-
-function drawMatrixSpawn(x, y, frame, spawnStartFrame, accent) {
-  const DURATION_FRAMES = 45; // ~1.5s at 30fps
-  const elapsed = frame - spawnStartFrame;
-  if (elapsed > DURATION_FRAMES) return false; // done
-
-  const progress = elapsed / DURATION_FRAMES; // 0→1
-  const CHAR_W = 20, CHAR_H = 44; // character bounding box
-  const COLS = 4;
-  const COL_W = Math.floor(CHAR_W / COLS);
-
-  context.save();
-  for (let col = 0; col < COLS; col++) {
-    const colDelay = col / COLS * 0.3;
-    const colProgress = Math.max(0, Math.min(1, (progress - colDelay) / 0.7));
-    if (colProgress <= 0) continue;
-
-    const revealY = CHAR_H * colProgress;
-    const colX = x - 10 + col * COL_W;
-
-    for (let py = 0; py < revealY; py += 2) {
-      // Hash-based flicker like pixel-agents
-      const hash = ((col * 7 + py * 13 + frame * 31) & 0xff) / 255;
-      let alpha, color;
-      if (py > revealY - 6) {
-        // Bright head
-        alpha = 0.95;
-        color = "#ccffcc";
-      } else if (py > revealY - 14) {
-        // Mid trail
-        alpha = 0.55 + hash * 0.2;
-        color = accent;
-      } else {
-        // Fading tail
-        alpha = 0.2 + hash * 0.15;
-        color = COLORS.mint;
-      }
-      context.globalAlpha = alpha;
-      context.fillStyle = color;
-      context.fillRect(colX, y - 10 + py, COL_W - 1, 2);
-    }
-  }
-  context.restore();
-  return true; // still animating
-}
-
-// --- Z-sorted multi-agent render ---
-
-function renderActorsSorted(actors, agentStates, primaryActorId, frame) {
+function collectActorDrawables(drawables, actors, agentStates, primaryActorId, frame) {
   if (!actors || actors.length === 0) return;
 
-  // Sort actors by their y-bottom so those lower on screen appear in front
-  const sorted = [...actors].sort((a, b) => (a.y + 44) - (b.y + 44));
+  actors.forEach((actor, index) => {
+    let spawn = agentSpawnState.get(actor.id);
+    if (!spawn) {
+      spawn = {
+        releaseFrame: frame + index * SPAWN_STAGGER_FRAMES,
+        entering: true,
+        burstDone: false
+      };
+      agentSpawnState.set(actor.id, spawn);
+      actor.x = DOOR_ENTRY.x;
+      actor.y = DOOR_ENTRY.y;
+    }
 
-  sorted.forEach((actor) => {
+    if (spawn.entering) {
+      if (frame < spawn.releaseFrame) {
+        // Still queued in the hallway — hold at the door, don't draw yet
+        actor.x = DOOR_ENTRY.x;
+        actor.y = DOOR_ENTRY.y;
+        return;
+      }
+      if (!spawn.burstDone) {
+        spawn.burstDone = true;
+        spawnBurst("thought", DOOR_ENTRY.x, DOOR_ENTRY.y - 26, 3);
+      }
+      const distFromDoor = Math.hypot(actor.x - DOOR_ENTRY.x, actor.y - DOOR_ENTRY.y);
+      if (distFromDoor > 64 || frame - spawn.releaseFrame > 90) {
+        spawn.entering = false;
+      }
+    }
+
     const agentState = agentStates?.find((s) => s.id === actor.id) || {
       activity: "idle",
       assigned_zone: actor.currentZone || "lab"
     };
-    const isPrimary = actor.id === primaryActorId;
+    const seated = ["sit", "type", "read"].includes(actor.pose) ||
+      actor.motionState === "SEATED" || actor.motionState === "REST";
 
-    // Matrix spawn effect for new agents
-    const spawn = getOrInitSpawnState(actor.id, frame);
-    if (spawn.active) {
-      const { accent } = actorPalette(actor.id, COLORS.cyan);
-      const still = !drawMatrixSpawn(actor.x, actor.y, frame, spawn.startFrame, accent);
-      if (still) {
-        spawn.active = false; // spawn complete, draw normally
-      }
-      return; // during spawn, only show matrix effect
-    }
-
-    drawAgent(actor, agentState, isPrimary);
+    drawables.push({
+      depth: seated ? actor.y + 4 : actor.y + 6,
+      draw: () => drawAgent(actor, agentState, actor.id === primaryActorId)
+    });
   });
 }
 
@@ -3401,8 +3552,8 @@ function drawCharacterSprite(cx, ty, {
   context.fillStyle = "#000";
   context.beginPath();
   if (pose === "sit" || pose === "type" || pose === "read") {
-    // Shadow lands near the chair legs area (ty + 50 = actor.y → actor.y + 20 ≈ chair leg bottom)
-    context.ellipse(cx, ty + 54 * PX, 14, 4, 0, 0, Math.PI * 2);
+    // Shadow right under the chair legs (ty + 50 = actor.y, legs end at +54)
+    context.ellipse(cx, ty + 54, 15, 4, 0, 0, Math.PI * 2);
   } else {
     context.ellipse(cx, ty + 22 * PX, 14, 4, 0, 0, Math.PI * 2);
   }
@@ -3663,15 +3814,16 @@ function drawAgent(actor, agentState, isPrimary) {
   // Actual canvas Y (top of character's head).
   // Seated: shoes bottom (ry=25 → +50px) anchors to actor.y (the floor/seat reference).
   //   ty + 50 = actor.y  →  ty = actor.y - 50
-  // Standing: shoe bottom (ry=22 → +44px) anchors slightly above actor.y for depth.
+  // Standing: shoe bottom (ry=22 → +44px) lands ~6px below actor.y so feet
+  // sit right on the walk path instead of hovering above it.
   const ty = seated
     ? actor.y - 50 + breathe
-    : actor.y - 20 + breathe;
+    : actor.y - 38 + breathe;
 
   const direction = actor.facing || 1;
 
-  // 4-frame walk cycle (changes every 12 frames ≈ 2.5 steps/sec — more natural than 8)
-  const walkFrame = Math.floor(frame / 12) % 4;
+  // 4-frame walk cycle (changes every 6 frames ≈ 2 steps/sec at 12.5fps)
+  const walkFrame = Math.floor(frame / 6) % 4;
 
   // Idle head sway when standing still
   const idleSway = (!actor.moving && !seated)
@@ -3762,6 +3914,32 @@ function drawAgent(actor, agentState, isPrimary) {
     context.fillText(nameText, actor.x, ty - 12);
     context.restore();
   }
+
+  // Runtime badge — shows WHICH engine this agent is running right now
+  // (claude-code = amber "CC", codex = mint "CX"), so two simultaneous runs
+  // read as two desks working side by side.
+  if (agentState.runtime && (agentState.activity === "coding" || agentState.activity === "debugging")) {
+    const isClaude = agentState.runtime === "claude-code";
+    const badgeText = isClaude ? "CC" : agentState.runtime === "codex" ? "CX" : "AI";
+    const badgeColor = isClaude ? COLORS.amber : COLORS.mint;
+    const bob = renderState.reducedMotion ? 0 : Math.sin(frame * 0.1 + actor.x) * 1.5;
+    const bx = actor.x + 16;
+    const by = ty - 8 + bob;
+    context.save();
+    context.fillStyle = "rgba(20, 14, 10, 0.92)";
+    context.strokeStyle = withAlpha(badgeColor, 0.8);
+    context.lineWidth = 1;
+    context.beginPath();
+    context.roundRect(bx - 8, by - 6, 16, 11, 3);
+    context.fill();
+    context.stroke();
+    context.fillStyle = badgeColor;
+    context.font = "bold 7px 'Spline Sans Mono', monospace";
+    context.textAlign = "center";
+    context.textBaseline = "middle";
+    context.fillText(badgeText, bx, by);
+    context.restore();
+  }
 }
 
 function bubbleColor(tone) {
@@ -3781,17 +3959,19 @@ function drawSkillBadges(skills, resting = false) {
     return;
   }
 
-  let x = 28;
-  const y = 24;
+  // Skill tags sit on the front cut band like labels on the dollhouse frame
+  let x = 16;
+  const y = ARCH.cutBandTop + 3;
 
   skills.slice(0, 3).forEach((skill) => {
     const label = skill.label.toUpperCase();
     const width = 22 + label.length * 6;
     const fill = resting ? "rgba(184, 162, 255, 0.14)" : skill.color;
 
-    drawPixelRect(x, y, width, 14, fill);
+    drawPixelRect(x, y, width, 13, fill);
+    drawPixelRect(x, y, width, 1, "rgba(255,255,255,0.25)");
     context.fillStyle = resting ? COLORS.violet : COLORS.ink;
-    context.font = "10px monospace";
+    context.font = "9px monospace";
     context.fillText(label, x + 6, y + 10);
     x += width + 8;
   });
@@ -3811,18 +3991,41 @@ function drawSleepMarks(actor) {
 }
 
 function drawBubble(actor, text, tone = "steady", verticalOffset = 0, opacity = 1) {
-  const width = Math.min(220, 82 + text.length * 4);
+  const label = truncate(text, 34);
+  const width = Math.min(228, 26 + label.length * 6.4);
+  const height = 22;
   const x = Math.max(18, Math.min(CANVAS_WIDTH - width - 18, actor.x - width / 2));
-  const y = Math.max(18, actor.y - 78 - verticalOffset);
-  const fill = bubbleColor(tone);
+  const y = Math.max(ARCH.ceilBottom + 6, actor.y - 74 - verticalOffset);
+  const accent = bubbleColor(tone);
 
   context.save();
   context.globalAlpha = opacity;
-  drawPixelRect(x, y, width, 30, fill);
-  drawPixelRect(x + 18, y + 30, 8, 8, fill);
-  context.fillStyle = COLORS.ink;
-  context.font = "12px monospace";
-  context.fillText(truncate(text, 34), x + 10, y + 19);
+
+  // Warm dark speech panel with accent border — matches the house theme
+  context.fillStyle = "rgba(20, 14, 10, 0.92)";
+  context.strokeStyle = withAlpha(accent, 0.75);
+  context.lineWidth = 1;
+  context.beginPath();
+  context.roundRect(x, y, width, height, 5);
+  context.fill();
+  context.stroke();
+
+  // Tail pointing down at the speaker
+  const tailX = Math.max(x + 10, Math.min(x + width - 10, actor.x));
+  context.beginPath();
+  context.moveTo(tailX - 5, y + height);
+  context.lineTo(tailX, y + height + 7);
+  context.lineTo(tailX + 5, y + height);
+  context.closePath();
+  context.fillStyle = "rgba(20, 14, 10, 0.92)";
+  context.fill();
+
+  // Accent pip + text
+  drawPixelRect(x + 7, y + height / 2 - 3, 5, 5, accent);
+  context.fillStyle = COLORS.white;
+  context.font = "11px monospace";
+  context.textBaseline = "middle";
+  context.fillText(label, x + 17, y + height / 2 + 1);
   context.restore();
 }
 
@@ -3866,23 +4069,63 @@ function drawScene() {
   drawSkillBadges(data.scene?.skill_badges || [], Boolean(data.scene?.resting));
 
   const highlightZones = new Set(data.scene?.desk_highlights || ["lab"]);
+  const hoveredZoneId =
+    renderState.hoveredHotspot?.kind === "desk" ? renderState.hoveredHotspot.zone : null;
+
+  // Flat layers first: room mats + hanging signs
+  (renderState.zones || []).forEach((zone) => {
+    const activeZone = highlightZones.has(zone.id);
+    drawZoneRoom(zone, activeZone, hoveredZoneId === zone.id);
+    drawZoneLabel(zone, activeZone);
+  });
+
+  // Depth-sorted pass: furniture, props and actors interleave by their
+  // floor position, so agents can stand behind a desk instead of floating
+  // on top of it.
+  const primaryActorId = data.scene?.primary_bubble?.actor_id;
+  const drawables = [];
 
   (renderState.zones || []).forEach((zone) => {
     const activeZone = highlightZones.has(zone.id);
-    drawZoneLabel(zone, activeZone);
-    drawFurniture(zone, activeZone);
-    drawDeskOccupancy(zone, occupancyForZone(zone.id));
+    drawables.push({
+      depth: zone.y + 36,
+      draw: () => {
+        drawFurniture(zone, activeZone);
+        drawDeskOccupancy(zone, occupancyForZone(zone.id));
+      }
+    });
   });
 
-  drawEditorOverlay();
+  // Cozy props live in the depth pass too
+  const labZone = zoneById("lab");
+  drawables.push({
+    depth: labZone.y + 37,
+    draw: () => drawCoffee(labZone.x - 30, labZone.y - 26, renderState.frame)
+  });
+  drawables.push({ depth: 372, draw: () => drawPlant(34, 360) });
 
-  const primaryActorId = data.scene?.primary_bubble?.actor_id;
-  renderActorsSorted(
+  collectActorDrawables(
+    drawables,
     renderState.actors,
     renderState.data?.agents || [],
     primaryActorId,
     renderState.frame
   );
+
+  drawables.sort((a, b) => a.depth - b.depth);
+  drawables.forEach((d) => d.draw());
+
+  drawEditorOverlay();
+
+  // Click-on-agent ping bubble (interactive)
+  if (renderState.agentPing && renderState.frame < renderState.agentPing.until) {
+    const pinged = actorById(renderState.agentPing.id);
+    if (pinged) {
+      const agent = renderState.data?.agents?.find?.((a) => a.id === pinged.id);
+      const label = `${pinged.name || pinged.id} · ${ACTIVITY_LABELS[agent?.activity] || agent?.activity || "idle"}`;
+      drawBubble(pinged, label, "steady", 6);
+    }
+  }
 
   const primaryBubble = data.scene?.primary_bubble;
   const bubbleActor =
@@ -4000,8 +4243,42 @@ canvas.addEventListener("mouseleave", () => {
   updateSceneDetailCard();
 });
 
+function handlePlayfulClick(pointer) {
+  // Click an agent → name + activity bubble and a little thought puff
+  const hitActor = [...(renderState.actors || [])]
+    .reverse()
+    .find((a) => Math.abs(pointer.x - a.x) < 15 && pointer.y > a.y - 56 && pointer.y < a.y + 12);
+  if (hitActor) {
+    renderState.agentPing = { id: hitActor.id, until: renderState.frame + 26 };
+    spawnBurst("thought", hitActor.x, hitActor.y - 54, 2);
+    return true;
+  }
+
+  // Floor lamp → toggle on/off
+  if (pointer.x > 538 && pointer.x < 574 && pointer.y > 104 && pointer.y < 162) {
+    renderState.lampOff = !renderState.lampOff;
+    return true;
+  }
+
+  // Coffee mug on the lab table → extra steam
+  const lab = zoneById("lab");
+  if (Math.abs(pointer.x - (lab.x - 30)) < 14 && Math.abs(pointer.y - (lab.y - 22)) < 16) {
+    spawnBurst("thought", lab.x - 30, lab.y - 34, 5);
+    return true;
+  }
+
+  // Plant in the corner → happy confetti leaves
+  if (pointer.x > 16 && pointer.x < 52 && pointer.y > 344 && pointer.y < 384) {
+    spawnBurst("confetti", 34, 354, 7);
+    return true;
+  }
+
+  return false;
+}
+
 canvas.addEventListener("click", (event) => {
   const pointer = scenePointer(event);
+  handlePlayfulClick(pointer);
   renderState.selectedHotspot = findSceneHotspotAt(renderState.hotspots, pointer.x, pointer.y);
   if (renderState.editorActive) {
     const entityId = editorEntityIdFromHotspot(renderState.selectedHotspot);
@@ -4073,7 +4350,7 @@ renderReportOnlyService(renderState.reportOnlyService);
 renderExecuteAgent();
 drawScene();
 let lastAnimateTime = 0;
-const ANIMATE_INTERVAL = 160;
+const ANIMATE_INTERVAL = 80; // ~12.5fps — smooth walk cycles without burning CPU
 
 function animationLoop(timestamp) {
   requestAnimationFrame(animationLoop);
