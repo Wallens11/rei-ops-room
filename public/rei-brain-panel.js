@@ -18,11 +18,11 @@ const moodTaglineEl     = document.getElementById("brain-mood-tagline");
 const thoughtsListEl    = document.getElementById("brain-thoughts-list");
 
 const TYPE_LABEL = {
-  fact:     { icon: "📌", color: "#65e4ff" },
-  pattern:  { icon: "🔁", color: "#b8a2ff" },
-  decision: { icon: "🧭", color: "#ffcc66" },
-  warning:  { icon: "⚠️", color: "#ff907c" },
-  solution: { icon: "🛠️", color: "#7cffba" }
+  fact:     { icon: "📌", color: "var(--cyan)" },
+  pattern:  { icon: "🔁", color: "var(--violet)" },
+  decision: { icon: "🧭", color: "var(--amber)" },
+  warning:  { icon: "⚠️", color: "var(--rose)" },
+  solution: { icon: "🛠️", color: "var(--mint)" }
 };
 
 function escapeHtml(s) {
@@ -97,15 +97,15 @@ async function pollCosts() {
 }
 
 const PHASE_COLOR = {
-  start:   "#65e4ff",
-  plan:    "#b8a2ff",
-  explore: "#a8c8ff",
-  edit:    "#ffcc66",
-  verify:  "#7cffba",
-  memory:  "#b8a2ff",
-  summary: "#65e4ff",
-  info:    "#8fa8c6",
-  error:   "#ff907c"
+  start:   "var(--cyan)",
+  plan:    "var(--violet)",
+  explore: "var(--cyan)",
+  edit:    "var(--amber)",
+  verify:  "var(--mint)",
+  memory:  "var(--violet)",
+  summary: "var(--cyan)",
+  info:    "var(--muted)",
+  error:   "var(--rose)"
 };
 
 function renderThoughts(entries, phaseIcons = {}) {
@@ -116,7 +116,7 @@ function renderThoughts(entries, phaseIcons = {}) {
   }
   thoughtsListEl.innerHTML = entries.slice().reverse().map((e) => {
     const icon = e.icon || phaseIcons[e.phase] || "•";
-    const color = PHASE_COLOR[e.phase] || "#8fa8c6";
+    const color = PHASE_COLOR[e.phase] || "var(--muted)";
     const ref = e.issueRef ? `<span style="opacity:.5;margin-left:6px;">${escapeHtml(e.issueRef)}</span>` : "";
     return `
       <div style="padding:5px 0;border-bottom:1px solid rgba(255,255,255,0.06);font-size:11px;line-height:1.4;">
@@ -142,7 +142,7 @@ async function pollPersonality() {
     if (!res.ok) return;
     const p = await res.json();
     const icon = p.voice?.icon || "•";
-    const color = p.voice?.color || "#edf3ff";
+    const color = p.voice?.color || "var(--ink)";
     if (moodBadgeEl) {
       moodBadgeEl.innerHTML = `<span style="color:${color};">${icon}</span>&nbsp;${p.mood}`;
       moodBadgeEl.style.color = color;
@@ -183,3 +183,11 @@ if (memorySearchEl) {
 
 pollRei();
 setInterval(pollRei, POLL_MS);
+
+// Real-time cost updates pushed from the live stream (rei-live.js). The 10s
+// poll above still drives memory / thoughts / personality; this just makes the
+// cost ledger update the instant a run records spend.
+window.addEventListener("rei-live:panels", (event) => {
+  const costs = event.detail?.costs;
+  if (costs) renderCosts(costs);
+});

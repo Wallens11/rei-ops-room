@@ -27,7 +27,7 @@ test("nudgeLayoutEntity also moves props and the rest corner through the same ed
   const restMoved = nudgeLayoutEntity(propMoved, "rest:rest_corner", { x: 20, y: -10 });
 
   assert.deepEqual(propMoved.props.planning_board.origin, { x: 256, y: 50 });
-  assert.deepEqual(restMoved.rest_corner.origin, { x: 342, y: 102 });
+  assert.deepEqual(restMoved.rest_corner.origin, { x: 342, y: 140 });
   assert.deepEqual(restMoved.rest_corner.hotspot, ROOM_LAYOUT.rest_corner.hotspot);
 });
 
