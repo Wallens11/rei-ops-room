@@ -9,6 +9,7 @@ const gitignoreUrl = new URL("../.gitignore", import.meta.url);
 const dockerignoreUrl = new URL("../.dockerignore", import.meta.url);
 const readmeUrl = new URL("../README.md", import.meta.url);
 const dockerWorkflowUrl = new URL("../.github/workflows/docker.yml", import.meta.url);
+const testWorkflowUrl = new URL("../.github/workflows/test.yml", import.meta.url);
 
 test("public controls have explicit labels and visible keyboard focus", async () => {
   const [html, css] = await Promise.all([
@@ -93,4 +94,24 @@ test("Docker quick start uses the branch tag published by the workflow", async (
 
   assert.match(workflow, /type=ref,event=branch/);
   assert.match(readme, /ghcr\.io\/wallens11\/rei-ops-room:main/);
+});
+
+test("Docker workflow uses the maintained Node 24 action majors", async () => {
+  const workflow = await fs.readFile(dockerWorkflowUrl, "utf8");
+
+  for (const action of [
+    "actions/checkout@v7",
+    "docker/login-action@v4",
+    "docker/metadata-action@v6",
+    "docker/build-push-action@v7"
+  ]) {
+    assert.match(workflow, new RegExp(`uses: ${action.replace("/", "\\/")}`));
+  }
+});
+
+test("test workflow uses the maintained Node 24 action majors", async () => {
+  const workflow = await fs.readFile(testWorkflowUrl, "utf8");
+
+  assert.match(workflow, /uses: actions\/checkout@v7/);
+  assert.match(workflow, /uses: actions\/setup-node@v7/);
 });
