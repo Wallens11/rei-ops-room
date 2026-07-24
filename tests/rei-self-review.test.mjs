@@ -101,6 +101,9 @@ test("runSelfReview: flags protected path edits", async () => {
 test("runSelfReview: ignores an unchanged pre-existing protected path", async () => {
   const cwd = await makeGitRepo();
   try {
+    const emptyExcludes = path.join(cwd, ".git", "empty-excludes");
+    await fs.writeFile(emptyExcludes, "", "utf8");
+    await execFileAsync("git", ["config", "core.excludesFile", emptyExcludes], { cwd });
     await fs.writeFile(path.join(cwd, ".env"), "SECRET=existing\n", "utf8");
     const protectedPathsBefore = await snapshotProtectedPaths({ cwd });
     await fs.writeFile(path.join(cwd, "safe.mjs"), "export const safe = true;\n", "utf8");

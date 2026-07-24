@@ -262,11 +262,21 @@ export async function runSelfReview({
   const issues = [];
   const notes = [];
 
-  const stats = await getDiffStats(cwd);
+  const rawStats = await getDiffStats(cwd);
+  const hasProtectedSnapshots =
+    protectedPathsBefore !== null && protectedPathsAfter !== null;
   const protectedPathChanges =
-    protectedPathsBefore && protectedPathsAfter
+    hasProtectedSnapshots
       ? findChangedProtectedPaths(protectedPathsBefore, protectedPathsAfter)
       : [];
+  const stats = hasProtectedSnapshots
+    ? rawStats.filter((entry) => {
+        const isProtected = PROTECTED_PATHS.some((protectedPath) =>
+          entry.path.startsWith(protectedPath)
+        );
+        return !isProtected || protectedPathChanges.includes(entry.path);
+      })
+    : rawStats;
   const totalAdded = stats.reduce((s, e) => s + e.added, 0);
   const totalRemoved = stats.reduce((s, e) => s + e.removed, 0);
   const totalChanged = totalAdded + totalRemoved;
