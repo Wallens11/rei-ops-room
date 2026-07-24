@@ -57,7 +57,11 @@ import {
   createEmptyExecutePreviewState,
   createEmptyExecuteServiceState
 } from "./execute-agent-view.js";
-import { buildTaskQueueViewModel, buildWorkerStatusBadge } from "./execute-queue-panel.js";
+import {
+  buildTaskQueueViewModel,
+  buildWorkerStatusBadge,
+  submitDirectTaskRequest
+} from "./execute-queue-panel.js";
 import { pollArtifacts } from "./execute-artifacts-panel.js";
 import { pollMetrics } from "./execute-metrics-panel.js";
 import { pollRei } from "./rei-brain-panel.js";
@@ -210,6 +214,7 @@ const elements = {
   taskQueueInput: document.getElementById("task-queue-input"),
   taskQueueRuntime: document.getElementById("task-queue-runtime"),
   taskQueueSubmit: document.getElementById("task-queue-submit"),
+  taskQueueStatus: document.getElementById("task-queue-status"),
   taskQueueList: document.getElementById("task-queue-list"),
   handoffGenerateButton: document.getElementById("handoff-generate-button"),
   handoffGenerateStatus: document.getElementById("handoff-generate-status"),
@@ -268,7 +273,7 @@ const renderState = {
   editorActive: false,
   editorSelectionId: "zone:lab",
   editorStep: 8,
-  editorMessage: "Room layout masih pakai schema default."
+  editorMessage: "Room layout is using the default schema."
 };
 let githubInboxPollHandle = null;
 
@@ -1331,7 +1336,7 @@ function describeEvent(event) {
   }
 
   if (event.type === "workstream_spawned") {
-    return `${event.zone} lane diaktifkan`;
+    return `${event.zone} lane activated`;
   }
 
   if (event.type === "result_returned") {
@@ -1339,7 +1344,7 @@ function describeEvent(event) {
   }
 
   if (event.type === "review_requested") {
-    return "Docs lane dipanggil buat wrap";
+    return "Docs lane called for the wrap";
   }
 
   if (event.type === "new_request") {
@@ -1374,19 +1379,19 @@ function crewNote(agent, workstreams) {
 
   if (agent.id === "scout") {
     return agent.carrying
-      ? `Courier aktif: ${truncate(agent.carrying, 50)}`
+      ? `Active courier: ${truncate(agent.carrying, 50)}`
       : agent.idle_behavior === "idle_patrol"
-        ? "Patrol ringan sambil nunggu handoff yang benar-benar berarti."
-        : "Nunggu handoff yang memang berarti.";
+        ? "Light patrol while waiting for a meaningful handoff."
+        : "Waiting for a meaningful handoff.";
   }
 
   if (assigned.length === 0) {
     return agent.idle_behavior
       ? `${currentZone.title} | ${agent.idle_behavior}`
-      : `${currentZone.title} standby sambil nunggu assignment.`;
+      : `${currentZone.title} standing by for an assignment.`;
   }
 
-  return truncate(task || `${currentZone.title} aktif.`, 76);
+  return truncate(task || `${currentZone.title} active.`, 76);
 }
 
 function renderCrewList(agents, workstreams) {
@@ -2100,18 +2105,37 @@ async function submitDirectTask() {
 
   renderState.taskQueue.submitting = true;
   updateTaskQueueSubmitButton();
+  if (elements.taskQueueStatus) {
+    elements.taskQueueStatus.textContent = "Submitting…";
+    elements.taskQueueStatus.dataset.tone = "";
+  }
 
   try {
     const runtimeId = elements.taskQueueRuntime?.value || null;
-    await fetch("/api/execute/submit", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ task, runtimeId: runtimeId || null })
+    const result = await submitDirectTaskRequest({
+      task,
+      runtimeId
     });
+
+    if (!result.ok) {
+      if (elements.taskQueueStatus) {
+        elements.taskQueueStatus.textContent = result.message;
+        elements.taskQueueStatus.dataset.tone = "error";
+      }
+      return;
+    }
+
     if (elements.taskQueueInput) elements.taskQueueInput.value = "";
+    if (elements.taskQueueStatus) {
+      elements.taskQueueStatus.textContent = "Task queued.";
+      elements.taskQueueStatus.dataset.tone = "success";
+    }
     await refreshTaskQueue();
   } catch {
-    // ignore submit errors — task list will reflect true state on next poll
+    if (elements.taskQueueStatus) {
+      elements.taskQueueStatus.textContent = "Could not submit task. Try again.";
+      elements.taskQueueStatus.dataset.tone = "error";
+    }
   } finally {
     renderState.taskQueue.submitting = false;
     updateTaskQueueSubmitButton();

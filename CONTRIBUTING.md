@@ -22,7 +22,6 @@ Thanks for your interest in contributing. This guide covers everything you need 
 ```bash
 git clone https://github.com/<your-fork>/rei-ops-room
 cd rei-ops-room
-npm install
 
 # Copy the example config and edit it
 cp rei.config.json.example rei.config.json
@@ -41,7 +40,8 @@ DEMO_MODE=true npm start
 # open http://localhost:4317
 ```
 
-Node.js ≥ 22 is required. No other build step needed — everything is plain ESM.
+Node.js ≥ 22 is required. No dependency install or build step is needed —
+everything is plain ESM.
 
 ---
 
@@ -91,7 +91,7 @@ Compaction keeps the most important and recent entries so retrieval stays fast.
 npm test
 ```
 
-The test suite uses Node's built-in test runner — no extra packages needed. All 494 tests should be green before you open a PR.
+The test suite uses Node's built-in test runner — no extra packages needed. All 500+ tests should be green before you open a PR.
 
 **Running a single test file:**
 
@@ -147,7 +147,7 @@ The core principles are the agent's operating contract. Changes there affect eve
 
 **PR checklist:**
 
-- [ ] `npm test` passes (494+ tests green)
+- [ ] `npm test` passes (500+ tests green)
 - [ ] New behaviour is covered by at least one test
 - [ ] No new external `npm` dependencies added without discussion
 - [ ] Commit messages are descriptive (`feat:`, `fix:`, `refactor:` prefix)

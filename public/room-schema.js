@@ -1,13 +1,13 @@
 export const ROOM_TITLE = "Rei Ops Room";
 export const DEFAULT_HEADLINE =
-  "Rei lagi ngerjain apa, repo mana yang aktif, dan kapan squad ikut bantu.";
+  "What Rei is working on, which repo is active, and when the squad steps in.";
 export const HEADLINE_ALTERNATIVES = [
-  "Rei lagi ngerjain apa, repo mana yang aktif, dan kapan squad ikut bantu.",
-  "Kerjaan aktif, repo yang nyala, dan momen squad mulai kebagi tugas.",
-  "Pantau Rei, repo aktif, dan kapan room berubah dari solo jadi squad."
+  "What Rei is working on, which repo is active, and when the squad steps in.",
+  "Active work, live repositories, and the moment the squad divides assignments.",
+  "Watch Rei, the active repo, and when the room shifts from solo to squad."
 ];
 export const DEFAULT_DESCRIPTION =
-  "Scene jadi sumber utama: phase, desk aktif, split kerja, dan handoff kebaca dari runtime lalu divisualkan di room.";
+  "The scene visualizes runtime truth: phase, active desk, work splits, and handoffs.";
 export const SKILL_BADGE_LIBRARY = {
   "test-driven-development": {
     label: "TDD",
@@ -52,31 +52,31 @@ export const ROOM_PHASES = {
     id: "standby",
     title: "Standby",
     label: "Standby",
-    summary: "Room lagi tenang dan belum ada gerakan berarti."
+    summary: "The room is quiet with no meaningful activity yet."
   },
   planning_huddle: {
     id: "planning_huddle",
     title: "Planning Huddle",
     label: "Planning Huddle",
-    summary: "Squad ngumpul dulu buat ngunci arah kerja."
+    summary: "The squad gathers to confirm direction before work begins."
   },
   squad_split: {
     id: "squad_split",
     title: "Squad Split",
     label: "Squad Split",
-    summary: "Lead lagi mecah kerja dan squad bergerak ke desk masing-masing."
+    summary: "The lead is splitting the work and agents are moving to their desks."
   },
   execution: {
     id: "execution",
     title: "Execution",
     label: "Execution",
-    summary: "Owner utama stay di desk aktif, squad lain bantu sesuai workstream."
+    summary: "The primary owner stays at the active desk while the squad supports each workstream."
   },
   review_wrap: {
     id: "review_wrap",
     title: "Review Wrap",
     label: "Review Wrap",
-    summary: "Hasil balik ke review lane buat dirapihin dan dirangkum."
+    summary: "Results return to the review lane for validation and a concise wrap."
   }
 };
 
@@ -86,7 +86,7 @@ export const ZONE_DEFINITIONS = [
     title: "Frontend Desk",
     shortTitle: "Frontend",
     color: "#65e4ff",
-    detail: "UI, layout, motion, atau interaction lagi dominan.",
+    detail: "UI, layout, motion, or interaction work is dominant.",
     ownerId: "ui",
     defaultTask: "Refine room visuals and interaction polish",
     keywords: [
@@ -116,7 +116,7 @@ export const ZONE_DEFINITIONS = [
     title: "Backend Rack",
     shortTitle: "Backend",
     color: "#7cffba",
-    detail: "Runtime, API, orchestration, atau server logic lagi diproses.",
+    detail: "Runtime, API, orchestration, or server logic is being processed.",
     ownerId: "api",
     defaultTask: "Translate runtime signals into room state",
     keywords: [
@@ -142,7 +142,7 @@ export const ZONE_DEFINITIONS = [
     title: "Database Vault",
     shortTitle: "Database",
     color: "#ffcc66",
-    detail: "Schema, query, migration, atau log/data layer lagi dibaca.",
+    detail: "Schema, query, migration, or log and data layers are being inspected.",
     ownerId: "db",
     defaultTask: "Read thread and log traces from local state",
     keywords: [
@@ -166,7 +166,7 @@ export const ZONE_DEFINITIONS = [
     title: "Docs / Ops Corner",
     shortTitle: "Review",
     color: "#ff907c",
-    detail: "Review, docs, labels, summary, atau handoff lagi aktif.",
+    detail: "Review, documentation, labels, summaries, or handoffs are active.",
     ownerId: "docs",
     defaultTask: "Prepare concise labels and human-readable wrap",
     keywords: [
@@ -193,7 +193,7 @@ export const ZONE_DEFINITIONS = [
     title: "Lead Table",
     shortTitle: "Lab",
     color: "#b8a2ff",
-    detail: "Lead lagi nahan squad di meja tengah sambil nentuin arah.",
+    detail: "The lead is holding the squad at the central table while direction is clarified.",
     ownerId: "lead",
     defaultTask: "Clarify request and lock the next move",
     keywords: [

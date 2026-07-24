@@ -24,6 +24,7 @@ import {
 export function createDemoServer(options = {}) {
   return createServer({
     ...options,
+    demoMode: true,
 
     // ── Core status ────────────────────────────────────────────────────────────
     getStatus: async () => buildDemoRoomStatus(),
@@ -87,6 +88,9 @@ export function createDemoServer(options = {}) {
     }),
 
     // ── Queue & workers ────────────────────────────────────────────────────────
+    readQueue: async () => buildDemoQueue().tasks,
+    readWorkers: async () => buildDemoWorkers(),
+
     removeQueueTask: async () => ({
       removed: false,
       demo: true
@@ -128,6 +132,15 @@ export function createDemoServer(options = {}) {
 
     // ── Metrics ───────────────────────────────────────────────────────────────
     getMetrics: async () => buildDemoMetrics(),
+    getLivePanels: async () => ({
+      generatedAt: new Date().toISOString(),
+      queue: buildDemoQueue(),
+      metrics: buildDemoMetrics(),
+      costs: {
+        total: { runs: 0, cost: 0 },
+        summary: "Demo mode — no real cost data."
+      }
+    }),
 
     // ── Webhook ────────────────────────────────────────────────────────────────
     handleGithubWebhook: async () => ({

@@ -878,11 +878,11 @@ function inferOrchestration(taskIntelligence, { status, thread, activity }) {
   let reviewStage = null;
 
   let roomPhase = "execution";
-  let reason = `${zoneFromId(dominantZone).title} jadi owner utama karena sinyalnya paling kuat.`;
+  let reason = `${zoneFromId(dominantZone).title} is the primary owner because it has the strongest signal.`;
 
   if (standbyDueToInactivity && !explicitAgentJobs) {
     roomPhase = "standby";
-    reason = "Belum ada activity baru, jadi room kembali tenang di area tengah.";
+    reason = "There is no new activity, so the room is quiet in the central area.";
   } else if (
     signals.agent_jobs?.completed_count > 0 &&
     signals.agent_jobs?.active_count === 0
@@ -891,29 +891,29 @@ function inferOrchestration(taskIntelligence, { status, thread, activity }) {
     reviewStage = inferReviewStage(signals, status);
     reason =
       reviewStage === "results_returning"
-        ? "Lane selesai di desk masing-masing, lalu hasil balik ke review lane tanpa langsung collapse."
+        ? "Each lane has finished at its desk and results are returning to review."
         : reviewStage === "regroup"
-          ? "Hasil sudah masuk, jadi squad regroup sebentar sebelum wrap final."
+          ? "Results are in, so the squad is regrouping before the final wrap."
           : reviewStage === "cooldown"
-            ? "Wrap sudah selesai, jadi room masuk cooldown dengan ritme yang lebih tenang."
-            : "Room stay di review wrap sampai hasil rapi dan siap ditutup.";
+            ? "The wrap is complete, so the room is settling into cooldown."
+            : "The room stays in review until results are validated and ready to close.";
   } else if (signals.agent_jobs?.active_count > 0) {
     roomPhase = "squad_split";
-    reason = "Ada worker thread aktif yang benar-benar assigned, jadi squad split pakai runtime orchestration.";
+    reason = "Assigned worker threads are active, so runtime orchestration has split the squad.";
   } else if (signals.review.score >= PHASE_REVIEW_SCORE_MIN && signals.review_evidence.score >= PHASE_REVIEW_EVIDENCE_MIN) {
     roomPhase = "review_wrap";
     reviewStage = inferReviewStage(signals, status);
     reason =
       reviewStage === "results_returning"
-        ? "Ada pola result return baru, jadi room tahan dulu di review wrap yang stabil."
+        ? "New results are returning, so the room remains in a stable review wrap."
         : reviewStage === "regroup"
-          ? "Result return sudah jelas, jadi squad regroup sebentar sebelum wrap final."
+          ? "The result is clear, so the squad is regrouping before the final wrap."
           : reviewStage === "cooldown"
-            ? "Review wrap sudah lewat, jadi room bisa masuk cooldown dengan tenang."
-            : "Ada pola review / result return, jadi hasil dipindah ke review lane.";
+            ? "The review wrap has passed, so the room can settle into cooldown."
+            : "Review signals are active, so results have moved to the review lane.";
   } else if (signals.delegation.score >= PHASE_DELEGATION_SCORE_MIN && mode === "multi") {
     roomPhase = "squad_split";
-    reason = "Delegation kebaca cukup jelas, jadi squad dipecah ke workstream yang relevan.";
+    reason = "Delegation is clear enough to split the squad across relevant workstreams.";
   } else if (
     !executionLocked &&
     (
@@ -924,7 +924,7 @@ function inferOrchestration(taskIntelligence, { status, thread, activity }) {
     )
   ) {
     roomPhase = "planning_huddle";
-    reason = "Fokus belum cukup stabil, jadi squad kumpul dulu buat ngunci arah.";
+    reason = "The focus is not stable yet, so the squad is aligning before splitting up.";
   }
 
   const phaseConfidence = roundConfidence(
@@ -976,7 +976,7 @@ function summarizeObjectiveLabel(summary, { zoneId = "lab", phase = "standby" } 
   const normalized = normalizeText(summary);
 
   if (!normalized) {
-    return phase === "planning_huddle" ? "kunci arah kerja room" : fallbackLabelForZone(zoneId, "objective");
+    return phase === "planning_huddle" ? "confirm the room's direction" : fallbackLabelForZone(zoneId, "objective");
   }
 
   if (
@@ -984,7 +984,7 @@ function summarizeObjectiveLabel(summary, { zoneId = "lab", phase = "standby" } 
     normalized.includes("pixel room") ||
     normalized.includes("ops room")
   ) {
-    return "bangun pixel ops room";
+    return "build the pixel ops room";
   }
 
   if (
@@ -994,7 +994,7 @@ function summarizeObjectiveLabel(summary, { zoneId = "lab", phase = "standby" } 
     normalized.includes("getifaddr") ||
     normalized.includes("ipconfig")
   ) {
-    return "cek akses room dari device lain";
+    return "check room access from another device";
   }
 
   if (
@@ -1004,32 +1004,32 @@ function summarizeObjectiveLabel(summary, { zoneId = "lab", phase = "standby" } 
       normalized.includes("wakeru") ||
       normalized.includes("task"))
   ) {
-    return "pecah issue jadi task kecil";
+    return "split the issue into small tasks";
   }
 
   const humanized = humanizeSummary(summary, { zoneId, kind: "objective" });
 
   switch (humanized) {
     case "pixel ops room":
-      return "bangun pixel ops room";
+      return "build the pixel ops room";
     case "network check":
-      return "cek akses room dari device lain";
+      return "check room access from another device";
     case "review wrap":
-      return "rapihin hasil dan siapin wrap";
+      return "validate results and prepare the wrap";
     case "verification pass":
-      return "cek hasil dan verifikasi room";
+      return "check results and verify the room";
     case "layout check":
-      return "rapihin layout dan tampilan room";
+      return "refine the room layout and visuals";
     case "runtime mapping":
-      return "rapihin runtime dan state room";
+      return "align runtime and room state";
     case "trace reading":
-      return "baca trace dan cari sinyal room";
+      return "read traces and identify room signals";
     case "debug pass":
-      return "beresin issue yang lagi aktif";
+      return "resolve the active issue";
     case "result return":
-      return "kumpulkan hasil lane untuk review";
+      return "collect lane results for review";
     case "coordination pass":
-      return "kunci arah kerja room";
+      return "confirm the room's direction";
     default:
       return humanized;
   }
@@ -1547,25 +1547,25 @@ function deriveSceneActiveZoneId(room, cooldownActive) {
 
 function sceneActiveZoneReason(room, activeZoneId) {
   if (room.resting) {
-    return "Room sengaja stay di lab dulu biar squad bisa recharge sebelum activity berikutnya.";
+    return "The room is staying in the lab so the squad can recharge before the next activity.";
   }
 
   if (room.substate === "cooldown") {
-    return "Room lagi settle di lab sambil nunggu sinyal kerja berikutnya cukup jelas.";
+    return "The room is settling in the lab while it waits for a clear next-work signal.";
   }
 
   if (room.phase === "planning_huddle") {
-    return "Semua agent kumpul di lab buat cek scope dan kunci assignment sebelum squad split.";
+    return "All agents are in the lab to confirm scope and assignments before the squad splits.";
   }
 
   if (room.phase === "standby") {
-    return "Belum ada desk aktif yang perlu dibuka, jadi room tetap tenang di area tengah.";
+    return "No active desk needs to open yet, so the room remains quiet in the central area.";
   }
 
   if (room.phase === "review_wrap") {
     return room.review_stage === "regroup"
-      ? "Squad regroup sebentar di lab sebelum hasil ditutup rapi."
-      : "Review lane jadi pusat scene sambil hasil dirapikan dan diringkas.";
+      ? "The squad is regrouping in the lab before closing out the result."
+      : "The review lane is central while results are validated and summarized.";
   }
 
   return room.focus_reason;
@@ -1992,7 +1992,7 @@ function buildSceneDirector(room, workstreams, recentEvents) {
         zone_id: room.focus_zone,
         chip_title: `Next: ${focusZoneMeta.title}`,
         title: focusZoneMeta.title,
-        reason: `Arah kerja mulai kebaca ke ${focusZoneMeta.title}, tapi squad masih briefing di lab sebelum split.`,
+        reason: `Work is trending toward ${focusZoneMeta.title}, but the squad is still briefing in the lab.`,
         confidence: room.focus_confidence
       }
     : {
@@ -2315,8 +2315,8 @@ function roomReason(taskIntelligence, orchestration) {
     phase_reason: orchestration.reason,
     focus_reason:
       taskIntelligence.dominant_zone === "lab"
-        ? "Belum ada owner desk yang benar-benar ngunci fokus, jadi room tetap kumpul di tengah."
-        : `${zone.detail}${hitPreview ? ` Kebaca dari: ${hitPreview}.` : ""}`
+        ? "No desk owner has a strong focus signal, so the room remains at the central table."
+        : `${zone.detail}${hitPreview ? ` Signals: ${hitPreview}.` : ""}`
   };
 }
 
@@ -2541,7 +2541,7 @@ function buildRuntimeState(taskIntelligence, room, activity, logs = [], nowSecon
   } else if (room.resting) {
     lastFinished = {
       title: "room settled",
-      detail: "Room lagi istirahat dan belum ada aksi baru.",
+      detail: "The room is resting and there is no new activity yet.",
       source_label: "presence",
       age_label: activity?.lastLogAgo || "-",
       status: "idle"

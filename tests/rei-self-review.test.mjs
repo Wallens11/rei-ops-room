@@ -8,7 +8,11 @@ import { promisify } from "node:util";
 
 const execFileAsync = promisify(execFile);
 
-import { runSelfReview, formatSelfReview } from "../tools/rei-self-review.mjs";
+import {
+  runSelfReview,
+  formatSelfReview,
+  snapshotProtectedPaths
+} from "../tools/rei-self-review.mjs";
 
 async function makeGitRepo() {
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), "rei-review-"));
@@ -79,10 +83,34 @@ test("runSelfReview: catches a `TODO: remove` left in code", async () => {
 test("runSelfReview: flags protected path edits", async () => {
   const cwd = await makeGitRepo();
   try {
+    const protectedPathsBefore = await snapshotProtectedPaths({ cwd });
     await fs.writeFile(path.join(cwd, ".env"), "SECRET=lol\n", "utf8");
-    const res = await runSelfReview({ cwd });
+    const protectedPathsAfter = await snapshotProtectedPaths({ cwd });
+    const res = await runSelfReview({
+      cwd,
+      protectedPathsBefore,
+      protectedPathsAfter
+    });
     assert.equal(res.ok, false);
     assert.match(res.issues.join("\n"), /protected path/);
+  } finally {
+    await fs.rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("runSelfReview: ignores an unchanged pre-existing protected path", async () => {
+  const cwd = await makeGitRepo();
+  try {
+    await fs.writeFile(path.join(cwd, ".env"), "SECRET=existing\n", "utf8");
+    const protectedPathsBefore = await snapshotProtectedPaths({ cwd });
+    await fs.writeFile(path.join(cwd, "safe.mjs"), "export const safe = true;\n", "utf8");
+    const protectedPathsAfter = await snapshotProtectedPaths({ cwd });
+    const res = await runSelfReview({
+      cwd,
+      protectedPathsBefore,
+      protectedPathsAfter
+    });
+    assert.equal(res.ok, true, JSON.stringify(res));
   } finally {
     await fs.rm(cwd, { recursive: true, force: true });
   }

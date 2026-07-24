@@ -56,7 +56,7 @@ test("selectExecuteTarget prefers an active execute issue and ignores report-onl
 test("buildExecutePrompt folds issue scope and handoff context into one launch prompt", () => {
   const prompt = buildExecutePrompt({
     repo: "example-org/my-project",
-    repoCwd: "/Users/funtoco/workSpace/codex-pixel-agent",
+    repoCwd: "/Users/demo/workSpace/codex-pixel-agent",
     issue: {
       number: 14,
       title: "Add execute mode to the ops room queue",
@@ -150,7 +150,7 @@ test("buildExecutePrompt includes the recommended specialist profile and skills"
 test("buildExecutePrompt includes the latest ops-room continuity snapshot when available", () => {
   const prompt = buildExecutePrompt({
     repo: "example-org/my-project",
-    repoCwd: "/Users/funtoco/workSpace/codex-pixel-agent",
+    repoCwd: "/Users/demo/workSpace/codex-pixel-agent",
     issue: {
       number: 28,
       title: "Improve operator trust cues in the execute panel",

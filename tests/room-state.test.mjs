@@ -8,7 +8,7 @@ function makeThread(overrides = {}) {
   return {
     id: "thread_1",
     title: "Refactor runtime logs and map active repo session",
-    cwd: "/Users/funtoco/workSpace/codex-pixel-agent",
+    cwd: "/Users/demo/workSpace/codex-pixel-agent",
     cwdDisplay: "codex-pixel-agent",
     repoName: "codex-pixel-agent",
     gitBranch: "codex/rei-ops-room",
@@ -138,7 +138,7 @@ test("planning huddle keeps the room staged in lab while exposing the next assig
   assert.equal(state.scene.assignment_hint.zone_id, "review");
   assert.equal(state.scene.assignment_hint.title, "Docs / Ops Corner");
   assert.equal(state.scene.assignment_hint.chip_title, "Next: Docs / Ops Corner");
-  assert.match(state.scene.assignment_hint.reason, /briefing di lab/i);
+  assert.match(state.scene.assignment_hint.reason, /briefing in the lab/i);
   assert.equal(state.scene.transition_emphasis.type, "briefing");
   assert.equal(state.scene.transition_emphasis.anchor_zone, "lab");
   assert.deepEqual(state.scene.transition_emphasis.target_zone_ids, ["review"]);
@@ -217,7 +217,7 @@ test("workspace-root runtime activity does not inherit a stale review-heavy repo
     status: "busy",
     thread: makeThread({
       title: "rei kita bisa buat agent pixel ga si disini wkwk",
-      cwd: "/Users/funtoco/workSpace",
+      cwd: "/Users/demo/workSpace",
       cwdDisplay: "workspace root",
       repoName: "workspace",
       updatedAgeSeconds: 20,
@@ -227,7 +227,7 @@ test("workspace-root runtime activity does not inherit a stale review-heavy repo
       id: "thread_old_review_repo",
       title:
         "oke sembari nunggu review leader aku aku mau minta tolong kamu untuk buatin issue yang ada didalam issue ini dong rei",
-      cwd: "/Users/funtoco/workSpace/fun-base",
+      cwd: "/Users/demo/workSpace/fun-base",
       cwdDisplay: "fun-base",
       repoName: "fun-base",
       updatedAgeSeconds: 4 * 60,
@@ -874,7 +874,7 @@ test("workspace dock falls back to Workspace Hub when the room is dormant and th
       makeThread({
         id: "thread_workspace_recent",
         repoName: "workSpace",
-        cwd: "/Users/funtoco/workSpace",
+        cwd: "/Users/demo/workSpace",
         cwdDisplay: "workspace root",
         title: "General workspace chat",
         updatedAgo: "40s ago",
@@ -964,14 +964,14 @@ test("current objective summarizes the active goal instead of echoing the raw th
     status: "busy",
     thread: makeThread({
       title: "rei kita bisa buat agent pixel ga si disini wkwk",
-      cwd: "/Users/funtoco/workSpace",
+      cwd: "/Users/demo/workSpace",
       cwdDisplay: "workspace root",
       repoName: "workSpace"
     }),
     repoContext: makeThread({
       id: "thread_repo_context",
       title: "Refine room workspace and wrap transitions",
-      cwd: "/Users/funtoco/workSpace/codex-pixel-agent",
+      cwd: "/Users/demo/workSpace/codex-pixel-agent",
       cwdDisplay: "codex-pixel-agent",
       repoName: "codex-pixel-agent"
     }),
@@ -984,10 +984,10 @@ test("current objective summarizes the active goal instead of echoing the raw th
     logs: [{ ts: 1710000000, message: "Planning pixel room behavior" }]
   });
 
-  assert.equal(state.objective.title, "bangun pixel ops room");
+  assert.equal(state.objective.title, "build the pixel ops room");
   assert.equal(state.objective.detail, "Sketch room behavior and define the first pixel agent flow");
   assert.equal(state.objective.repo, "codex-pixel-agent");
-  assert.equal(state.room.current_task, "bangun pixel ops room");
+  assert.equal(state.room.current_task, "build the pixel ops room");
 });
 
 test("workspace and objective cards use cleaned display titles when codex stores a raw prompt opener", () => {
@@ -995,7 +995,7 @@ test("workspace and objective cards use cleaned display titles when codex stores
     status: "idle",
     thread: makeThread({
       title: "rei kita bisa buat agent pixel ga si disini wkwk",
-      cwd: "/Users/funtoco/workSpace",
+      cwd: "/Users/demo/workSpace",
       cwdDisplay: "workspace root",
       repoName: "workSpace",
       updatedAgeSeconds: 4,
@@ -1005,7 +1005,7 @@ test("workspace and objective cards use cleaned display titles when codex stores
       id: "thread_fun_base_latest",
       title:
         "oke sembari nunggu review leader aku aku mau minta tolong kamu untuk buatin issue yang ada didalam issue ini dong rei https://github.com/funtoco/fun-docs/issues/527, di bawahnya kan itu ada task gitu kan nah itu aku mau komakaku kitte wakeru gitu buat aja di no status dulu soalnya nanti paling minggu depan pas aku teirei sama leader baru ngomong yang mana yang mau di kelarin dulu.. kalo udah kamu sambungin issue 527 itu ke issue issue yang udah di pecah ya.. bisa?",
-      cwd: "/Users/funtoco/workSpace/fun-base",
+      cwd: "/Users/demo/workSpace/fun-base",
       cwdDisplay: "fun-base",
       repoName: "fun-base",
       updatedAgeSeconds: 3600,
@@ -1015,7 +1015,7 @@ test("workspace and objective cards use cleaned display titles when codex stores
       makeThread({
         id: "thread_workspace_latest",
         title: "rei kita bisa buat agent pixel ga si disini wkwk",
-        cwd: "/Users/funtoco/workSpace",
+        cwd: "/Users/demo/workSpace",
         cwdDisplay: "workspace root",
         repoName: "workSpace",
         updatedAgeSeconds: 4,
@@ -1025,7 +1025,7 @@ test("workspace and objective cards use cleaned display titles when codex stores
         id: "thread_fun_base_latest",
         title:
           "oke sembari nunggu review leader aku aku mau minta tolong kamu untuk buatin issue yang ada didalam issue ini dong rei https://github.com/funtoco/fun-docs/issues/527, di bawahnya kan itu ada task gitu kan nah itu aku mau komakaku kitte wakeru gitu buat aja di no status dulu soalnya nanti paling minggu depan pas aku teirei sama leader baru ngomong yang mana yang mau di kelarin dulu.. kalo udah kamu sambungin issue 527 itu ke issue issue yang udah di pecah ya.. bisa?",
-        cwd: "/Users/funtoco/workSpace/fun-base",
+        cwd: "/Users/demo/workSpace/fun-base",
         cwdDisplay: "fun-base",
         repoName: "fun-base",
         updatedAgeSeconds: 3600,
@@ -1041,11 +1041,11 @@ test("workspace and objective cards use cleaned display titles when codex stores
     logs: []
   });
 
-  assert.equal(state.objective.title, "bangun pixel ops room");
+  assert.equal(state.objective.title, "build the pixel ops room");
   assert.equal(state.objective.detail, "Istirahat sejenak");
-  assert.equal(state.workspace.active_room.latest_title, "bangun pixel ops room");
+  assert.equal(state.workspace.active_room.latest_title, "build the pixel ops room");
   assert.equal(state.workspace.sleeping_rooms[0].repo, "fun-base");
-  assert.equal(state.workspace.sleeping_rooms[0].latest_title, "pecah issue jadi task kecil");
+  assert.equal(state.workspace.sleeping_rooms[0].latest_title, "split the issue into small tasks");
 });
 
 test("runtime trail decays a finished command into last finished instead of keeping it live", () => {
@@ -1112,7 +1112,7 @@ test("verification bursts keep the live task anchored to the underlying implemen
   });
 
   assert.equal(state.room.focus_zone, "frontend");
-  assert.equal(state.objective.title, "rapihin layout dan tampilan room");
+  assert.equal(state.objective.title, "refine the room layout and visuals");
   assert.equal(state.runtime.live_now?.title, "layout check");
   assert.match(state.runtime.live_now?.detail || "", /npm test/i);
   assert.equal(state.room.current_task, "layout check");
@@ -1150,7 +1150,7 @@ test("observer status checks do not replace the current objective during short n
     ]
   });
 
-  assert.equal(state.objective.title, "rapihin runtime dan state room");
+  assert.equal(state.objective.title, "align runtime and room state");
   assert.equal(state.runtime.live_now?.title, "runtime mapping");
   assert.match(state.runtime.live_now?.detail || "", /api\/status/i);
   assert.equal(state.room.current_task, "runtime mapping");
@@ -1191,14 +1191,14 @@ test("pure self-QA bursts fall back to the objective headline when no clearer ta
     status: "busy",
     thread: makeThread({
       title: "rei kita bisa buat agent pixel ga si disini wkwk",
-      cwd: "/Users/funtoco/workSpace",
+      cwd: "/Users/demo/workSpace",
       cwdDisplay: "workspace root",
       repoName: "workSpace"
     }),
     repoContext: makeThread({
       id: "thread_repo_context",
       title: "Refine room runtime polish",
-      cwd: "/Users/funtoco/workSpace/codex-pixel-agent",
+      cwd: "/Users/demo/workSpace/codex-pixel-agent",
       cwdDisplay: "codex-pixel-agent",
       repoName: "codex-pixel-agent"
     }),
@@ -1217,9 +1217,9 @@ test("pure self-QA bursts fall back to the objective headline when no clearer ta
     ]
   });
 
-  assert.equal(state.objective.title, "bangun pixel ops room");
+  assert.equal(state.objective.title, "build the pixel ops room");
   assert.equal(state.runtime.live_now?.title, "verification pass");
-  assert.equal(state.room.current_task, "bangun pixel ops room");
+  assert.equal(state.room.current_task, "build the pixel ops room");
 });
 
 test("runtime trail ignores low-level transport noise when there is no meaningful finished action", () => {
@@ -1227,7 +1227,7 @@ test("runtime trail ignores low-level transport noise when there is no meaningfu
     status: "busy",
     thread: makeThread({
       title: "rei kita bisa buat agent pixel ga si disini wkwk",
-      cwd: "/Users/funtoco/workSpace",
+      cwd: "/Users/demo/workSpace",
       cwdDisplay: "workspace root",
       repoName: "workSpace",
       updatedAgeSeconds: 0,
@@ -1236,7 +1236,7 @@ test("runtime trail ignores low-level transport noise when there is no meaningfu
     repoContext: makeThread({
       id: "thread_repo_context",
       title: "Refine room workspace and wrap transitions",
-      cwd: "/Users/funtoco/workSpace/codex-pixel-agent",
+      cwd: "/Users/demo/workSpace/codex-pixel-agent",
       cwdDisplay: "codex-pixel-agent",
       repoName: "codex-pixel-agent"
     }),
@@ -1262,7 +1262,7 @@ test("runtime trail ignores low-level transport noise when there is no meaningfu
 
   assert.equal(state.runtime.live_now, null);
   assert.equal(state.runtime.last_finished, null);
-  assert.equal(state.room.current_task, "bangun pixel ops room");
+  assert.equal(state.room.current_task, "build the pixel ops room");
 });
 
 test("cooldown rest mode returns the room to standby with a visible break state", () => {
@@ -1520,17 +1520,17 @@ test("skill badge awareness extracts active skills from runtime traces", () => {
       {
         ts: 1710000000,
         message:
-          'ToolCall: functions.exec_command {"cmd":"sed -n \'1,220p\' /Users/funtoco/.codex/skills/test-driven-development/SKILL.md"}'
+          'ToolCall: functions.exec_command {"cmd":"sed -n \'1,220p\' /Users/demo/.codex/skills/test-driven-development/SKILL.md"}'
       },
       {
         ts: 1709999999,
         message:
-          'ToolCall: functions.exec_command {"cmd":"sed -n \'1,220p\' /Users/funtoco/.codex/skills/verification-before-completion/SKILL.md"}'
+          'ToolCall: functions.exec_command {"cmd":"sed -n \'1,220p\' /Users/demo/.codex/skills/verification-before-completion/SKILL.md"}'
       },
       {
         ts: 1709999998,
         message:
-          'ToolCall: functions.exec_command {"cmd":"sed -n \'1,220p\' /Users/funtoco/.codex/skills/webapp-testing/SKILL.md"}'
+          'ToolCall: functions.exec_command {"cmd":"sed -n \'1,220p\' /Users/demo/.codex/skills/webapp-testing/SKILL.md"}'
       }
     ]
   });
@@ -1563,7 +1563,7 @@ test("skill badge awareness recognizes Scrapling CLI and MCP traces", () => {
       {
         ts: 1710000000,
         message:
-          'ToolCall: functions.exec_command {"cmd":"sed -n \'1,220p\' /Users/funtoco/.codex/skills/scrapling-official/SKILL.md"}'
+          'ToolCall: functions.exec_command {"cmd":"sed -n \'1,220p\' /Users/demo/.codex/skills/scrapling-official/SKILL.md"}'
       }
     ]
   });

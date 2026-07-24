@@ -33,6 +33,14 @@ test("parseExecuteWorkerCliArgs parses --worker flag", () => {
   assert.equal(parsed.command, "start");
 });
 
+test("parseExecuteWorkerCliArgs uses the configured repo when CLI does not override it", () => {
+  const parsed = parseExecuteWorkerCliArgs(["start"], {
+    repo: "configured/repo"
+  });
+
+  assert.equal(parsed.repo, "configured/repo");
+});
+
 test("parseExecuteWorkerCliArgs defaults workerIndex to 1 when --worker is omitted", () => {
   const parsed = parseExecuteWorkerCliArgs(["stop"]);
   assert.equal(parsed.workerIndex, 1);
@@ -58,7 +66,7 @@ test("inferExecuteWorkerRuntime treats a live worker pid as running", () => {
   const runtime = inferExecuteWorkerRuntime({
     pidFilePid: 7123,
     pidFileAlive: true,
-    pidFileCommand: "node /Users/funtoco/workSpace/codex-pixel-agent/tools/execute-worker.mjs"
+    pidFileCommand: "node /Users/demo/workSpace/codex-pixel-agent/tools/execute-worker.mjs"
   });
 
   assert.equal(runtime.running, true);

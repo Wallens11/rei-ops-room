@@ -1,22 +1,46 @@
 # Rei Ops Room
 
-Autonomous agent ops room built on vanilla Node.js. Rei watches your GitHub issues, picks the right AI runtime, executes tasks, and reports back — all visible through a real-time web UI.
+[![Tests](https://github.com/Wallens11/rei-ops-room/actions/workflows/test.yml/badge.svg)](https://github.com/Wallens11/rei-ops-room/actions/workflows/test.yml)
+![Node.js 22+](https://img.shields.io/badge/Node.js-22%2B-5FA04E?logo=nodedotjs&logoColor=white)
+![Runtime dependencies: 0](https://img.shields.io/badge/runtime_dependencies-0-7cffba)
+[![License: MIT](https://img.shields.io/badge/license-MIT-65e4ff.svg)](LICENSE)
 
-No framework. No heavy dependencies. Pure ESM.
+A local-first control room for GitHub-driven coding agents. Turn approved issues
+into observable Claude Code or Codex runs, with queue state, runtime activity,
+human intervention points, and results visible in one real-time pixel-art room.
 
-![Rei Ops Room](public/demo.png)
+No framework, build step, hosted control plane, or runtime npm dependencies.
+
+![Rei Ops Room Safe Demo](public/safe-demo.jpg)
+
+### Try the Safe Demo
 
 ```bash
-# Try it instantly — no setup needed
-DEMO_MODE=true npm start
-# → http://localhost:4317
+git clone https://github.com/Wallens11/rei-ops-room
+cd rei-ops-room
+npm run demo
 ```
+
+Open `http://localhost:4317`. The demo needs no GitHub token, AI runtime, or
+`npm install`; it serves simulated state and blocks local reads and writes.
+
+---
+
+## Why It Stands Out
+
+- **Safe Demo contract** — public visitors get realistic simulated state while local memory, chat, codebase, run logs, and write actions stay blocked
+- **Human approval before execution** — `mode:execute` issues wait for `status:approved`; labeling an issue is not enough to run code
+- **Runtime truth, not a fake swarm** — the room visualizes real queue, worker, GitHub, and runtime state
+- **Last-mile self-review** — protected files, malformed output, debug leftovers, and suspicious diffs are checked before a run is marked complete
+- **Local-first and dependency-light** — no hosted control plane, frontend framework, database service, or runtime npm dependency
+
+The result is an operator-facing control room with personality, not a generic agent dashboard.
 
 ---
 
 ## What Rei Does
 
-- **Picks up GitHub issues** labeled `agent:rei` + `mode:execute` and runs them autonomously
+- **Picks up approved GitHub issues** labeled `agent:rei` + `mode:execute` + `status:approved`
 - **Routes to the right runtime** — Claude Code for frontend/docs, Codex for backend/scraping — configurable per task type
 - **Falls back automatically** when a runtime hits rate limits
 - **Resumes sessions** after crashes using Claude Code's `--resume` flag
@@ -56,14 +80,14 @@ npm run execute-service -- start
 
 ```bash
 # Demo mode — no setup needed
-docker run -p 4317:4317 -e DEMO_MODE=true ghcr.io/wallens11/rei-ops-room
-
-# Live mode
-docker run -p 4317:4317 \
-  -e GITHUB_TOKEN=ghp_xxx \
-  -e REI_REPO=owner/repo \
+docker run --rm \
+  -p 127.0.0.1:4317:4317 \
+  -e DEMO_MODE=true \
   ghcr.io/wallens11/rei-ops-room
 ```
+
+The published image is best suited to the safe demo and control-plane UI. Live
+execution also needs the selected AI runtime CLI and a mounted workspace.
 
 ---
 
@@ -91,11 +115,12 @@ cp rei.config.json.example rei.config.json
 
 ```json
 {
-  "githubRepo": "your-org/your-repo",
-  "workspaceRoot": "/path/to/your/workspace",
-  "runtimes": ["claude-code", "codex"],
+  "repo": "your-org/your-repo",
+  "workspacePath": "/path/to/your/workspace",
+  "host": "127.0.0.1",
   "port": 4317,
   "githubWebhookSecret": "",
+  "statusStreamIntervalMs": 2000,
   "webhooks": {
     "slack": "",
     "discord": "",
@@ -104,7 +129,10 @@ cp rei.config.json.example rei.config.json
 }
 ```
 
-All fields can also be set via environment variables — env vars take priority over the config file.
+Environment variables take priority over the config file. Core mappings:
+`GITHUB_REPO`, `WORKSPACE_ROOT`, `REI_HOST`, `PORT`, `CODEX_HOME`,
+`CODEX_BIN`, `CLAUDE_BIN`, `DAILY_DEVICE_HANDOFF_PATH`,
+`GITHUB_WEBHOOK_SECRET`, and `STATUS_STREAM_INTERVAL_MS`.
 
 ### Runtime Routing
 
@@ -139,6 +167,25 @@ Rei wakes up the worker immediately on:
 - Issue comment created
 - Any push
 - Pull request merged
+
+---
+
+## Security Boundaries
+
+- The server binds to `127.0.0.1` by default. The API does not provide user
+  authentication, so do not bind it to a wider network unless a trusted reverse
+  proxy supplies authentication and access control.
+- Safe Demo serves isolated fixtures and blocks local-data reads, run-log access,
+  task submission, handoff generation, chat writes, memory writes, and inquiry
+  intake.
+- Configure `GITHUB_WEBHOOK_SECRET` before accepting GitHub webhooks outside
+  local development. An empty secret intentionally skips signature verification.
+- Local config, state, memory, chat, costs, run output, and `.env*` files are
+  gitignored. Do not commit tokens or personal workspace paths.
+
+See [SECURITY.md](SECURITY.md) for private vulnerability reporting and
+[PUBLIC_READINESS.md](PUBLIC_READINESS.md) for the current audit evidence and
+remaining release risks.
 
 ---
 
@@ -246,7 +293,8 @@ GET /api/execute/artifacts/:filename.html
 
 | Endpoint | Description |
 |---|---|
-| `GET /api/status` | Server health |
+| `GET /api/health` | Server health and version |
+| `GET /api/status` | Current room and runtime state |
 | `GET /api/github/issues` | GitHub inbox |
 | `GET /api/github/execute` | Execute queue preview |
 | `GET /api/github/execute/service` | Worker status |
@@ -287,7 +335,7 @@ rei-ops-room/
 │   ├── runtimes/               # Runtime adapters (claude-code, codex)
 │   └── skills/                 # Bundled Claude Code skills
 │       └── visual-explainer/
-└── tests/                  # Node built-in test runner (409 tests)
+└── tests/                  # 500+ tests on Node's built-in runner
 ```
 
 ---
@@ -303,3 +351,12 @@ node --test --watch tests/*.test.mjs
 ```
 
 No build step. No transpilation. Edit and reload.
+
+---
+
+## AI Assistance Disclosure
+
+AI tools assisted with ideation and implementation. Product requirements,
+security decisions, code review, verification, and release decisions remain
+maintainer-owned. Contributions are judged by their tests and behavior, not by
+who or what drafted them.

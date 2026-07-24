@@ -35,7 +35,12 @@ import {
 import { getLearningEntries, recordRunInsight } from "./execute-learning.mjs";
 import { extractMemoryFromRun } from "./rei-memory.mjs";
 import { parseTokenUsage, recordRunCost } from "./rei-cost-tracker.mjs";
-import { runSelfReview, formatSelfReview } from "./rei-self-review.mjs";
+import {
+  findChangedProtectedPaths,
+  formatSelfReview,
+  runSelfReview,
+  snapshotProtectedPaths
+} from "./rei-self-review.mjs";
 import { narrate } from "./rei-narration.mjs";
 import { notifyRun } from "./rei-webhooks.mjs";
 import { clearSessionPin, readSessionPin, writeSessionPin } from "./execute-sessions.mjs";
@@ -785,6 +790,7 @@ export async function executeNextIssue({
     cwd,
     runner
   });
+  const protectedPathsBefore = await snapshotProtectedPaths({ cwd });
   await onStateChange({
     status: "launching",
     currentTarget: preview.target,
@@ -908,10 +914,16 @@ export async function executeNextIssue({
     cwd,
     runner
   });
-  const newChanges = findNewMeaningfulWorktreeChanges({
+  const gitChanges = findNewMeaningfulWorktreeChanges({
     beforePaths: baselineWorktreePaths,
     afterPaths: nextWorktreePaths
   });
+  const protectedPathsAfter = await snapshotProtectedPaths({ cwd });
+  const protectedPathChanges = findChangedProtectedPaths(
+    protectedPathsBefore,
+    protectedPathsAfter
+  );
+  const newChanges = [...new Set([...gitChanges, ...protectedPathChanges])];
   let outcome = classifyExecuteMissionResult({
     mission,
     newChanges
@@ -930,7 +942,9 @@ export async function executeNextIssue({
     selfReview = await runSelfReview({
       cwd,
       changedFiles: newChanges,
-      requireChanges: true
+      requireChanges: true,
+      protectedPathsBefore,
+      protectedPathsAfter
     }).catch(() => null);
     if (selfReview && !selfReview.ok) {
       outcome = "review_needed";

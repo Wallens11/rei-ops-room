@@ -12,6 +12,7 @@ test("loadReiConfig returns defaults when no file and no env", async () => {
     env: {}
   });
   assert.equal(config.repo, null);
+  assert.equal(config.host, "127.0.0.1");
   assert.equal(config.port, DEFAULT_REI_CONFIG.port);
   assert.equal(config.githubWebhookSecret, "");
   assert.equal(config.statusStreamIntervalMs, DEFAULT_REI_CONFIG.statusStreamIntervalMs);
@@ -37,9 +38,10 @@ test("loadReiConfig: env vars override file config", async () => {
     await fs.writeFile(cfgPath, JSON.stringify({ repo: "file/repo", port: 9000 }), "utf8");
     const config = await loadReiConfig({
       configPath: cfgPath,
-      env: { GITHUB_REPO: "env/repo", PORT: "5000" }
+      env: { GITHUB_REPO: "env/repo", REI_HOST: "0.0.0.0", PORT: "5000" }
     });
     assert.equal(config.repo, "env/repo");
+    assert.equal(config.host, "0.0.0.0");
     assert.equal(config.port, 5000);
   } finally {
     await fs.rm(tmpDir, { recursive: true, force: true });
@@ -70,12 +72,35 @@ test("loadReiConfig: partial file config merges with defaults", async () => {
   }
 });
 
+test("loadReiConfig supports the documented legacy repo and workspace aliases", async () => {
+  const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "rei-cfg-"));
+  const cfgPath = path.join(tmpDir, "rei.config.json");
+  try {
+    await fs.writeFile(
+      cfgPath,
+      JSON.stringify({
+        githubRepo: "legacy/repo",
+        workspaceRoot: "/legacy/workspace",
+        host: "127.0.0.1"
+      }),
+      "utf8"
+    );
+    const config = await loadReiConfig({ configPath: cfgPath, env: {} });
+    assert.equal(config.repo, "legacy/repo");
+    assert.equal(config.workspacePath, "/legacy/workspace");
+    assert.equal(config.host, "127.0.0.1");
+  } finally {
+    await fs.rm(tmpDir, { recursive: true, force: true });
+  }
+});
+
 test("loadReiConfig: all env vars mapped correctly", async () => {
   const config = await loadReiConfig({
     configPath: "/nonexistent.json",
     env: {
       GITHUB_REPO: "env/full",
       WORKSPACE_ROOT: "/workspace",
+      REI_HOST: "127.0.0.1",
       PORT: "8080",
       CODEX_HOME: "/custom/codex",
       CODEX_BIN: "/usr/bin/codex",
@@ -87,6 +112,7 @@ test("loadReiConfig: all env vars mapped correctly", async () => {
   });
   assert.equal(config.repo, "env/full");
   assert.equal(config.workspacePath, "/workspace");
+  assert.equal(config.host, "127.0.0.1");
   assert.equal(config.port, 8080);
   assert.equal(config.codexHome, "/custom/codex");
   assert.equal(config.codexBin, "/usr/bin/codex");
@@ -99,5 +125,6 @@ test("loadReiConfig: all env vars mapped correctly", async () => {
 test("DEFAULT_REI_CONFIG is frozen and has expected shape", () => {
   assert.ok(Object.isFrozen(DEFAULT_REI_CONFIG));
   assert.equal(typeof DEFAULT_REI_CONFIG.port, "number");
+  assert.equal(DEFAULT_REI_CONFIG.host, "127.0.0.1");
   assert.equal(DEFAULT_REI_CONFIG.repo, null);
 });

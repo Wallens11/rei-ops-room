@@ -322,14 +322,22 @@ export function buildDemoRoomStatus() {
       prefer_objective: false
     },
     workspace: {
-      active_lane_count: 1,
-      recent_thread_count: 3,
-      rooms: [
+      active_room: {
+        repo: "demo-user/my-app",
+        recent_thread_count: 3,
+        active_lane_count: 1,
+        status: "active",
+        phase: "coding",
+        latest_title: "Fix N+1 query in /api/users endpoint",
+        updated_ago: "3m ago"
+      },
+      sleeping_rooms: [
         {
-          repo: "my-app",
-          status: "active",
-          recent_thread_count: 3,
-          title: "Fix N+1 query in /api/users endpoint"
+          repo: "demo-user/design-system",
+          status: "sleeping",
+          recent_thread_count: 2,
+          latest_title: "Audit accessible component tokens",
+          updated_ago: "2h ago"
         }
       ]
     },

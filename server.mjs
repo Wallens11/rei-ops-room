@@ -18,21 +18,24 @@ import {
 import { readArtifactFile, readArtifacts } from "./tools/execute-artifacts.mjs";
 import { createGithubRunner } from "./tools/github-api.mjs";
 import { buildHealthPayload } from "./tools/health.mjs";
+import { loadReiConfig } from "./tools/rei-config.mjs";
 
 const execFileAsync = promisify(execFile);
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const publicDir = path.join(__dirname, "public");
-const workspaceRoot = process.env.WORKSPACE_ROOT || path.resolve(__dirname, "..");
-const codexHome = process.env.CODEX_HOME || path.join(os.homedir(), ".codex");
+const runtimeConfig = await loadReiConfig();
+const workspaceRoot = runtimeConfig.workspacePath || path.resolve(__dirname, "..");
+const codexHome = runtimeConfig.codexHome || path.join(os.homedir(), ".codex");
 const stateDb = process.env.CODEX_STATE_DB || path.join(codexHome, "state_5.sqlite");
 const logsDb = process.env.CODEX_LOGS_DB || path.join(codexHome, "logs_1.sqlite");
-const dailyDeviceHandoffPaths = process.env.DAILY_DEVICE_HANDOFF_PATH
-  ? [process.env.DAILY_DEVICE_HANDOFF_PATH]
+const dailyDeviceHandoffPaths = runtimeConfig.dailyHandoffPath
+  ? [runtimeConfig.dailyHandoffPath]
   : [];
-const port = Number(process.env.PORT || 4317);
+const host = runtimeConfig.host;
+const port = runtimeConfig.port;
 export const SQLITE_JSON_MAX_BUFFER = 8 * 1024 * 1024;
 export const STATUS_STREAM_RETRY_MS = 2500;
-const STATUS_STREAM_INTERVAL_MS = Number(process.env.STATUS_STREAM_INTERVAL_MS || 2000);
+const STATUS_STREAM_INTERVAL_MS = runtimeConfig.statusStreamIntervalMs;
 const GITHUB_ISSUE_JSON_FIELDS =
   "number,title,state,createdAt,updatedAt,url,labels,assignees,author";
 const DEFAULT_GITHUB_ISSUE_LIMIT = 20;
@@ -199,8 +202,8 @@ const NOISE_TARGET_PREFIXES = [
   "codex_core::models_manager::",
   "codex_otel."
 ];
-const GITHUB_WEBHOOK_SECRET = process.env.GITHUB_WEBHOOK_SECRET || "";
-const statusStreamClients = new Set();
+const GITHUB_WEBHOOK_SECRET = runtimeConfig.githubWebhookSecret;
+const statusStreamClients = new Map();
 let statusStreamTimer = null;
 let statusStreamSequence = 0;
 let statusStreamInflight = null;
@@ -213,12 +216,10 @@ let logsMessageColumnPromise = null;
 // with a periodic heartbeat to keep the connection (and proxies) alive.
 const LIVE_STREAM_INTERVAL_MS = Number(process.env.LIVE_STREAM_INTERVAL_MS || 2000);
 const LIVE_STREAM_HEARTBEAT_MS = 20000;
-const liveStreamClients = new Set();
+const liveStreamClients = new Map();
 let liveStreamTimer = null;
 let liveStreamSequence = 0;
 let liveStreamInflight = null;
-let liveStreamLastSignature = null;
-let liveStreamLastBeat = 0;
 
 function quoteSql(value) {
   return `'${String(value).replaceAll("'", "''")}'`;
@@ -1558,27 +1559,47 @@ async function broadcastStatusSnapshot() {
   }
 
   statusStreamInflight = (async () => {
-    try {
-      const payload = await getStatus();
-      for (const client of statusStreamClients) {
-        try {
-          writeStatusStreamFrame(client, payload);
-        } catch {
-          statusStreamClients.delete(client);
-        }
+    const snapshots = new Map();
+
+    for (const getStatusImpl of new Set(statusStreamClients.values())) {
+      try {
+        snapshots.set(getStatusImpl, {
+          payload: await getStatusImpl(),
+          error: null
+        });
+      } catch (error) {
+        snapshots.set(getStatusImpl, {
+          payload: null,
+          error
+        });
       }
-    } catch (error) {
-      for (const client of statusStreamClients) {
-        try {
-          writeStatusStreamError(client, error);
-        } catch {
-          statusStreamClients.delete(client);
-        }
-      }
-    } finally {
-      statusStreamInflight = null;
     }
-  })();
+
+    for (const [client, getStatusImpl] of statusStreamClients) {
+      const snapshot = snapshots.get(getStatusImpl);
+      try {
+        if (snapshot?.error) {
+          writeStatusStreamError(client, snapshot.error);
+        } else {
+          writeStatusStreamFrame(client, snapshot?.payload);
+        }
+      } catch {
+        statusStreamClients.delete(client);
+      }
+    }
+
+    statusStreamInflight = null;
+  })().catch((error) => {
+    for (const client of statusStreamClients.keys()) {
+      try {
+        writeStatusStreamError(client, error);
+      } catch {
+        statusStreamClients.delete(client);
+      }
+    }
+  }).finally(() => {
+    statusStreamInflight = null;
+  });
 
   return statusStreamInflight;
 }
@@ -1602,7 +1623,7 @@ function cleanupStatusStreamTimer() {
   statusStreamTimer = null;
 }
 
-async function attachStatusStream(response) {
+async function attachStatusStream(response, getStatusImpl = getStatus) {
   response.writeHead(200, {
     "Content-Type": "text/event-stream; charset=utf-8",
     "Cache-Control": "no-cache, no-transform",
@@ -1612,7 +1633,7 @@ async function attachStatusStream(response) {
   response.flushHeaders?.();
   response.write(": connected\n\n");
 
-  statusStreamClients.add(response);
+  statusStreamClients.set(response, getStatusImpl);
   ensureStatusStreamTimer();
   await broadcastStatusSnapshot();
 }
@@ -1678,34 +1699,28 @@ async function broadcastLivePanels({ force = false } = {}) {
   }
 
   liveStreamInflight = (async () => {
-    try {
-      const payload = await buildLivePanelsPayload();
-      const signature = livePanelsSignature(payload);
-      const now = Date.now();
-      const changed = force || signature !== liveStreamLastSignature;
-      const beatDue = now - liveStreamLastBeat >= LIVE_STREAM_HEARTBEAT_MS;
+    for (const [client, state] of liveStreamClients) {
+      try {
+        const payload = await state.getPayload();
+        const signature = livePanelsSignature(payload);
+        const now = Date.now();
+        const changed = force || signature !== state.lastSignature;
+        const beatDue = now - state.lastBeat >= LIVE_STREAM_HEARTBEAT_MS;
 
-      if (!changed && !beatDue) {
-        return;
-      }
-
-      liveStreamLastSignature = signature;
-      liveStreamLastBeat = now;
-      const event = changed ? "panels" : "heartbeat";
-
-      for (const client of liveStreamClients) {
-        try {
-          writeLiveStreamFrame(client, event, payload);
-        } catch {
-          liveStreamClients.delete(client);
+        if (!changed && !beatDue) {
+          continue;
         }
+
+        state.lastSignature = signature;
+        state.lastBeat = now;
+        writeLiveStreamFrame(client, changed ? "panels" : "heartbeat", payload);
+      } catch {
+        liveStreamClients.delete(client);
       }
-    } catch {
-      // transient — next tick will retry
-    } finally {
-      liveStreamInflight = null;
     }
-  })();
+  })().finally(() => {
+    liveStreamInflight = null;
+  });
 
   return liveStreamInflight;
 }
@@ -1729,7 +1744,7 @@ function cleanupLiveStreamTimer() {
   liveStreamTimer = null;
 }
 
-async function attachLiveStream(response) {
+async function attachLiveStream(response, getPayload = buildLivePanelsPayload) {
   response.writeHead(200, {
     "Content-Type": "text/event-stream; charset=utf-8",
     "Cache-Control": "no-cache, no-transform",
@@ -1739,8 +1754,11 @@ async function attachLiveStream(response) {
   response.flushHeaders?.();
   response.write(": connected\n\n");
 
-  liveStreamClients.add(response);
-  liveStreamLastSignature = null; // force a fresh frame for the new client
+  liveStreamClients.set(response, {
+    getPayload,
+    lastSignature: null,
+    lastBeat: 0
+  });
   ensureLiveStreamTimer();
   await broadcastLivePanels({ force: true });
 }
@@ -2072,6 +2090,56 @@ async function defaultGetMetrics() {
   return computeMetrics(entries);
 }
 
+function isDemoRestrictedRequest(method, pathname) {
+  if (pathname === "/api/rei/codebase" || pathname.startsWith("/api/execute/runs/")) {
+    return true;
+  }
+
+  if (method === "POST") {
+    return [
+      "/api/handoff/generate",
+      "/api/execute/submit",
+      "/api/inquiry/intake",
+      "/api/rei/chat",
+      "/api/rei/memory",
+      "/api/rei/narration"
+    ].includes(pathname);
+  }
+
+  return false;
+}
+
+function writeDemoBrainFixture(response, pathname) {
+  const fixtures = {
+    "/api/rei/costs": {
+      today: { runs: 0, cost: 0, tokens: 0 },
+      week: { runs: 0, cost: 0, tokens: 0 },
+      total: { runs: 0, cost: 0, tokens: 0 },
+      summary: "Safe demo — no operator cost data loaded.",
+      demo: true
+    },
+    "/api/rei/memory": { entries: [], query: "", demo: true },
+    "/api/rei/chat": { messages: [], demo: true },
+    "/api/rei/narration": { entries: [], phaseIcons: {}, demo: true },
+    "/api/rei/personality": {
+      mood: "focused",
+      energy: 0.72,
+      focus: 0.91,
+      confidence: 0.78,
+      recentRuns24h: 3,
+      idleMins: 3,
+      costToday: 0,
+      voice: { icon: "🎯", color: "#65e4ff", tagline: "simulated focus" },
+      tagline: "Safe demo, fully simulated.",
+      demo: true
+    }
+  };
+  const fixture = fixtures[pathname];
+  if (!fixture) return false;
+  writeJson(response, 200, fixture);
+  return true;
+}
+
 export function createServer({
   getStatus: getStatusImpl = getStatus,
   getDailyDeviceHandoff: getDailyDeviceHandoffImpl = readDailyDeviceHandoff,
@@ -2092,10 +2160,31 @@ export function createServer({
   readArtifact: readArtifactImpl = readArtifactFile,
   handleGithubWebhook: handleGithubWebhookImpl = defaultHandleGithubWebhook,
   getMetrics: getMetricsImpl = defaultGetMetrics,
+  getLivePanels: getLivePanelsImpl = buildLivePanelsPayload,
+  readQueue: readQueueImpl = readQueue,
+  readWorkers: readWorkersImpl = readWorkers,
+  demoMode = false,
   serveStatic: serveStaticImpl = serveStatic
 } = {}) {
   return http.createServer(async (request, response) => {
     const url = new URL(request.url || "/", `http://${request.headers.host || "localhost"}`);
+
+    if (
+      demoMode &&
+      request.method === "GET" &&
+      writeDemoBrainFixture(response, url.pathname)
+    ) {
+      return;
+    }
+
+    if (demoMode && isDemoRestrictedRequest(request.method || "GET", url.pathname)) {
+      writeJson(response, 403, {
+        error: "This local-data action is disabled in demo mode.",
+        detail: "Demo mode is read-only and never reads or writes operator data.",
+        demo: true
+      });
+      return;
+    }
 
     if (url.pathname === "/api/health" && request.method === "GET") {
       try {
@@ -2162,6 +2251,7 @@ export function createServer({
         const filters = buildGithubIssueFilters(url);
         const repo =
           filters.repo ||
+          runtimeConfig.repo ||
           (await inferGithubRepoSlugImpl({
             cwd: __dirname,
             remoteName: "origin"
@@ -2198,7 +2288,8 @@ export function createServer({
           }
 
           const payload = await controlReportOnlyServiceImpl({
-            action
+            action,
+            repo: runtimeConfig.repo
           });
           writeJson(response, 200, payload);
         } catch (error) {
@@ -2252,6 +2343,7 @@ export function createServer({
 
           const payload = await controlExecuteServiceImpl({
             action,
+            repo: runtimeConfig.repo,
             workerIndex
           });
           writeJson(response, 200, payload);
@@ -2288,7 +2380,7 @@ export function createServer({
     if (url.pathname === "/api/github/execute") {
       try {
         const payload = await previewExecuteActionImpl({
-          repo: url.searchParams.get("repo")?.trim() || null
+          repo: url.searchParams.get("repo")?.trim() || runtimeConfig.repo || null
         });
 
         writeJson(response, 200, payload);
@@ -2306,10 +2398,10 @@ export function createServer({
         const payload =
           request.method === "POST"
             ? await postReportOnlyActionImpl({
-                repo: url.searchParams.get("repo")?.trim() || null
+                repo: url.searchParams.get("repo")?.trim() || runtimeConfig.repo || null
               })
             : await previewReportOnlyActionImpl({
-                repo: url.searchParams.get("repo")?.trim() || null
+                repo: url.searchParams.get("repo")?.trim() || runtimeConfig.repo || null
               });
 
         writeJson(response, 200, payload);
@@ -2333,7 +2425,7 @@ export function createServer({
         const task = String(body?.task || "").trim();
 
         if (!task) {
-          writeJson(response, 400, { error: "Field `task` wajib diisi." });
+          writeJson(response, 400, { error: "Field `task` is required." });
           return;
         }
 
@@ -2360,7 +2452,7 @@ export function createServer({
 
     if (url.pathname === "/api/execute/queue") {
       try {
-        const tasks = await readQueue();
+        const tasks = await readQueueImpl();
         writeJson(response, 200, { tasks });
       } catch (error) {
         writeJson(response, 500, {
@@ -2373,7 +2465,7 @@ export function createServer({
 
     if (url.pathname === "/api/execute/workers") {
       try {
-        const workers = await readWorkers();
+        const workers = await readWorkersImpl();
         writeJson(response, 200, { workers });
       } catch (error) {
         writeJson(response, 500, {
@@ -2395,7 +2487,7 @@ export function createServer({
         const taskId = deleteQueueMatch[1];
         const outcome = await removeQueueTaskImpl(taskId);
         if (!outcome.removed && outcome.reason === "not_found") {
-          writeJson(response, 404, { error: "Task tidak ditemukan.", id: taskId });
+          writeJson(response, 404, { error: "Task not found.", id: taskId });
         } else if (!outcome.removed && outcome.reason === "in_progress") {
           writeJson(response, 409, { error: "Task is currently running and cannot be deleted.", id: taskId });
         } else {
@@ -2435,7 +2527,7 @@ export function createServer({
           .pop(); // take the most recent
 
         if (!matchingDir) {
-          writeJson(response, 404, { error: "Run log tidak ditemukan untuk task ini.", taskId: runsMatch[1] });
+          writeJson(response, 404, { error: "No run log found for this task.", taskId: runsMatch[1] });
           return;
         }
 
@@ -2856,7 +2948,7 @@ export function createServer({
         const source = String(body?.source || "external").trim();
 
         if (!title) {
-          writeJson(response, 400, { error: "Field `title` wajib diisi." });
+          writeJson(response, 400, { error: "Field `title` is required." });
           return;
         }
 
@@ -2880,7 +2972,7 @@ export function createServer({
         const allLabels = ["agent:rei", "status:todo", "mode:report_only", ...extraLabels];
 
         // Create a GitHub issue via REST API (or gh CLI fallback)
-        const repo = process.env.GITHUB_REPO || null;
+        const repo = runtimeConfig.repo || null;
 
         let issueUrl = null;
         try {
@@ -2943,7 +3035,7 @@ export function createServer({
         const result = await handleGithubWebhookImpl({ rawBody, signatureHeader, eventType, payload });
 
         if (!result.valid) {
-          writeJson(response, 401, { error: "Webhook signature tidak valid." });
+          writeJson(response, 401, { error: "Invalid webhook signature." });
           return;
         }
 
@@ -2970,7 +3062,7 @@ export function createServer({
         cleanupStatusStreamTimer();
       });
 
-      await attachStatusStream(response);
+      await attachStatusStream(response, getStatusImpl);
       return;
     }
 
@@ -2983,7 +3075,7 @@ export function createServer({
         cleanupLiveStreamTimer();
       });
 
-      await attachLiveStream(response);
+      await attachLiveStream(response, getLivePanelsImpl);
       return;
     }
 
@@ -2991,19 +3083,23 @@ export function createServer({
   });
 }
 
-export function startServer(listenPort = port) {
+export function startServer(listenPort = port, listenHost = host) {
   const server = createServer();
-  server.listen(listenPort, () => {
-    console.log(`Rei ops room ready at http://localhost:${listenPort}`);
+  server.listen(listenPort, listenHost, () => {
+    const address = server.address();
+    const activePort = typeof address === "object" && address ? address.port : listenPort;
+    console.log(`Rei ops room ready at http://${listenHost}:${activePort}`);
   });
   return server;
 }
 
-async function startDemoServer(listenPort = port) {
+async function startDemoServer(listenPort = port, listenHost = host) {
   const { createDemoServer } = await import("./tools/demo-server.mjs");
   const server = createDemoServer();
-  server.listen(listenPort, () => {
-    console.log(`Rei ops room ready at http://localhost:${listenPort} (demo mode)`);
+  server.listen(listenPort, listenHost, () => {
+    const address = server.address();
+    const activePort = typeof address === "object" && address ? address.port : listenPort;
+    console.log(`Rei ops room ready at http://${listenHost}:${activePort} (demo mode)`);
   });
   return server;
 }

@@ -49,7 +49,7 @@ test("resolveCodexCommand falls back to plain codex when no absolute binary is a
 test("buildCodexExecInvocation places global flags before the exec subcommand", () => {
   const invocation = buildCodexExecInvocation({
     codexCommand: "/Applications/Codex.app/Contents/Resources/codex",
-    repoCwd: "/Users/funtoco/workSpace/codex-pixel-agent",
+    repoCwd: "/Users/demo/workSpace/codex-pixel-agent",
     outputLastMessageFile: "/tmp/last-message.md"
   });
 
@@ -66,7 +66,7 @@ test("buildCodexExecInvocation places global flags before the exec subcommand", 
 
 test("listMeaningfulWorktreePaths ignores execute runtime artifacts", async () => {
   const paths = await listMeaningfulWorktreePaths({
-    cwd: "/Users/funtoco/workSpace/codex-pixel-agent",
+    cwd: "/Users/demo/workSpace/codex-pixel-agent",
     runner: async () => ({
       stdout: [
         " M README.md",

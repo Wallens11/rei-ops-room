@@ -1,16 +1,18 @@
 {
-  "githubRepo": "your-org/your-repo",
+  "repo": "your-org/your-repo",
+  "workspacePath": "/absolute/path/to/your/workspace",
+  "host": "127.0.0.1",
+  "port": 4317,
+  "codexHome": "",
+  "codexBin": "",
+  "claudeBin": "",
+  "dailyHandoffPath": "",
   "githubWebhookSecret": "",
-  "workspaceRoot": "/absolute/path/to/your-repo",
-  "runtimes": ["claude-code", "codex"],
-  "executeIntervalSeconds": 60,
-  "executeTimeoutMs": 600000,
+  "statusStreamIntervalMs": 2000,
   "webhooks": {
     "slack": "",
     "discord": "",
     "generic": "",
     "events": "completed,failed,blocked"
-  },
-  "port": 4317,
-  "demo": false
+  }
 }

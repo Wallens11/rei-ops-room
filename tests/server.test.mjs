@@ -26,11 +26,64 @@ import {
   extractStructuredHandoffFields,
   selectActivityLogs,
   readDailyDeviceHandoff,
+  startServer,
   stripWorkspacePrefix,
   verifyGithubWebhookSignature,
   SQLITE_JSON_MAX_BUFFER,
   sqliteJsonWithRunner
 } from "../server.mjs";
+
+test("startServer binds to loopback by default", async (t) => {
+  const server = startServer(0);
+  await once(server, "listening");
+  t.after(() => server.close());
+
+  assert.equal(server.address().address, "127.0.0.1");
+});
+
+test("demo mode blocks endpoints that inspect arbitrary local codebases", async (t) => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "rei-demo-isolation-"));
+  const server = createServer({ demoMode: true });
+  server.listen(0, "127.0.0.1");
+  await once(server, "listening");
+  t.after(async () => {
+    server.close();
+    await fs.rm(root, { recursive: true, force: true });
+  });
+
+  const { port } = server.address();
+  const response = await fetch(
+    `http://127.0.0.1:${port}/api/rei/codebase?root=${encodeURIComponent(root)}`
+  );
+  const payload = await response.json();
+
+  assert.equal(response.status, 403);
+  assert.equal(payload.demo, true);
+});
+
+test("demo mode serves isolated read-only brain fixtures", async (t) => {
+  const server = createServer({ demoMode: true });
+  server.listen(0, "127.0.0.1");
+  await once(server, "listening");
+  t.after(() => server.close());
+
+  const { port } = server.address();
+  const [memoryResponse, costsResponse, personalityResponse, chatResponse] = await Promise.all([
+    fetch(`http://127.0.0.1:${port}/api/rei/memory?limit=12`),
+    fetch(`http://127.0.0.1:${port}/api/rei/costs`),
+    fetch(`http://127.0.0.1:${port}/api/rei/personality`),
+    fetch(`http://127.0.0.1:${port}/api/rei/chat?limit=60`)
+  ]);
+
+  assert.equal(memoryResponse.status, 200);
+  assert.deepEqual(await memoryResponse.json(), { entries: [], query: "", demo: true });
+  assert.equal(costsResponse.status, 200);
+  assert.equal((await costsResponse.json()).demo, true);
+  assert.equal(personalityResponse.status, 200);
+  assert.equal((await personalityResponse.json()).mood, "focused");
+  assert.equal(chatResponse.status, 200);
+  assert.deepEqual(await chatResponse.json(), { messages: [], demo: true });
+});
 
 test("sqliteJsonWithRunner raises maxBuffer for larger runtime log payloads", async () => {
   let captured = null;

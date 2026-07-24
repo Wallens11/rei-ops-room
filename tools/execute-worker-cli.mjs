@@ -10,6 +10,7 @@ import {
   readExecuteWorkerState,
   projectRoot
 } from "./execute-worker-state.mjs";
+import { loadReiConfig } from "./rei-config.mjs";
 
 const execFileAsync = promisify(execFile);
 const defaultIntervalMs = 60_000;
@@ -33,10 +34,10 @@ export function workerLogFile(workerIndex = 1) {
   return path.join(path.dirname(executeWorkerLogFile), `.execute-worker-${workerIndex}.log`);
 }
 
-export function parseExecuteWorkerCliArgs(argv) {
+export function parseExecuteWorkerCliArgs(argv, { repo: defaultRepo = null } = {}) {
   const args = [...argv];
   let command = "status";
-  let repo = null;
+  let repo = defaultRepo;
   let intervalMs = defaultIntervalMs;
   let workerIndex = 1;
 
@@ -351,7 +352,10 @@ async function printStatus({ logger = defaultLogger, workerIndex = 1 } = {}) {
 }
 
 async function main() {
-  const parsed = parseExecuteWorkerCliArgs(process.argv.slice(2));
+  const config = await loadReiConfig();
+  const parsed = parseExecuteWorkerCliArgs(process.argv.slice(2), {
+    repo: config.repo
+  });
 
   if (parsed.command === "start") {
     await startExecuteWorker(parsed);

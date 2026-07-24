@@ -62,6 +62,51 @@ test("GET /api/live/stream pushes a panels frame with queue shape", async (t) =>
   assert.ok(payload.queue && Array.isArray(payload.queue.tasks), "frame carries queue.tasks[]");
 });
 
+test("GET /api/status/stream uses the server's injected status source", async (t) => {
+  const server = createServer({
+    getStatus: async () => ({
+      demo: true,
+      marker: "isolated-demo-status"
+    })
+  });
+  server.listen(0);
+  await once(server, "listening");
+  t.after(() => server.close());
+
+  const { port } = server.address();
+  const frame = await readFirstFrame(port, "/api/status/stream");
+  const parsed = parseSseFrame(frame);
+  const payload = JSON.parse(parsed.data);
+
+  assert.equal(parsed.event, "status");
+  assert.equal(payload.demo, true);
+  assert.equal(payload.marker, "isolated-demo-status");
+});
+
+test("GET /api/live/stream uses the server's injected panel source", async (t) => {
+  const server = createServer({
+    getLivePanels: async () => ({
+      generatedAt: "2026-07-25T00:00:00.000Z",
+      queue: { tasks: [{ id: "demo-task" }] },
+      metrics: { totalRuns: 23 },
+      costs: { summary: "Demo mode" }
+    })
+  });
+  server.listen(0);
+  await once(server, "listening");
+  t.after(() => server.close());
+
+  const { port } = server.address();
+  const frame = await readFirstFrame(port, "/api/live/stream");
+  const parsed = parseSseFrame(frame);
+  const payload = JSON.parse(parsed.data);
+
+  assert.equal(parsed.event, "panels");
+  assert.deepEqual(payload.queue.tasks, [{ id: "demo-task" }]);
+  assert.equal(payload.metrics.totalRuns, 23);
+  assert.equal(payload.costs.summary, "Demo mode");
+});
+
 test("the live stream sets event-stream headers", async (t) => {
   const server = createServer();
   server.listen(0);

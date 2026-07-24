@@ -15,11 +15,12 @@ COPY package.json ./
 COPY . .
 
 # Default port
+ENV REI_HOST=0.0.0.0
 EXPOSE 4317
 
 # Health check
 HEALTHCHECK --interval=30s --timeout=5s --start-period=5s --retries=3 \
-  CMD wget -qO- http://localhost:4317/api/status || exit 1
+  CMD wget -qO- http://127.0.0.1:4317/api/health || exit 1
 
 # Start in demo mode by default; override with -e DEMO_MODE=false
 CMD ["node", "server.mjs"]

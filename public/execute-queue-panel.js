@@ -18,6 +18,40 @@ const STATUS_CONFIG = {
 /** Worker dianggap aktif kalau updatedAt / registeredAt < 3 menit yang lalu. */
 const WORKER_ACTIVE_THRESHOLD_MS = 3 * 60 * 1000;
 
+export async function submitDirectTaskRequest({
+  task,
+  runtimeId = null,
+  request = globalThis.fetch
+}) {
+  const response = await request("/api/execute/submit", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ task, runtimeId: runtimeId || null })
+  });
+
+  let payload = null;
+  try {
+    payload = await response.json();
+  } catch {
+    payload = null;
+  }
+
+  if (!response.ok) {
+    return {
+      ok: false,
+      status: response.status,
+      message: payload?.error || payload?.detail || `HTTP ${response.status}`,
+      demo: payload?.demo === true
+    };
+  }
+
+  return {
+    ok: true,
+    status: response.status,
+    payload
+  };
+}
+
 /**
  * Tentukan status badge worker berdasarkan registry dari GET /api/execute/workers.
  *

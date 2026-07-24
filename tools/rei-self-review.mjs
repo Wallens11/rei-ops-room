@@ -16,6 +16,7 @@
  */
 
 import { execFile } from "node:child_process";
+import crypto from "node:crypto";
 import { promisify } from "node:util";
 import fs from "node:fs/promises";
 import path from "node:path";
@@ -34,6 +35,64 @@ const FORBIDDEN_PATTERNS = [
 const PROTECTED_PATHS = [".github/workflows/", ".env", "package-lock.json"];
 
 const MAX_LINES_CHANGED = 1500;
+
+async function collectProtectedFiles(cwd) {
+  const files = [];
+
+  async function walk(relativeDirectory) {
+    const absoluteDirectory = path.join(cwd, relativeDirectory);
+    const entries = await fs.readdir(absoluteDirectory, { withFileTypes: true }).catch(() => []);
+    for (const entry of entries) {
+      const relativePath = path.posix.join(relativeDirectory.replaceAll("\\", "/"), entry.name);
+      if (entry.isSymbolicLink() || entry.isFile()) {
+        files.push(relativePath);
+      } else if (entry.isDirectory()) {
+        await walk(relativePath);
+      }
+    }
+  }
+
+  const rootEntries = await fs.readdir(cwd, { withFileTypes: true }).catch(() => []);
+  for (const entry of rootEntries) {
+    if (entry.name === "package-lock.json" || entry.name.startsWith(".env")) {
+      if (entry.isDirectory()) {
+        await walk(entry.name);
+      } else {
+        files.push(entry.name);
+      }
+    }
+  }
+  await walk(".github/workflows");
+
+  return [...new Set(files)].sort();
+}
+
+/**
+ * Snapshot protected files independently from git. This catches ignored files
+ * such as `.env`, while comparing before/after prevents pre-existing secrets
+ * from blocking every run.
+ */
+export async function snapshotProtectedPaths({ cwd } = {}) {
+  const snapshot = {};
+  for (const relativePath of await collectProtectedFiles(cwd)) {
+    const absolutePath = path.join(cwd, relativePath);
+    const stat = await fs.lstat(absolutePath).catch(() => null);
+    if (!stat) continue;
+
+    const content = stat.isSymbolicLink()
+      ? `symlink:${await fs.readlink(absolutePath)}`
+      : await fs.readFile(absolutePath);
+    snapshot[relativePath] = crypto.createHash("sha256").update(content).digest("hex");
+  }
+  return snapshot;
+}
+
+export function findChangedProtectedPaths(before = {}, after = {}) {
+  const paths = new Set([...Object.keys(before || {}), ...Object.keys(after || {})]);
+  return [...paths]
+    .filter((relativePath) => before?.[relativePath] !== after?.[relativePath])
+    .sort();
+}
 
 /**
  * Collect changed paths using `git status --porcelain` so we see ALL touched
@@ -196,17 +255,28 @@ async function fileLooksValid(cwd, relPath) {
 export async function runSelfReview({
   cwd,
   changedFiles = [],
-  requireChanges = true
+  requireChanges = true,
+  protectedPathsBefore = null,
+  protectedPathsAfter = null
 } = {}) {
   const issues = [];
   const notes = [];
 
   const stats = await getDiffStats(cwd);
+  const protectedPathChanges =
+    protectedPathsBefore && protectedPathsAfter
+      ? findChangedProtectedPaths(protectedPathsBefore, protectedPathsAfter)
+      : [];
   const totalAdded = stats.reduce((s, e) => s + e.added, 0);
   const totalRemoved = stats.reduce((s, e) => s + e.removed, 0);
   const totalChanged = totalAdded + totalRemoved;
 
-  if (requireChanges && stats.length === 0 && changedFiles.length === 0) {
+  if (
+    requireChanges &&
+    stats.length === 0 &&
+    changedFiles.length === 0 &&
+    protectedPathChanges.length === 0
+  ) {
     issues.push("Empty diff — no meaningful changes were produced.");
   }
 
@@ -222,6 +292,10 @@ export async function runSelfReview({
       issues.push(`Modified protected path: ${entry.path}`);
     }
   }
+  for (const relativePath of protectedPathChanges) {
+    const message = `Modified protected path: ${relativePath}`;
+    if (!issues.includes(message)) issues.push(message);
+  }
 
   // Forbidden patterns across modified + new files
   const addedText = await getAddedText(cwd, stats);
@@ -234,7 +308,7 @@ export async function runSelfReview({
   // Cheap syntax check on changed code-ish files
   const candidates = stats.length > 0
     ? stats.map((s) => s.path)
-    : changedFiles;
+    : [...new Set([...changedFiles, ...protectedPathChanges])];
   for (const rel of candidates) {
     if (!rel) continue;
     const result = await fileLooksValid(cwd, rel);

@@ -14,10 +14,12 @@
     <link rel="stylesheet" href="/styles.css" />
   </head>
   <body>
-    <div id="demo-banner" class="demo-banner" hidden>
-      <span class="demo-banner-icon">✦</span>
-      Demo Mode — Rei is running on simulated data.
-      Try it live: remove <code>DEMO_MODE=true</code> and configure <code>rei.config.json</code>.
+    <div id="demo-banner" class="demo-banner" role="status" hidden>
+      <span class="demo-banner-icon" aria-hidden="true">✦</span>
+      <span class="demo-banner-copy">
+        <strong>Safe Demo</strong>
+        <span>Simulated data only. Local reads and writes are blocked.</span>
+      </span>
     </div>
 
     <main class="shell">
@@ -303,10 +305,12 @@
           <textarea
             id="task-queue-input"
             class="field-textarea"
-            placeholder="Deskripsikan task untuk Rei..."
+            placeholder="Describe a task for Rei..."
             rows="2"
           ></textarea>
+          <label class="sr-only" for="task-queue-input">Direct task description</label>
           <div class="inline-actions">
+            <label class="sr-only" for="task-queue-runtime">Preferred AI runtime</label>
             <select id="task-queue-runtime" class="field-select">
               <option value="">Auto</option>
               <option value="claude-code">Claude Code</option>
@@ -316,6 +320,12 @@
               Submit
             </button>
           </div>
+          <p
+            id="task-queue-status"
+            class="dim mono note-line task-queue-status"
+            role="status"
+            aria-live="polite"
+          ></p>
           <div class="mini-divider"></div>
           <ul id="task-queue-list" class="stack-list"></ul>
         </article>
@@ -348,6 +358,7 @@
           <p class="panel-label">Rei's thoughts</p>
           <div id="brain-thoughts-list" class="scroll-box"></div>
           <div class="mini-divider"></div>
+          <label class="sr-only" for="brain-memory-search">Search Rei's memory</label>
           <input id="brain-memory-search" type="text" class="field-input"
                  placeholder="Search Rei's memory..." />
           <div id="brain-memory-list" class="scroll-box is-tall"></div>
@@ -409,6 +420,7 @@
       </div>
       <div id="rei-chat-list"></div>
       <form id="rei-chat-form" autocomplete="off">
+        <label class="sr-only" for="rei-chat-input">Message Rei</label>
         <textarea id="rei-chat-input" rows="1" placeholder="say something to rei — try /help" maxlength="1500"></textarea>
         <div id="rei-chat-hint">enter to send · shift+enter for newline · /help for commands</div>
       </form>

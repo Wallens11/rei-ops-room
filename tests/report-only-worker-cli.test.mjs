@@ -18,11 +18,19 @@ test("parseWorkerCliArgs understands start interval and repo overrides", () => {
   });
 });
 
+test("parseWorkerCliArgs uses the configured repo when CLI does not override it", () => {
+  const parsed = parseWorkerCliArgs(["start"], {
+    repo: "configured/repo"
+  });
+
+  assert.equal(parsed.repo, "configured/repo");
+});
+
 test("inferWorkerRuntime treats a live worker pid as running", () => {
   const runtime = inferWorkerRuntime({
     pidFilePid: 7123,
     pidFileAlive: true,
-    pidFileCommand: "node /Users/funtoco/workSpace/codex-pixel-agent/tools/report-only-worker.mjs"
+    pidFileCommand: "node /Users/demo/workSpace/codex-pixel-agent/tools/report-only-worker.mjs"
   });
 
   assert.equal(runtime.running, true);

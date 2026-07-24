@@ -4,6 +4,8 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 
+import { loadReiConfig } from "./rei-config.mjs";
+
 const execFileAsync = promisify(execFile);
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const projectRoot = path.resolve(__dirname, "..");
@@ -12,10 +14,10 @@ const logFile = path.join(projectRoot, ".report-only-worker.log");
 const defaultIntervalMs = 60_000;
 const minIntervalMs = 30_000;
 
-export function parseWorkerCliArgs(argv) {
+export function parseWorkerCliArgs(argv, { repo: defaultRepo = null } = {}) {
   const args = [...argv];
   let command = "status";
-  let repo = null;
+  let repo = defaultRepo;
   let intervalMs = defaultIntervalMs;
 
   if (args[0] && !args[0].startsWith("--")) {
@@ -311,7 +313,10 @@ export async function controlReportOnlyService({
 }
 
 async function main() {
-  const parsed = parseWorkerCliArgs(process.argv.slice(2));
+  const config = await loadReiConfig();
+  const parsed = parseWorkerCliArgs(process.argv.slice(2), {
+    repo: config.repo
+  });
 
   if (parsed.command === "start") {
     await startWorker(parsed);

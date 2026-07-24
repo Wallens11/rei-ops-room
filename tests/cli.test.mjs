@@ -39,9 +39,9 @@ test("inferServerRuntime treats an agent listener as running even when the HTTP 
     reachable: false,
     pidFilePid: 1201,
     pidFileAlive: true,
-    pidFileCommand: "node /Users/funtoco/workSpace/codex-pixel-agent/server.mjs",
+    pidFileCommand: "node /Users/demo/workSpace/codex-pixel-agent/server.mjs",
     listenerPid: 1201,
-    listenerCommand: "node /Users/funtoco/workSpace/codex-pixel-agent/server.mjs"
+    listenerCommand: "node /Users/demo/workSpace/codex-pixel-agent/server.mjs"
   });
 
   assert.equal(runtime.running, true);
@@ -67,10 +67,10 @@ test("inferServerRuntime does not treat an unrelated port listener as the pixel 
 test("selectAgentProcessPid prefers the listening pixel-agent process", () => {
   const pid = selectAgentProcessPid({
     listenerPid: 5001,
-    listenerCommand: "node /Users/funtoco/workSpace/codex-pixel-agent/server.mjs",
+    listenerCommand: "node /Users/demo/workSpace/codex-pixel-agent/server.mjs",
     pidFilePid: 4999,
     pidFileAlive: true,
-    pidFileCommand: "node /Users/funtoco/workSpace/codex-pixel-agent/server.mjs"
+    pidFileCommand: "node /Users/demo/workSpace/codex-pixel-agent/server.mjs"
   });
 
   assert.equal(pid, 5001);
@@ -82,7 +82,7 @@ test("selectAgentProcessPid falls back to the pid file when only the recorded ag
     listenerCommand: "",
     pidFilePid: 4999,
     pidFileAlive: true,
-    pidFileCommand: "node /Users/funtoco/workSpace/codex-pixel-agent/server.mjs"
+    pidFileCommand: "node /Users/demo/workSpace/codex-pixel-agent/server.mjs"
   });
 
   assert.equal(pid, 4999);
@@ -94,10 +94,10 @@ test("inferActivationAction restarts an unreachable pixel-agent runtime after th
       running: true,
       reachable: false,
       listenerPid: 5001,
-      listenerCommand: "node /Users/funtoco/workSpace/codex-pixel-agent/server.mjs",
+      listenerCommand: "node /Users/demo/workSpace/codex-pixel-agent/server.mjs",
       pidFilePid: 5001,
       pidFileAlive: true,
-      pidFileCommand: "node /Users/funtoco/workSpace/codex-pixel-agent/server.mjs"
+      pidFileCommand: "node /Users/demo/workSpace/codex-pixel-agent/server.mjs"
     },
     readyAfterWait: false
   });
@@ -114,10 +114,10 @@ test("inferActivationAction keeps the current runtime when the server becomes re
       running: true,
       reachable: false,
       listenerPid: 5001,
-      listenerCommand: "node /Users/funtoco/workSpace/codex-pixel-agent/server.mjs",
+      listenerCommand: "node /Users/demo/workSpace/codex-pixel-agent/server.mjs",
       pidFilePid: 5001,
       pidFileAlive: true,
-      pidFileCommand: "node /Users/funtoco/workSpace/codex-pixel-agent/server.mjs"
+      pidFileCommand: "node /Users/demo/workSpace/codex-pixel-agent/server.mjs"
     },
     readyAfterWait: true
   });

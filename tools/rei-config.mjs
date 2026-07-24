@@ -20,6 +20,7 @@ export const REI_CONFIG_FILE = path.join(projectRoot, "rei.config.json");
 export const DEFAULT_REI_CONFIG = Object.freeze({
   repo: null,                   // GitHub repo slug: "owner/repo"
   workspacePath: null,          // Absolute path to workspace root
+  host: "127.0.0.1",            // Loopback by default; wider exposure must be explicit
   port: 4317,
   codexHome: null,              // Path to ~/.codex (default: OS homedir)
   codexBin: null,               // Path to codex binary
@@ -54,8 +55,9 @@ export async function loadReiConfig({
   }
 
   return {
-    repo:                 env.GITHUB_REPO                || fileConfig.repo                || DEFAULT_REI_CONFIG.repo,
-    workspacePath:        env.WORKSPACE_ROOT             || fileConfig.workspacePath        || DEFAULT_REI_CONFIG.workspacePath,
+    repo:                 env.GITHUB_REPO                || fileConfig.repo                || fileConfig.githubRepo   || DEFAULT_REI_CONFIG.repo,
+    workspacePath:        env.WORKSPACE_ROOT             || fileConfig.workspacePath        || fileConfig.workspaceRoot || DEFAULT_REI_CONFIG.workspacePath,
+    host:                 env.REI_HOST                   || fileConfig.host                || DEFAULT_REI_CONFIG.host,
     port:                 Number(env.PORT                || fileConfig.port                || DEFAULT_REI_CONFIG.port) || DEFAULT_REI_CONFIG.port,
     codexHome:            env.CODEX_HOME                 || fileConfig.codexHome            || null,
     codexBin:             env.CODEX_BIN                  || fileConfig.codexBin             || null,
