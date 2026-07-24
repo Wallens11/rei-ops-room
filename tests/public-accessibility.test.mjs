@@ -78,6 +78,13 @@ test("Docker build context excludes operator secrets and local agent state", asy
     ".rei-costs.jsonl",
     ".rei-chat.jsonl",
     ".rei-narration.jsonl",
+    ".claude/",
+    ".impeccable/live/",
+    ".execute-wake.trigger",
+    ".execute-queue.lock",
+    "docs/",
+    ".DS_Store",
+    "public/demo.gif",
     "AGENTS.md"
   ]) {
     assert.ok(
@@ -99,11 +106,14 @@ test("Docker quick start uses the branch tag published by the workflow", async (
 
 test("Docker image declares a non-root runtime user", async () => {
   const dockerfile = await fs.readFile(dockerfileUrl, "utf8");
-  const userIndex = dockerfile.indexOf("USER node");
+  const userInstructions = dockerfile.match(/^USER\s+\S+$/gm) || [];
+  const userIndex = dockerfile.lastIndexOf("USER node");
   const commandIndex = dockerfile.indexOf('CMD ["node", "server.mjs"]');
 
-  assert.ok(userIndex >= 0, "Expected Dockerfile to declare USER node");
+  assert.deepEqual(userInstructions, ["USER node"]);
   assert.ok(commandIndex > userIndex, "Expected USER node before the runtime command");
+  assert.match(dockerfile, /^RUN chown node:node \/app$/m);
+  assert.match(dockerfile, /^COPY --chown=node:node \. \.$/m);
 });
 
 test("Docker workflow builds amd64 and arm64 images", async () => {
