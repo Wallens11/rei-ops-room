@@ -1784,6 +1784,10 @@ export function contentType(filePath) {
     return "image/svg+xml";
   }
 
+  if (filePath.endsWith(".jpg")) {
+    return "image/jpeg";
+  }
+
   return "text/plain; charset=utf-8";
 }
 

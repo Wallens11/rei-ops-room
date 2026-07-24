@@ -83,7 +83,7 @@ npm run execute-service -- start
 docker run --rm \
   -p 127.0.0.1:4317:4317 \
   -e DEMO_MODE=true \
-  ghcr.io/wallens11/rei-ops-room
+  ghcr.io/wallens11/rei-ops-room:main
 ```
 
 The published image is best suited to the safe demo and control-plane UI. Live
