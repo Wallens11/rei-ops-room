@@ -440,6 +440,10 @@ test("contentType serves svg assets with the correct MIME type", () => {
   assert.equal(contentType("public/favicon.svg"), "image/svg+xml");
 });
 
+test("contentType serves jpeg assets with the correct MIME type", () => {
+  assert.equal(contentType("public/safe-demo.jpg"), "image/jpeg");
+});
+
 test("createSseFrame formats named events with retry and JSON data", () => {
   const frame = createSseFrame({
     event: "status",

@@ -7,6 +7,8 @@ const stylesUrl = new URL("../public/styles.css", import.meta.url);
 const appUrl = new URL("../public/app.js", import.meta.url);
 const gitignoreUrl = new URL("../.gitignore", import.meta.url);
 const dockerignoreUrl = new URL("../.dockerignore", import.meta.url);
+const readmeUrl = new URL("../README.md", import.meta.url);
+const dockerWorkflowUrl = new URL("../.github/workflows/docker.yml", import.meta.url);
 
 test("public controls have explicit labels and visible keyboard focus", async () => {
   const [html, css] = await Promise.all([
@@ -81,4 +83,14 @@ test("Docker build context excludes operator secrets and local agent state", asy
       `Expected .dockerignore to include ${pattern}`
     );
   }
+});
+
+test("Docker quick start uses the branch tag published by the workflow", async () => {
+  const [readme, workflow] = await Promise.all([
+    fs.readFile(readmeUrl, "utf8"),
+    fs.readFile(dockerWorkflowUrl, "utf8")
+  ]);
+
+  assert.match(workflow, /type=ref,event=branch/);
+  assert.match(readme, /ghcr\.io\/wallens11\/rei-ops-room:main/);
 });
