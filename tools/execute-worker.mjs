@@ -380,6 +380,22 @@ export function parseStreamJsonOutput(text = "") {
   return { sessionId, lastText: lastText.trim() };
 }
 
+export async function resolveRuntimeLastMessage({
+  outputMode = "",
+  outputLastMessageFile = null,
+  stdoutText = "",
+  stderrText = ""
+} = {}) {
+  if (outputMode === "file" && outputLastMessageFile) {
+    const fileMessage = (await readTextIfExists(outputLastMessageFile)).trim();
+    if (fileMessage) {
+      return fileMessage;
+    }
+  }
+
+  return String(stdoutText || "").trim() || String(stderrText || "").trim();
+}
+
 async function runMission({
   runtimeId = "codex",
   repoCwd,
@@ -452,7 +468,14 @@ async function runMission({
         let sessionId = null;
         let derivedLastMessage = "";
 
-        if (invocation.outputMode === "stream-json" && stdoutText) {
+        if (invocation.outputMode === "file") {
+          derivedLastMessage = await resolveRuntimeLastMessage({
+            outputMode: invocation.outputMode,
+            outputLastMessageFile,
+            stdoutText,
+            stderrText
+          });
+        } else if (invocation.outputMode === "stream-json" && stdoutText) {
           const parsed = parseStreamJsonOutput(stdoutText);
           sessionId = parsed.sessionId;
           derivedLastMessage = parsed.lastText || stderrText.trim();
