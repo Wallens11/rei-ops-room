@@ -94,3 +94,16 @@ test("Docker quick start uses the branch tag published by the workflow", async (
   assert.match(workflow, /type=ref,event=branch/);
   assert.match(readme, /ghcr\.io\/wallens11\/rei-ops-room:main/);
 });
+
+test("Docker workflow uses the maintained Node 24 action majors", async () => {
+  const workflow = await fs.readFile(dockerWorkflowUrl, "utf8");
+
+  for (const action of [
+    "actions/checkout@v7",
+    "docker/login-action@v4",
+    "docker/metadata-action@v6",
+    "docker/build-push-action@v7"
+  ]) {
+    assert.match(workflow, new RegExp(`uses: ${action.replace("/", "\\/")}`));
+  }
+});
