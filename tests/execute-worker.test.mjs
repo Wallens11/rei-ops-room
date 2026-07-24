@@ -4,6 +4,7 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 
+import * as executeWorkerModule from "../tools/execute-worker.mjs";
 import {
   classifyExecuteMissionResult,
   buildCodexExecInvocation,
@@ -62,6 +63,26 @@ test("buildCodexExecInvocation places global flags before the exec subcommand", 
     "exec",
     "-C"
   ]);
+});
+
+test("resolveRuntimeLastMessage prefers the output file for file-mode runtimes", async () => {
+  const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "rei-runtime-output-"));
+  const outputLastMessageFile = path.join(tempDir, "last-message.md");
+
+  try {
+    await fs.writeFile(outputLastMessageFile, "Clean agent summary.\n", "utf8");
+
+    const lastMessage = await executeWorkerModule.resolveRuntimeLastMessage?.({
+      outputMode: "file",
+      outputLastMessageFile,
+      stdoutText: '{"type":"thread.started"}\n{"type":"turn.started"}',
+      stderrText: ""
+    });
+
+    assert.equal(lastMessage, "Clean agent summary.");
+  } finally {
+    await fs.rm(tempDir, { recursive: true, force: true });
+  }
 });
 
 test("listMeaningfulWorktreePaths ignores execute runtime artifacts", async () => {
