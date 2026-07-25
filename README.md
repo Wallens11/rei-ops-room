@@ -13,16 +13,28 @@ No framework, build step, hosted control plane, or runtime npm dependencies.
 
 ![Rei Ops Room Safe Demo](public/safe-demo.jpg)
 
-### Try the Safe Demo
+## 60-Second Proof
 
 ```bash
-git clone https://github.com/Wallens11/rei-ops-room
-cd rei-ops-room
-npm run demo
+docker run --rm \
+  -p 127.0.0.1:4317:4317 \
+  -e DEMO_MODE=true \
+  ghcr.io/wallens11/rei-ops-room:main
 ```
 
-Open `http://localhost:4317`. The demo needs no GitHub token, AI runtime, or
-`npm install`; it serves simulated state and blocks local reads and writes.
+Open `http://127.0.0.1:4317`. The simulated room shows an issue in progress,
+the next queued task, runtime routing, completion history, and the operator
+controls around them.
+
+The safe demo does not connect to GitHub or launch an AI runtime. It also blocks
+local reads, writes, logs, memory, and task submission. That boundary is
+intentional: the demo proves the control-room experience without asking you to
+trust the container with credentials or a workspace.
+
+The repository behind the demo has 500+ automated tests, Node.js 22/24 CI, and
+a public non-root Docker image for `linux/amd64` and `linux/arm64`. See the
+[public-readiness audit](PUBLIC_READINESS.md) for the verified boundaries and
+[Quick Start](#quick-start) when you are ready to connect your own repository.
 
 ---
 
@@ -30,7 +42,7 @@ Open `http://localhost:4317`. The demo needs no GitHub token, AI runtime, or
 
 - **Safe Demo contract** — public visitors get realistic simulated state while local memory, chat, codebase, run logs, and write actions stay blocked
 - **Human approval before execution** — `mode:execute` issues wait for `status:approved`; labeling an issue is not enough to run code
-- **Runtime truth, not a fake swarm** — the room visualizes real queue, worker, GitHub, and runtime state
+- **Runtime truth in live mode** — the room visualizes real queue, worker, GitHub, and runtime state; the public demo is explicitly simulated
 - **Last-mile self-review** — protected files, malformed output, debug leftovers, and suspicious diffs are checked before a run is marked complete
 - **Local-first and dependency-light** — no hosted control plane, frontend framework, database service, or runtime npm dependency
 

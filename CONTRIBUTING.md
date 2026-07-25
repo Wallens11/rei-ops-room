@@ -30,7 +30,7 @@ cp rei.config.json.example rei.config.json
 **Optional — connect a GitHub token** for real issue data:
 
 ```bash
-export GITHUB_TOKEN=ghp_...
+export GITHUB_TOKEN=replace-with-your-token
 ```
 
 **Try it without any credentials** using demo mode:

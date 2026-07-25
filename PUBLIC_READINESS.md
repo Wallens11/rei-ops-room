@@ -22,8 +22,9 @@ runtime, workspace permissions, and the explicit approval gate.
 | Accessibility baseline | Pass with limits | Explicit labels, visible focus, reduced motion, touch targets, and canvas text equivalents |
 | Worker self-review | Pass | Ignored protected files such as `.env` are detected by before/after hashing |
 | Supply chain | Pass | Zero runtime npm dependencies and `npm audit --omit=dev` reported zero vulnerabilities |
-| Test suite | Pass | 527 tests passed on Node.js 22 |
-| Container | Pass | Image built, `/api/health` returned 200, safe memory returned fixtures, codebase inspection returned 403 |
+| Test suite | Pass | 536 tests pass locally; CI runs the suite on Node.js 22 and 24 |
+| Container | Pass | Public image runs as UID 1000, publishes `amd64`/`arm64` manifests, returns healthy demo state, and blocks protected reads |
+| Public distribution | Pass | Repository visibility is public; secret scanning and push protection are enabled |
 
 ## Critical Findings Resolved
 
@@ -68,9 +69,9 @@ Impeccable score: **17/20 — Good**
   reasonable offline/privacy improvement, but it is not required for the MVP.
 - The interactive canvas has surrounding text equivalents, but full keyboard
   navigation for every scene hotspot remains backlog.
-- GitHub repository visibility was private during this audit. Public
-  discoverability and external stars require a maintainer-approved visibility
-  change after the release diff is reviewed.
+- Public visibility increases supply-chain and social-engineering exposure.
+  Maintainers should keep releases review-gated, avoid running unreviewed
+  contributor scripts, and continue monitoring secret-scanning alerts.
 
 ## Release Gate
 
