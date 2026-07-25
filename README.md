@@ -86,6 +86,10 @@ docker run --rm \
   ghcr.io/wallens11/rei-ops-room:main
 ```
 
+The image runs as the non-root `node` user (UID 1000) and the `main` tag is
+published for both `linux/amd64` and `linux/arm64`. If you bind-mount a writable
+workspace for live execution, make sure UID 1000 can write to that directory.
+
 The published image is best suited to the safe demo and control-plane UI. Live
 execution also needs the selected AI runtime CLI and a mounted workspace.
 

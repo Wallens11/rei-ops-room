@@ -7,6 +7,7 @@ const stylesUrl = new URL("../public/styles.css", import.meta.url);
 const appUrl = new URL("../public/app.js", import.meta.url);
 const gitignoreUrl = new URL("../.gitignore", import.meta.url);
 const dockerignoreUrl = new URL("../.dockerignore", import.meta.url);
+const dockerfileUrl = new URL("../Dockerfile", import.meta.url);
 const readmeUrl = new URL("../README.md", import.meta.url);
 const dockerWorkflowUrl = new URL("../.github/workflows/docker.yml", import.meta.url);
 const testWorkflowUrl = new URL("../.github/workflows/test.yml", import.meta.url);
@@ -77,6 +78,13 @@ test("Docker build context excludes operator secrets and local agent state", asy
     ".rei-costs.jsonl",
     ".rei-chat.jsonl",
     ".rei-narration.jsonl",
+    ".claude/",
+    ".impeccable/live/",
+    ".execute-wake.trigger",
+    ".execute-queue.lock",
+    "docs/",
+    ".DS_Store",
+    "public/demo.gif",
     "AGENTS.md"
   ]) {
     assert.ok(
@@ -96,11 +104,33 @@ test("Docker quick start uses the branch tag published by the workflow", async (
   assert.match(readme, /ghcr\.io\/wallens11\/rei-ops-room:main/);
 });
 
+test("Docker image declares a non-root runtime user", async () => {
+  const dockerfile = await fs.readFile(dockerfileUrl, "utf8");
+  const userInstructions = dockerfile.match(/^USER\s+\S+$/gm) || [];
+  const userIndex = dockerfile.lastIndexOf("USER node");
+  const commandIndex = dockerfile.indexOf('CMD ["node", "server.mjs"]');
+
+  assert.deepEqual(userInstructions, ["USER node"]);
+  assert.ok(commandIndex > userIndex, "Expected USER node before the runtime command");
+  assert.match(dockerfile, /^RUN chown node:node \/app$/m);
+  assert.match(dockerfile, /^COPY --chown=node:node \. \.$/m);
+});
+
+test("Docker workflow builds amd64 and arm64 images", async () => {
+  const workflow = await fs.readFile(dockerWorkflowUrl, "utf8");
+
+  assert.match(workflow, /uses: docker\/setup-qemu-action@v4/);
+  assert.match(workflow, /uses: docker\/setup-buildx-action@v4/);
+  assert.match(workflow, /platforms:\s*linux\/amd64,linux\/arm64/);
+});
+
 test("Docker workflow uses the maintained Node 24 action majors", async () => {
   const workflow = await fs.readFile(dockerWorkflowUrl, "utf8");
 
   for (const action of [
     "actions/checkout@v7",
+    "docker/setup-qemu-action@v4",
+    "docker/setup-buildx-action@v4",
     "docker/login-action@v4",
     "docker/metadata-action@v6",
     "docker/build-push-action@v7"

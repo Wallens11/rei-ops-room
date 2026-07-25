@@ -6,13 +6,14 @@ FROM node:22-alpine
 # RUN apk add --no-cache github-cli
 
 WORKDIR /app
+RUN chown node:node /app
 
 # Copy package.json first for layer caching
-COPY package.json ./
+COPY --chown=node:node package.json ./
 
 # No npm install needed (zero runtime deps — pure Node.js)
 # Copy source
-COPY . .
+COPY --chown=node:node . .
 
 # Default port
 ENV REI_HOST=0.0.0.0
@@ -21,6 +22,9 @@ EXPOSE 4317
 # Health check
 HEALTHCHECK --interval=30s --timeout=5s --start-period=5s --retries=3 \
   CMD wget -qO- http://127.0.0.1:4317/api/health || exit 1
+
+# Drop root before starting the server or any health checks.
+USER node
 
 # Start in demo mode by default; override with -e DEMO_MODE=false
 CMD ["node", "server.mjs"]
