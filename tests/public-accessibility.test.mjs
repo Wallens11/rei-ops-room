@@ -41,6 +41,20 @@ test("public demo explains its isolation and touch targets meet the 44px baselin
     css,
     /@media \(hover: none\) and \(pointer: coarse\)[\s\S]+min-height:\s*44px/
   );
+  const phoneMedia = css.slice(
+    css.indexOf("@media (max-width: 560px)"),
+    css.indexOf("/* Tablet */")
+  );
+  const touchMediaStart = css.indexOf("@media (hover: none) and (pointer: coarse)");
+  const touchMedia = css.slice(
+    touchMediaStart,
+    css.indexOf("@media (max-width: 560px)", touchMediaStart)
+  );
+  for (const mediaBlock of [phoneMedia, touchMedia]) {
+    assert.match(mediaBlock, /\.github-issue-link\s*\{[\s\S]+min-height:\s*44px/);
+    assert.match(mediaBlock, /min-inline-size:\s*44px/);
+    assert.match(mediaBlock, /flex:\s*1 1 44px/);
+  }
 });
 
 test("direct task failures have an announced inline status and preserve failed input", async () => {
@@ -102,6 +116,16 @@ test("Docker quick start uses the branch tag published by the workflow", async (
 
   assert.match(workflow, /type=ref,event=branch/);
   assert.match(readme, /ghcr\.io\/wallens11\/rei-ops-room:main/);
+});
+
+test("README gives visitors a truthful 60-second proof path", async () => {
+  const readme = await fs.readFile(readmeUrl, "utf8");
+
+  assert.match(readme, /^## 60-Second Proof$/m);
+  assert.match(readme, /http:\/\/127\.0\.0\.1:4317/);
+  assert.match(readme, /simulated/i);
+  assert.match(readme, /does not connect to GitHub or launch an AI runtime/i);
+  assert.match(readme, /500\+ automated tests/i);
 });
 
 test("Docker image declares a non-root runtime user", async () => {
