@@ -9,6 +9,7 @@ const gitignoreUrl = new URL("../.gitignore", import.meta.url);
 const dockerignoreUrl = new URL("../.dockerignore", import.meta.url);
 const dockerfileUrl = new URL("../Dockerfile", import.meta.url);
 const readmeUrl = new URL("../README.md", import.meta.url);
+const demoGifUrl = new URL("../public/rei-ops-room-demo.gif", import.meta.url);
 const dockerWorkflowUrl = new URL("../.github/workflows/docker.yml", import.meta.url);
 const testWorkflowUrl = new URL("../.github/workflows/test.yml", import.meta.url);
 
@@ -99,6 +100,7 @@ test("Docker build context excludes operator secrets and local agent state", asy
     "docs/",
     ".DS_Store",
     "public/demo.gif",
+    "public/rei-ops-room-demo.gif",
     "AGENTS.md"
   ]) {
     assert.ok(
@@ -120,12 +122,25 @@ test("Docker quick start uses the branch tag published by the workflow", async (
 
 test("README gives visitors a truthful 60-second proof path", async () => {
   const readme = await fs.readFile(readmeUrl, "utf8");
+  const proofSection = readme.match(/^## 60-Second Proof$([\s\S]*?)^---$/m)?.[1] || "";
 
   assert.match(readme, /^## 60-Second Proof$/m);
-  assert.match(readme, /http:\/\/127\.0\.0\.1:4317/);
-  assert.match(readme, /simulated/i);
-  assert.match(readme, /does not connect to GitHub or launch an AI runtime/i);
-  assert.match(readme, /500\+ automated tests/i);
+  assert.match(proofSection, /http:\/\/127\.0\.0\.1:4317/);
+  assert.match(proofSection, /ghcr\.io\/wallens11\/rei-ops-room:0\.3\.1/);
+  assert.match(proofSection, /simulated/i);
+  assert.match(proofSection, /does not connect to GitHub or launch an AI runtime/i);
+  assert.match(proofSection, /537 automated tests/i);
+});
+
+test("README demo preview stays valid and lightweight", async () => {
+  const [readme, demoGif] = await Promise.all([
+    fs.readFile(readmeUrl, "utf8"),
+    fs.readFile(demoGifUrl)
+  ]);
+
+  assert.match(readme, /!\[Rei Ops Room Safe Demo\]\(public\/rei-ops-room-demo\.gif\)/);
+  assert.equal(demoGif.subarray(0, 6).toString("ascii"), "GIF89a");
+  assert.ok(demoGif.byteLength < 3 * 1024 * 1024, "Expected demo GIF to stay below 3 MB");
 });
 
 test("Docker image declares a non-root runtime user", async () => {

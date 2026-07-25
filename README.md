@@ -11,7 +11,10 @@ human intervention points, and results visible in one real-time pixel-art room.
 
 No framework, build step, hosted control plane, or runtime npm dependencies.
 
-![Rei Ops Room Safe Demo](public/safe-demo.jpg)
+![Rei Ops Room Safe Demo](public/rei-ops-room-demo.gif)
+
+*8-second Safe Demo preview. The workload is simulated; GitHub, AI runtimes,
+and local operator data stay disconnected. [View the static screenshot](public/safe-demo.jpg).*
 
 ## 60-Second Proof
 
@@ -19,7 +22,7 @@ No framework, build step, hosted control plane, or runtime npm dependencies.
 docker run --rm \
   -p 127.0.0.1:4317:4317 \
   -e DEMO_MODE=true \
-  ghcr.io/wallens11/rei-ops-room:main
+  ghcr.io/wallens11/rei-ops-room:0.3.1
 ```
 
 Open `http://127.0.0.1:4317`. The simulated room shows an issue in progress,
@@ -31,7 +34,7 @@ local reads, writes, logs, memory, and task submission. That boundary is
 intentional: the demo proves the control-room experience without asking you to
 trust the container with credentials or a workspace.
 
-The repository behind the demo has 500+ automated tests, Node.js 22/24 CI, and
+The repository behind the demo has 537 automated tests, Node.js 22/24 CI, and
 a public non-root Docker image for `linux/amd64` and `linux/arm64`. See the
 [public-readiness audit](PUBLIC_READINESS.md) for the verified boundaries and
 [Quick Start](#quick-start) when you are ready to connect your own repository.

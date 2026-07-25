@@ -8,6 +8,7 @@ node_modules/
 docs/
 demo-frames/
 public/demo.gif
+public/rei-ops-room-demo.gif
 .DS_Store
 .execute-*.json
 .execute-runs/
