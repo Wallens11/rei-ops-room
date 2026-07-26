@@ -9,6 +9,8 @@ docs/
 demo-frames/
 public/demo.gif
 public/rei-ops-room-demo.gif
+public/rei-ops-room-demo.mp4
+public/safe-demo.jpg
 .DS_Store
 .execute-*.json
 .execute-runs/
