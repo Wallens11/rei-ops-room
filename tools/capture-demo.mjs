@@ -1,156 +1,238 @@
+#!/usr/bin/env node
 /**
- * capture-demo.mjs — capture screenshots of the demo UI for the README image.
+ * Capture a real Safe Demo browser session for the public README.
+ *
+ * The recording uses only simulated data. It starts the demo server on
+ * 127.0.0.1, records actual scrolling and Room/Widget interactions, then emits:
+ *
+ *   public/rei-ops-room-demo.mp4  — full interaction video
+ *   public/rei-ops-room-demo.gif  — lightweight autoplay preview
+ *   public/safe-demo.jpg          — static fallback
+ *
+ * Playwright and ffmpeg are authoring tools, not runtime dependencies.
+ *
+ * Setup:
+ *   npm install --no-save --package-lock=false playwright
+ *   npx playwright install chromium
  *
  * Usage:
- *   DEMO_MODE=true node server.mjs &
  *   node tools/capture-demo.mjs
- *
- * Outputs PNGs to ./demo-frames/ and writes public/demo.png (960px wide).
- * To also generate an animated GIF (requires ffmpeg):
- *   ffmpeg -y -framerate 1.5 -pattern_type glob -i 'demo-frames/0*.png' \
- *     -vf "fps=1.5,scale=960:-1:flags=lanczos,palettegen=stats_mode=diff:max_colors=256" \
- *     /tmp/rei-palette.png && \
- *   ffmpeg -y -framerate 1.5 -pattern_type glob -i 'demo-frames/0*.png' \
- *     -i /tmp/rei-palette.png \
- *     -filter_complex "fps=1.5,scale=960:-1:flags=lanczos[x];[x][1:v]paletteuse=dither=sierra2_4a:diff_mode=rectangle" \
- *     public/demo.gif
- *
- * Requires: npx playwright (chromium headless shell must be installed)
  */
 
-// Playwright is not a project dependency — resolve from npx cache or local workspace
+import fs from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
+import { execFile } from "node:child_process";
+import { fileURLToPath } from "node:url";
+import { promisify } from "node:util";
+
+import { createDemoServer } from "./demo-server.mjs";
+import {
+  DEMO_STORYBOARD,
+  getDemoDurationMs,
+  getDemoTrimSeconds
+} from "./demo-storyboard.mjs";
+
+const execFileAsync = promisify(execFile);
+const projectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+const publicDir = path.join(projectRoot, "public");
+const outputVideo = path.join(publicDir, "rei-ops-room-demo.mp4");
+const outputGif = path.join(publicDir, "rei-ops-room-demo.gif");
+const outputScreenshot = path.join(publicDir, "safe-demo.jpg");
+const captureDurationSeconds = getDemoDurationMs() / 1_000;
+
 let chromium;
 try {
-  const mod = await import("playwright");
-  chromium = mod.chromium ?? (mod.default || mod["module.exports"])?.chromium;
-} catch { /* fall through */ }
-
-if (!chromium) {
-  // Try npx-cached playwright as fallback (run: npx playwright install chromium)
-  const { execSync } = await import("node:child_process");
-  try {
-    const npxPath = execSync("npx --yes playwright --version 2>/dev/null && node -e \"require.resolve('playwright')\"", { encoding: "utf8" }).trim();
-    if (npxPath) {
-      const mod = await import(npxPath);
-      chromium = mod.chromium ?? (mod.default || mod["module.exports"])?.chromium;
-    }
-  } catch { /* fall through */ }
-}
-if (!chromium) throw new Error("playwright not found — run: npm install -D playwright");
-import fs from "node:fs/promises";
-import path from "node:path";
-import { fileURLToPath } from "node:url";
-
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const projectRoot = path.resolve(__dirname, "..");
-const framesDir = path.join(projectRoot, "demo-frames");
-const PORT = process.env.PORT ?? 4317;
-const BASE = `http://localhost:${PORT}`;
-
-await fs.mkdir(framesDir, { recursive: true });
-
-console.log("Launching browser...");
-
-const browser = await chromium.launch({
-  headless: true,
-  args: ["--no-sandbox", "--disable-setuid-sandbox"]
-});
-const page = await browser.newPage();
-await page.setViewportSize({ width: 1440, height: 900 });
-
-console.log(`Navigating to ${BASE} ...`);
-await page.goto(BASE, { waitUntil: "domcontentloaded", timeout: 15000 });
-
-// Let polling kick in (demo data updates every few seconds on the frontend)
-await page.waitForTimeout(1500);
-
-async function shot(name, fn) {
-  if (fn) await fn();
-  await page.waitForTimeout(400);
-  const file = path.join(framesDir, `${name}.png`);
-  await page.screenshot({ path: file, fullPage: false });
-  console.log(`  captured: ${name}.png`);
-  return file;
-}
-
-// ── Frames ─────────────────────────────────────────────────────────────────
-
-// 1. Full room overview
-await shot("01-overview");
-
-// 2. Scroll to inspector area
-await shot("02-inspector", async () => {
-  await page.evaluate(() => {
-    document.querySelector(".inspector")?.scrollIntoView({ behavior: "instant" });
-  });
-});
-
-// 3. Back to top, hover over canvas to show scene detail
-await shot("03-canvas-hover", async () => {
-  await page.evaluate(() => window.scrollTo(0, 0));
-  const canvas = await page.$("#room-canvas");
-  if (canvas) {
-    const box = await canvas.boundingBox();
-    if (box) {
-      await page.mouse.move(box.x + box.width * 0.45, box.y + box.height * 0.55);
-    }
-  }
-});
-
-// 4. Scroll to panel-grid (GitHub Inbox, Execute Agent, Task Queue…)
-await shot("04-panels", async () => {
-  await page.evaluate(() => {
-    document.querySelector(".panel-grid")?.scrollIntoView({ behavior: "instant" });
-  });
-});
-
-// 5. Scroll to bottom panels (Metrics, Artifacts)
-await shot("05-metrics", async () => {
-  await page.evaluate(() => window.scrollBy(0, 400));
-});
-
-// 6. Switch to Widget mode
-await shot("06-widget-mode", async () => {
-  await page.evaluate(() => window.scrollTo(0, 0));
-  const widgetBtn = await page.$('[data-mode="widget"]');
-  if (widgetBtn) await widgetBtn.click();
-  await page.waitForTimeout(500);
-});
-
-// 7. Back to Room mode
-await shot("07-room-mode", async () => {
-  const roomBtn = await page.$('[data-mode="room"]');
-  if (roomBtn) await roomBtn.click();
-  await page.waitForTimeout(500);
-});
-
-// 8. Demo banner visible (confirm demo mode)
-await shot("08-demo-banner", async () => {
-  await page.evaluate(() => window.scrollTo(0, 0));
-});
-
-await browser.close();
-console.log(`\nAll frames saved to: ${framesDir}/`);
-console.log("Frames list:");
-const files = (await fs.readdir(framesDir))
-  .filter((f) => f.endsWith(".png"))
-  .sort();
-for (const f of files) console.log(`  ${f}`);
-
-// Auto-generate public/demo.png from the overview frame (960px wide, crisp for dark UIs)
-const overviewFrame = path.join(framesDir, "01-overview.png");
-const demoPng = path.join(projectRoot, "public", "demo.png");
-try {
-  const { execFile } = await import("node:child_process");
-  const { promisify } = await import("node:util");
-  await promisify(execFile)("ffmpeg", [
-    "-y", "-i", overviewFrame,
-    "-vf", "scale=960:-1:flags=lanczos",
-    demoPng
-  ]);
-  const stat = await fs.stat(demoPng);
-  console.log(`\n✓ demo.png written: ${demoPng} (${(stat.size / 1024).toFixed(0)} KB)`);
+  ({ chromium } = await import("playwright"));
 } catch {
-  console.log("\nSkipped demo.png generation (ffmpeg not available).");
-  console.log("Run: ffmpeg -i demo-frames/01-overview.png -vf scale=960:-1 public/demo.png");
+  throw new Error(
+    "Playwright is required only to author demo media. Run: " +
+    "npm install --no-save --package-lock=false playwright"
+  );
+}
+
+async function listen(server) {
+  await new Promise((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(0, "127.0.0.1", resolve);
+  });
+  const address = server.address();
+  if (!address || typeof address === "string") {
+    throw new Error("Safe Demo server did not expose a TCP port");
+  }
+  return `http://127.0.0.1:${address.port}`;
+}
+
+async function closeServer(server) {
+  if (!server.listening) return;
+  await new Promise((resolve, reject) => {
+    server.close((error) => error ? reject(error) : resolve());
+  });
+}
+
+async function smoothScroll(page, target, durationMs) {
+  await page.evaluate(
+    ({ selector, duration }) => new Promise((resolve) => {
+      const startY = window.scrollY;
+      const targetY = selector === "top"
+        ? 0
+        : Math.max(
+            0,
+            window.scrollY +
+              document.querySelector(selector).getBoundingClientRect().top -
+              20
+          );
+      const startedAt = performance.now();
+
+      function tick(now) {
+        const progress = Math.min(1, (now - startedAt) / duration);
+        const eased = 1 - Math.pow(1 - progress, 3);
+        window.scrollTo(0, startY + (targetY - startY) * eased);
+        if (progress < 1) requestAnimationFrame(tick);
+        else resolve();
+      }
+
+      requestAnimationFrame(tick);
+    }),
+    { selector: target, duration: durationMs }
+  );
+}
+
+async function playStoryboard(page) {
+  for (const step of DEMO_STORYBOARD) {
+    if (step.action === "hold") {
+      await page.waitForTimeout(step.durationMs);
+      continue;
+    }
+    if (step.action === "scroll") {
+      await smoothScroll(page, step.target, step.durationMs);
+      continue;
+    }
+    if (step.action === "click") {
+      await page.locator(step.target).click();
+      await page.waitForTimeout(step.durationMs);
+      continue;
+    }
+    throw new Error(`Unknown demo storyboard action: ${step.action}`);
+  }
+}
+
+async function renderMedia(rawVideo, tempDir, storyboardStartOffsetSeconds) {
+  const { stdout } = await execFileAsync("ffprobe", [
+    "-v", "error",
+    "-show_entries", "format=duration",
+    "-of", "default=noprint_wrappers=1:nokey=1",
+    rawVideo
+  ]);
+  const rawDurationSeconds = Number(stdout.trim());
+  if (!Number.isFinite(rawDurationSeconds)) {
+    throw new Error("ffprobe did not return a valid raw recording duration");
+  }
+  const trimSeconds = getDemoTrimSeconds({
+    storyboardStartOffsetSeconds,
+    rawDurationSeconds,
+    captureDurationSeconds
+  });
+  const commonInput = [
+    "-y",
+    "-ss", String(trimSeconds),
+    "-i", rawVideo,
+    "-t", String(captureDurationSeconds)
+  ];
+
+  await execFileAsync("ffmpeg", [
+    ...commonInput,
+    "-an",
+    "-vf", "scale=960:-2:flags=lanczos",
+    "-c:v", "libx264",
+    "-preset", "slow",
+    "-crf", "24",
+    "-pix_fmt", "yuv420p",
+    "-movflags", "+faststart",
+    outputVideo
+  ]);
+
+  const palette = path.join(tempDir, "demo-palette.png");
+  const gifFilter = "fps=5,scale=720:-2:flags=lanczos";
+  await execFileAsync("ffmpeg", [
+    ...commonInput,
+    "-vf", `${gifFilter},palettegen=stats_mode=diff:max_colors=160`,
+    palette
+  ]);
+  await execFileAsync("ffmpeg", [
+    ...commonInput,
+    "-i", palette,
+    "-filter_complex",
+    `${gifFilter}[frame];[frame][1:v]paletteuse=dither=bayer:bayer_scale=5:diff_mode=rectangle`,
+    "-t", String(captureDurationSeconds),
+    outputGif
+  ]);
+}
+
+async function assertMediaBudget(file, maxBytes) {
+  const stat = await fs.stat(file);
+  if (stat.size >= maxBytes) {
+    throw new Error(`${path.basename(file)} exceeds ${Math.round(maxBytes / 1024 / 1024)} MB`);
+  }
+  return stat.size;
+}
+
+const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "rei-demo-capture-"));
+const server = createDemoServer();
+let browser;
+
+try {
+  const baseUrl = await listen(server);
+  browser = await chromium.launch({
+    headless: true,
+    args: ["--no-sandbox", "--disable-setuid-sandbox"]
+  });
+
+  const context = await browser.newContext({
+    viewport: { width: 1280, height: 720 },
+    recordVideo: {
+      dir: tempDir,
+      size: { width: 1280, height: 720 }
+    }
+  });
+  await context.addInitScript(() => {
+    localStorage.setItem("rei-chat-collapsed", "true");
+    localStorage.setItem("codex-pixel-agent-mode", "room");
+  });
+
+  const recordingStartedAt = Date.now();
+  const page = await context.newPage();
+  await page.goto(baseUrl, { waitUntil: "domcontentloaded", timeout: 15_000 });
+  await page.locator("#demo-banner:not([hidden])").waitFor({ state: "visible" });
+  await page.locator("#room-canvas").waitFor({ state: "visible" });
+  await page.waitForTimeout(800);
+
+  await page.screenshot({
+    path: outputScreenshot,
+    type: "jpeg",
+    quality: 88
+  });
+  const storyboardStartOffsetSeconds = Math.max(
+    0,
+    (Date.now() - recordingStartedAt) / 1_000 - 0.15
+  );
+  await playStoryboard(page);
+
+  const video = page.video();
+  await context.close();
+  const rawVideo = await video.path();
+  await renderMedia(rawVideo, tempDir, storyboardStartOffsetSeconds);
+
+  const [videoBytes, gifBytes] = await Promise.all([
+    assertMediaBudget(outputVideo, 5 * 1024 * 1024),
+    assertMediaBudget(outputGif, 3 * 1024 * 1024)
+  ]);
+  process.stdout.write(
+    `Captured real Safe Demo interaction: ` +
+    `${Math.round(videoBytes / 1024)} KB MP4, ${Math.round(gifBytes / 1024)} KB GIF\n`
+  );
+} finally {
+  await browser?.close();
+  await closeServer(server);
+  await fs.rm(tempDir, { recursive: true, force: true });
 }

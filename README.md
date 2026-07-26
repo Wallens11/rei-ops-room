@@ -13,8 +13,10 @@ No framework, build step, hosted control plane, or runtime npm dependencies.
 
 ![Rei Ops Room Safe Demo](public/rei-ops-room-demo.gif)
 
-*8-second Safe Demo preview. The workload is simulated; GitHub, AI runtimes,
-and local operator data stay disconnected. [View the static screenshot](public/safe-demo.jpg).*
+*Captured from a real Safe Demo browser session: room state, operational panels,
+and Widget mode. The workload is simulated; GitHub, AI runtimes, and local
+operator data stay disconnected. [Watch the real interaction video](public/rei-ops-room-demo.mp4)
+or [view the static screenshot](public/safe-demo.jpg).*
 
 ## 60-Second Proof
 
@@ -34,7 +36,7 @@ local reads, writes, logs, memory, and task submission. That boundary is
 intentional: the demo proves the control-room experience without asking you to
 trust the container with credentials or a workspace.
 
-The repository behind the demo has 537 automated tests, Node.js 22/24 CI, and
+The repository behind the demo has 539 automated tests, Node.js 22/24 CI, and
 a public non-root Docker image for `linux/amd64` and `linux/arm64`. See the
 [public-readiness audit](PUBLIC_READINESS.md) for the verified boundaries and
 [Quick Start](#quick-start) when you are ready to connect your own repository.
