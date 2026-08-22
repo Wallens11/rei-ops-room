@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Reiko Agent Overlay</title>
+    <link rel="stylesheet" href="/pet-overlay.css" />
+  </head>
+  <body>
+    <main class="overlay-shell">
+      <canvas
+        id="pet-overlay-canvas"
+        width="300"
+        height="280"
+        aria-label="Animated Reiko pet showing live Rei Ops Room agent status"
+        aria-describedby="pet-overlay-status"
+      ></canvas>
+      <p id="pet-overlay-status" class="sr-only" aria-live="polite">Connecting to Rei Ops Room.</p>
+      <ul id="pet-overlay-roster" class="sr-only" aria-label="Reiko agent status"></ul>
+    </main>
+    <script type="module" src="/pet-overlay.js"></script>
+  </body>
+</html>

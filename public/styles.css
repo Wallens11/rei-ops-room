@@ -278,6 +278,18 @@ p {
   border-color: oklch(0.72 0.115 35 / 0.45);
 }
 
+body.pet-garden-mode #pet-garden-toggle {
+  color: var(--bg-0);
+  background: var(--mint);
+  border-color: oklch(0.82 0.13 155);
+  box-shadow: 2px 2px 0 oklch(0.46 0.09 155);
+}
+
+body.pet-garden-mode #pet-garden-toggle::before {
+  content: "●";
+  font-size: 8px;
+}
+
 .kbd {
   font-family: var(--mono-font);
   font-size: 10.5px;
@@ -560,6 +572,32 @@ p {
   min-height: 0;
   position: relative;
   padding-bottom: 4px;
+}
+
+.pet-garden-roster {
+  display: grid;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  gap: 6px;
+  width: 100%;
+  margin: 10px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.pet-garden-roster[hidden] {
+  display: none;
+}
+
+.pet-garden-roster li {
+  min-width: 0;
+  padding: 6px 8px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--bg-1);
+  color: var(--muted);
+  font: 600 11px/1.25 var(--mono-font);
+  text-align: center;
+  overflow-wrap: anywhere;
 }
 
 .scene-detail-card {
@@ -1230,6 +1268,14 @@ p {
   background: oklch(0.8 0.115 80 / 0.12);
 }
 
+.stream-item.failed .item-chip,
+.stream-item.error .item-chip,
+.stream-item.blocked .item-chip {
+  color: var(--rose);
+  background: oklch(0.72 0.115 35 / 0.12);
+  border-color: oklch(0.72 0.115 35 / 0.35);
+}
+
 .event-item .item-head strong {
   font-size: 14px;
 }
@@ -1791,6 +1837,10 @@ body.widget-mode .inspector {
   .topbar-actions button,
   .topbar-actions a {
     min-height: 44px;
+  }
+
+  .pet-garden-roster {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
   }
 
   button,

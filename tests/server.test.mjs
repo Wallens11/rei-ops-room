@@ -8,6 +8,9 @@ import crypto from "node:crypto";
 
 import {
   buildAgentJobItemsSql,
+  buildThreadSpawnEdgesSql,
+  buildThreadHeartbeatsSql,
+  buildSpawnRootSql,
   buildGithubIssueListArgs,
   buildGithubQueuePlan,
   buildGithubIssueSummary,
@@ -26,6 +29,9 @@ import {
   extractStructuredHandoffFields,
   selectActivityLogs,
   readDailyDeviceHandoff,
+  readAgentJobsForThread,
+  resolveCodexLogsDbPath,
+  resolveThreadRootRow,
   startServer,
   stripWorkspacePrefix,
   verifyGithubWebhookSignature,
@@ -190,6 +196,101 @@ test("buildAgentJobItemsSql scopes multi-agent rows to the active thread", () =>
   assert.match(sql, /JOIN agent_jobs/i);
   assert.match(sql, /assigned_thread_id = 'thread-456'/i);
   assert.match(sql, /ORDER BY items\.updated_at DESC/i);
+  assert.match(sql, /max_runtime_seconds/i);
+});
+
+test("buildThreadSpawnEdgesSql maps the current Codex spawn schema into agent jobs", () => {
+  const sql = buildThreadSpawnEdgesSql("parent-thread");
+
+  assert.match(sql, /FROM thread_spawn_edges/i);
+  assert.match(sql, /JOIN threads/i);
+  assert.match(sql, /parent_thread_id = 'parent-thread'/i);
+  assert.match(sql, /thread_spawn_edge/i);
+  assert.match(sql, /agent_nickname/i);
+});
+
+test("buildThreadHeartbeatsSql scopes log heartbeats to child thread ids", () => {
+  const sql = buildThreadHeartbeatsSql(["child-a", "child-b"]);
+
+  assert.match(sql, /MAX\(ts\) AS heartbeat_at/i);
+  assert.match(sql, /thread_id IN \('child-a', 'child-b'\)/i);
+});
+
+test("buildSpawnRootSql walks from the latest child back to its root parent", () => {
+  const sql = buildSpawnRootSql("child-live");
+
+  assert.match(sql, /WITH RECURSIVE ancestry/i);
+  assert.match(sql, /child_thread_id = 'child-live'/i);
+  assert.match(sql, /ORDER BY depth DESC/i);
+});
+
+test("resolveThreadRootRow keeps child activity but returns the root room thread", async () => {
+  const calls = [];
+  const root = await resolveThreadRootRow({
+    activityThreadRow: { id: "child-live", title: "Child work" },
+    stateDatabase: "state.sqlite",
+    sqliteJsonImpl: async (_database, sql) => {
+      calls.push(sql);
+      if (/WITH RECURSIVE ancestry/i.test(sql)) return [{ root_id: "parent-root" }];
+      if (/WHERE id = 'parent-root'/i.test(sql)) {
+        return [{ id: "parent-root", title: "Root request", updatedAt: 100 }];
+      }
+      throw new Error(`Unexpected SQL: ${sql}`);
+    }
+  });
+
+  assert.equal(root.id, "parent-root");
+  assert.equal(calls.length, 2);
+});
+
+test("readAgentJobsForThread uses spawn edges and merges child log heartbeats", async () => {
+  const calls = [];
+  const rows = await readAgentJobsForThread({
+    threadId: "parent-thread",
+    stateDatabase: "state.sqlite",
+    logsDatabase: "logs.sqlite",
+    sqliteJsonImpl: async (database, sql) => {
+      calls.push({ database, sql });
+      if (/sqlite_master/i.test(sql)) {
+        return [{ name: "thread_spawn_edges" }, { name: "threads" }];
+      }
+      if (/FROM thread_spawn_edges/i.test(sql)) {
+        return [{
+          item_id: "child-a",
+          status: "open",
+          updated_at: 100,
+          heartbeat_at: 100,
+          source_kind: "thread_spawn_edge"
+        }];
+      }
+      if (/FROM logs/i.test(sql)) {
+        return [{ thread_id: "child-a", heartbeat_at: 240 }];
+      }
+      throw new Error(`Unexpected SQL: ${sql}`);
+    }
+  });
+
+  assert.equal(rows[0].heartbeat_at, 240);
+  assert.equal(rows[0].source_kind, "thread_spawn_edge");
+  assert.ok(calls.some((call) => call.database === "logs.sqlite"));
+  assert.ok(calls.every((call) => !/FROM agent_job_items/i.test(call.sql)));
+});
+
+test("resolveCodexLogsDbPath selects the populated current Codex log database", async (t) => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "rei-codex-logs-"));
+  t.after(() => fs.rm(root, { recursive: true, force: true }));
+  await fs.writeFile(path.join(root, "logs_1.sqlite"), "stale-but-larger".repeat(20));
+  await fs.writeFile(path.join(root, "logs_2.sqlite"), "current");
+
+  assert.equal(
+    await resolveCodexLogsDbPath({
+      codexHomePath: root,
+      sqliteJsonImpl: async (database) => [{
+        latest_ts: database.endsWith("logs_2.sqlite") ? 200 : 100
+      }]
+    }),
+    path.join(root, "logs_2.sqlite")
+  );
 });
 
 test("filterMeaningfulLogs ignores tool gate wait noise", () => {
@@ -442,6 +543,10 @@ test("contentType serves svg assets with the correct MIME type", () => {
 
 test("contentType serves jpeg assets with the correct MIME type", () => {
   assert.equal(contentType("public/safe-demo.jpg"), "image/jpeg");
+});
+
+test("contentType serves webp pet atlases with the correct MIME type", () => {
+  assert.equal(contentType("public/pets/reiko/spritesheet.webp"), "image/webp");
 });
 
 test("createSseFrame formats named events with retry and JSON data", () => {

@@ -36,7 +36,7 @@ local reads, writes, logs, memory, and task submission. That boundary is
 intentional: the demo proves the control-room experience without asking you to
 trust the container with credentials or a workspace.
 
-The repository behind the demo has 539 automated tests, Node.js 22/24 CI, and
+The repository behind the demo has 500+ automated tests, Node.js 22/24 CI, and
 a public non-root Docker image for `linux/amd64` and `linux/arm64`. See the
 [public-readiness audit](PUBLIC_READINESS.md) for the verified boundaries and
 [Quick Start](#quick-start) when you are ready to connect your own repository.
@@ -93,6 +93,32 @@ npm run execute-service -- start
 ./rei init     # run setup wizard again
 ```
 
+### Agent Garden and desktop overlay
+
+Use the **Agent Garden** toggle in the room to replace the pixel crew with
+animated Reiko pets. Solo work shows Reiko handling the current chat. Specialist
+pets appear only when live agent jobs exist, and their movement and work poses
+come from the same runtime state as the operational panels.
+
+On macOS, the optional desktop overlay starts as a transparent, always-on-top
+pet pod. It spotlights the most urgent active agent at a larger size, while the
+dynamic squad view becomes available only when specialist jobs are active:
+
+```bash
+# Keep the Ops Room server running first, then launch in another terminal.
+npm run pet-overlay
+```
+
+In compact mode the pet patrols left and right across its current screen, pauses
+briefly at each edge, and uses the matching walking direction. Drag the pet body
+to move it to a different height or display; its position is restored on the next
+launch. Use **Ⅱ** / **▶** to pause or resume roaming, the live agent-count button
+to expand or collapse the stationary squad, and **×** to close it. The squad
+control stays hidden while Reiko is working solo. Roaming is disabled when macOS
+Reduce Motion is enabled. The overlay connects only to the loopback Ops Room URL
+and follows the live status stream. It is separate from the Codex floating pet,
+which supports one selected avatar rather than one avatar per Ops Room agent.
+
 ### Docker
 
 ```bash
@@ -115,6 +141,7 @@ execution also needs the selected AI runtime CLI and a mounted workspace.
 ## Requirements
 
 - Node.js 22+
+- Optional macOS desktop overlay: macOS with the Xcode Command Line Tools (`swift`)
 - GitHub access — either:
   - `GITHUB_TOKEN` env var (recommended, works in Docker / CI)
   - or `gh` CLI authenticated (`gh auth login`)

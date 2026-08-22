@@ -1,5 +1,6 @@
 export const STATUS_POLL_FALLBACK_MS = 3000;
 export const STATUS_STREAM_GRACE_MS = 3500;
+export const STATUS_FRESHNESS_TIMEOUT_MS = 12_000;
 
 function defaultTimers() {
   return {
@@ -18,6 +19,7 @@ export function createStatusTransport({
   timers = defaultTimers(),
   pollIntervalMs = STATUS_POLL_FALLBACK_MS,
   streamGraceMs = STATUS_STREAM_GRACE_MS,
+  freshnessTimeoutMs = STATUS_FRESHNESS_TIMEOUT_MS,
   onStatus = () => {},
   onModeChange = () => {},
   onTransportError = () => {}
@@ -25,6 +27,7 @@ export function createStatusTransport({
   let source = null;
   let pollHandle = null;
   let connectTimeout = null;
+  let freshnessTimeout = null;
   let mode = "connecting";
   let stopped = false;
 
@@ -54,6 +57,34 @@ export function createStatusTransport({
     onModeChange(mode);
   }
 
+  function clearFreshnessTimeout() {
+    if (freshnessTimeout) {
+      timers.clearTimeout(freshnessTimeout);
+      freshnessTimeout = null;
+    }
+  }
+
+  function armFreshnessTimeout() {
+    clearFreshnessTimeout();
+    if (stopped || freshnessTimeoutMs <= 0) {
+      return;
+    }
+
+    freshnessTimeout = timers.setTimeout(() => {
+      freshnessTimeout = null;
+      if (stopped) return;
+
+      const error = new Error("status transport became stale");
+      onTransportError(error);
+      if (source) {
+        source.close?.();
+        source = null;
+      }
+      startPolling();
+    }, freshnessTimeoutMs);
+    freshnessTimeout?.unref?.();
+  }
+
   async function fetchStatusOnce() {
     if (typeof fetchImpl !== "function") {
       throw new Error("fetch is not available");
@@ -66,6 +97,7 @@ export function createStatusTransport({
 
     const status = await response.json();
     onStatus(status);
+    armFreshnessTimeout();
     return status;
   }
 
@@ -105,6 +137,7 @@ export function createStatusTransport({
     clearConnectTimeout();
     stopPolling();
     setMode("stream");
+    armFreshnessTimeout();
   }
 
   function onStreamStatus(event) {
@@ -116,6 +149,7 @@ export function createStatusTransport({
 
     try {
       onStatus(JSON.parse(event.data));
+      armFreshnessTimeout();
     } catch (error) {
       onTransportError(error);
     }
@@ -127,6 +161,7 @@ export function createStatusTransport({
     }
 
     onTransportError(toTransportError(event));
+    clearFreshnessTimeout();
     startPolling();
   }
 
@@ -171,6 +206,7 @@ export function createStatusTransport({
     stop() {
       stopped = true;
       clearConnectTimeout();
+      clearFreshnessTimeout();
       stopPolling();
       if (source) {
         source.close?.();

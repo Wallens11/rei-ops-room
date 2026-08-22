@@ -581,6 +581,41 @@ test("completed agent job items become returned results for review wrap", () => 
   assert.equal(state.scene.scout.reason, "result_returned");
 });
 
+test("failed agent jobs remain visible as failed pet activity", () => {
+  const state = buildRoomState({
+    status: "busy",
+    thread: makeThread({
+      id: "thread_multi_failed",
+      title: "Fix frontend clipping with parallel agents"
+    }),
+    repoContext: null,
+    recentThreads: [],
+    activity: makeActivity({
+      summary: "A frontend worker failed while checking the responsive layout"
+    }),
+    logs: [{ ts: 1710000000, message: "Agent worker failed on frontend CSS layout" }],
+    agentJobs: [
+      {
+        job_id: "job_failed",
+        item_id: "item_frontend_failed",
+        status: "failed",
+        assigned_thread_id: "thread_multi_failed",
+        instruction: "Fix frontend CSS clipping in the room shell",
+        row_json: JSON.stringify({ task: "Fix frontend CSS clipping in the room shell" }),
+        result_json: JSON.stringify({ error: "Responsive assertion failed" })
+      }
+    ]
+  });
+
+  const failedStream = state.workstreams.find(
+    (workstream) => workstream.id === "agent_item_frontend_failed"
+  );
+
+  assert.equal(failedStream?.source_status, "failed");
+  assert.equal(failedStream?.status, "queued");
+  assert.equal(state.agents.find((agent) => agent.id === "ui")?.activity, "failed");
+});
+
 test("fresh lane completion stays in a stable result-return review wrap before cooldown", () => {
   const state = buildRoomState({
     status: "cooldown",
@@ -957,6 +992,137 @@ test("workspace dock counts the real number of active lanes when multiple worker
   assert.equal(state.room.mode, "multi");
   assert.equal(state.room.phase, "squad_split");
   assert.equal(state.workspace.active_room.active_lane_count, 3);
+});
+
+test("spawn edges without a fresh heartbeat do not keep the room or pets live", () => {
+  const nowSeconds = 1_710_000_120;
+  const state = buildRoomState({
+    status: "idle",
+    thread: makeThread({
+      id: "thread_stale_agent_job",
+      title: "Quiet room after the worker stopped reporting",
+      updatedAt: nowSeconds - 120,
+      updatedAgeSeconds: 120
+    }),
+    repoContext: null,
+    recentThreads: [],
+    activity: makeActivity({
+      kind: "rest",
+      source: "presence",
+      summary: "Watching for the next request",
+      lastLogAt: nowSeconds - 120,
+      lastLogAgeSeconds: 120
+    }),
+    logs: [],
+    agentJobs: [
+      {
+        job_id: "job_stale",
+        item_id: "item_stale",
+        status: "open",
+        source_kind: "thread_spawn_edge",
+        assigned_thread_id: "thread_stale_agent_job",
+        instruction: "Fix the API mapping",
+        row_json: JSON.stringify({ task: "Fix the API mapping" }),
+        result_json: null,
+        updated_at: nowSeconds - 2 * 60 * 60
+      }
+    ]
+  });
+
+  const normalizedJob = state.taskIntelligence.signals.agent_jobs.items[0];
+  assert.equal(normalizedJob.status, "unknown");
+  assert.equal(normalizedJob.updated_at, nowSeconds - 2 * 60 * 60);
+  assert.equal(normalizedJob.age_seconds, 2 * 60 * 60);
+  assert.equal(state.taskIntelligence.signals.agent_jobs.active_count, 0);
+  assert.equal(state.room.phase, "standby");
+  assert.ok(
+    state.agents.every((agent) => !["coding", "debugging", "reviewing"].includes(agent.activity))
+  );
+});
+
+test("spawn edges with a fresh child heartbeat drive a real active lane", () => {
+  const nowSeconds = 1_710_000_120;
+  const state = buildRoomState({
+    status: "busy",
+    thread: makeThread({
+      id: "thread_live_spawn_edge",
+      updatedAt: nowSeconds - 5,
+      updatedAgeSeconds: 5
+    }),
+    repoContext: null,
+    recentThreads: [],
+    activity: makeActivity({
+      lastLogAt: nowSeconds - 5,
+      lastLogAgeSeconds: 5
+    }),
+    logs: [],
+    agentJobs: [
+      {
+        job_id: "spawn:thread_live_spawn_edge",
+        item_id: "child_live",
+        status: "open",
+        source_kind: "thread_spawn_edge",
+        assigned_thread_id: "child_live",
+        instruction: "Implement the API status mapping",
+        row_json: JSON.stringify({ task: "Implement the API status mapping" }),
+        result_json: null,
+        updated_at: nowSeconds - 15,
+        heartbeat_at: nowSeconds - 8
+      }
+    ]
+  });
+
+  assert.equal(state.taskIntelligence.signals.agent_jobs.items[0].status, "active");
+  assert.equal(state.taskIntelligence.signals.agent_jobs.active_count, 1);
+  assert.equal(state.room.phase, "squad_split");
+  assert.ok(state.workstreams.some((stream) => stream.id === "agent_child_live"));
+});
+
+test("legacy agent jobs honor their configured runtime instead of a fixed five-minute cutoff", () => {
+  const nowSeconds = 1_710_000_360;
+  const baseInput = {
+    status: "busy",
+    thread: makeThread({
+      id: "thread_long_agent_job",
+      updatedAt: nowSeconds - 5,
+      updatedAgeSeconds: 5
+    }),
+    repoContext: null,
+    recentThreads: [],
+    activity: makeActivity({
+      lastLogAt: nowSeconds - 5,
+      lastLogAgeSeconds: 5
+    }),
+    logs: [],
+    agentJobs: [
+      {
+        job_id: "job_long",
+        item_id: "item_long",
+        status: "running",
+        source_kind: "agent_job_item",
+        assigned_thread_id: "thread_long_agent_job",
+        instruction: "Run the long verification suite",
+        row_json: JSON.stringify({ task: "Run the long verification suite" }),
+        result_json: null,
+        updated_at: nowSeconds - 6 * 60,
+        max_runtime_seconds: 2 * 60 * 60
+      }
+    ]
+  };
+
+  const running = buildRoomState(baseInput);
+  assert.equal(running.taskIntelligence.signals.agent_jobs.items[0].status, "active");
+  assert.equal(running.room.phase, "squad_split");
+
+  const expired = buildRoomState({
+    ...baseInput,
+    agentJobs: [{
+      ...baseInput.agentJobs[0],
+      updated_at: nowSeconds - 3 * 60 * 60
+    }]
+  });
+  assert.equal(expired.taskIntelligence.signals.agent_jobs.items[0].status, "stale");
+  assert.equal(expired.taskIntelligence.signals.agent_jobs.active_count, 0);
 });
 
 test("current objective summarizes the active goal instead of echoing the raw thread opener", () => {

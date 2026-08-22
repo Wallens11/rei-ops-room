@@ -27,7 +27,10 @@ const runtimeConfig = await loadReiConfig();
 const workspaceRoot = runtimeConfig.workspacePath || path.resolve(__dirname, "..");
 const codexHome = runtimeConfig.codexHome || path.join(os.homedir(), ".codex");
 const stateDb = process.env.CODEX_STATE_DB || path.join(codexHome, "state_5.sqlite");
-const logsDb = process.env.CODEX_LOGS_DB || path.join(codexHome, "logs_1.sqlite");
+const logsDb = await resolveCodexLogsDbPath({
+  codexHomePath: codexHome,
+  overridePath: process.env.CODEX_LOGS_DB
+});
 const dailyDeviceHandoffPaths = runtimeConfig.dailyHandoffPath
   ? [runtimeConfig.dailyHandoffPath]
   : [];
@@ -40,6 +43,40 @@ const GITHUB_ISSUE_JSON_FIELDS =
   "number,title,state,createdAt,updatedAt,url,labels,assignees,author";
 const DEFAULT_GITHUB_ISSUE_LIMIT = 20;
 const DEFAULT_GITHUB_ISSUE_LABELS = ["agent:rei"];
+
+export async function resolveCodexLogsDbPath({
+  codexHomePath,
+  overridePath,
+  sqliteJsonImpl = sqliteJson
+} = {}) {
+  if (overridePath) return overridePath;
+
+  const root = codexHomePath || path.join(os.homedir(), ".codex");
+  const candidates = ["logs_2.sqlite", "logs_1.sqlite"].map((name) => path.join(root, name));
+  const available = await Promise.all(candidates.map(async (candidate) => {
+    try {
+      const stat = await fs.stat(candidate);
+      let latestTs = 0;
+      try {
+        const [row] = await sqliteJsonImpl(
+          candidate,
+          "SELECT COALESCE(MAX(ts), 0) AS latest_ts FROM logs;"
+        );
+        latestTs = Number(row?.latest_ts || 0);
+      } catch {
+        // A legacy or empty candidate stays behind a DB with a real heartbeat.
+      }
+      return { path: candidate, latestTs, mtimeMs: stat.mtimeMs };
+    } catch {
+      return null;
+    }
+  }));
+
+  return available
+    .filter(Boolean)
+    .sort((left, right) => right.latestTs - left.latestTs || right.mtimeMs - left.mtimeMs)[0]?.path ||
+    candidates[0];
+}
 const FOCUS_PROFILES = [
   {
     zone: "frontend",
@@ -323,7 +360,9 @@ export function buildAgentJobItemsSql(threadId, limit = 12) {
         items.completed_at,
         jobs.name AS job_name,
         jobs.status AS job_status,
-        jobs.instruction
+        jobs.instruction,
+        jobs.max_runtime_seconds,
+        'agent_job_item' AS source_kind
       FROM agent_job_items AS items
       JOIN agent_jobs AS jobs
         ON jobs.id = items.job_id
@@ -331,6 +370,166 @@ export function buildAgentJobItemsSql(threadId, limit = 12) {
       ORDER BY items.updated_at DESC, items.created_at DESC
       LIMIT ${limit};
     `;
+}
+
+export function buildThreadSpawnEdgesSql(parentThreadId, limit = 12) {
+  return `
+      SELECT
+        'spawn:' || edges.parent_thread_id AS job_id,
+        child.id AS item_id,
+        edges.status,
+        child.id AS assigned_thread_id,
+        json_object(
+          'task',
+          COALESCE(
+            NULLIF(child.title, ''),
+            NULLIF(child.preview, ''),
+            NULLIF(child.first_user_message, ''),
+            'Sub-agent workstream'
+          )
+        ) AS row_json,
+        NULL AS result_json,
+        NULL AS last_error,
+        child.created_at,
+        child.updated_at,
+        NULL AS completed_at,
+        'thread spawn edge' AS job_name,
+        edges.status AS job_status,
+        COALESCE(
+          NULLIF(child.first_user_message, ''),
+          NULLIF(child.title, ''),
+          'Sub-agent workstream'
+        ) AS instruction,
+        child.updated_at AS heartbeat_at,
+        NULL AS max_runtime_seconds,
+        child.agent_nickname,
+        'thread_spawn_edge' AS source_kind
+      FROM thread_spawn_edges AS edges
+      JOIN threads AS child
+        ON child.id = edges.child_thread_id
+      WHERE edges.parent_thread_id = ${quoteSql(parentThreadId)}
+      ORDER BY child.updated_at DESC, child.created_at DESC
+      LIMIT ${limit};
+    `;
+}
+
+export function buildThreadHeartbeatsSql(threadIds = []) {
+  const ids = threadIds.filter(Boolean).map((id) => quoteSql(id));
+  if (ids.length === 0) return "SELECT NULL AS thread_id, NULL AS heartbeat_at WHERE 0;";
+
+  return `
+      SELECT
+        thread_id,
+        MAX(ts) AS heartbeat_at
+      FROM logs
+      WHERE thread_id IN (${ids.join(", ")})
+      GROUP BY thread_id;
+    `;
+}
+
+export function buildSpawnRootSql(threadId) {
+  return `
+      WITH RECURSIVE ancestry(thread_id, parent_thread_id, depth) AS (
+        SELECT child_thread_id, parent_thread_id, 1
+        FROM thread_spawn_edges
+        WHERE child_thread_id = ${quoteSql(threadId)}
+        UNION ALL
+        SELECT edges.child_thread_id, edges.parent_thread_id, ancestry.depth + 1
+        FROM thread_spawn_edges AS edges
+        JOIN ancestry
+          ON edges.child_thread_id = ancestry.parent_thread_id
+        WHERE ancestry.depth < 32
+      )
+      SELECT parent_thread_id AS root_id
+      FROM ancestry
+      ORDER BY depth DESC
+      LIMIT 1;
+    `;
+}
+
+function buildThreadByIdSql(threadId) {
+  return `
+      SELECT
+        id,
+        title,
+        cwd,
+        git_branch AS gitBranch,
+        git_origin_url AS gitOriginUrl,
+        updated_at AS updatedAt
+      FROM threads
+      WHERE id = ${quoteSql(threadId)}
+      LIMIT 1;
+    `;
+}
+
+export async function resolveThreadRootRow({
+  activityThreadRow,
+  stateDatabase = stateDb,
+  sqliteJsonImpl = sqliteJson
+} = {}) {
+  if (!activityThreadRow?.id) return activityThreadRow || null;
+
+  try {
+    const [ancestry] = await sqliteJsonImpl(
+      stateDatabase,
+      buildSpawnRootSql(activityThreadRow.id)
+    );
+    const rootId = ancestry?.root_id;
+    if (!rootId || rootId === activityThreadRow.id) return activityThreadRow;
+
+    const [rootRow] = await sqliteJsonImpl(stateDatabase, buildThreadByIdSql(rootId));
+    return rootRow || activityThreadRow;
+  } catch {
+    return activityThreadRow;
+  }
+}
+
+export async function readAgentJobsForThread({
+  threadId,
+  stateDatabase = stateDb,
+  logsDatabase = logsDb,
+  sqliteJsonImpl = sqliteJson
+} = {}) {
+  if (!threadId) return [];
+
+  const tableRows = await sqliteJsonImpl(
+    stateDatabase,
+    `SELECT name FROM sqlite_master WHERE type = 'table' AND name IN (
+      'agent_jobs', 'agent_job_items', 'thread_spawn_edges', 'threads'
+    );`
+  );
+  const tables = new Set(tableRows.map((row) => row.name));
+
+  if (tables.has("agent_jobs") && tables.has("agent_job_items")) {
+    const legacyRows = await sqliteJsonImpl(stateDatabase, buildAgentJobItemsSql(threadId));
+    if (legacyRows.length > 0) return legacyRows;
+  }
+
+  if (!tables.has("thread_spawn_edges") || !tables.has("threads")) return [];
+
+  const spawnRows = await sqliteJsonImpl(stateDatabase, buildThreadSpawnEdgesSql(threadId));
+  if (spawnRows.length === 0) return [];
+
+  let heartbeatRows = [];
+  try {
+    heartbeatRows = await sqliteJsonImpl(
+      logsDatabase,
+      buildThreadHeartbeatsSql(spawnRows.map((row) => row.item_id))
+    );
+  } catch {
+    // Thread updated_at remains a conservative fallback when logs are unavailable.
+  }
+  const heartbeatByThread = new Map(
+    heartbeatRows.map((row) => [row.thread_id, Number(row.heartbeat_at || 0)])
+  );
+
+  return spawnRows.map((row) => ({
+    ...row,
+    heartbeat_at: Math.max(
+      Number(row.heartbeat_at || 0),
+      heartbeatByThread.get(row.item_id) || 0
+    )
+  }));
 }
 
 function buildPythonSqliteArgs(databasePath, sql) {
@@ -1198,23 +1397,25 @@ async function getStatus() {
   } catch {
     // no codex state available — execute signals below still animate the room
   }
-  const [latestThreadRow] = latestThreadRows;
+  const [activityThreadRow] = latestThreadRows;
   const [latestRepoRow] = latestRepoRows;
+  const latestThreadRow = await resolveThreadRootRow({ activityThreadRow });
   const latestThread = mapThread(latestThreadRow, nowSeconds);
+  const activityThread = mapThread(activityThreadRow, nowSeconds);
   const latestRepo = mapThread(latestRepoRow, nowSeconds);
 
   let activity = {
-    summary: latestThread?.title || "Standby di thread aktif",
+    summary: activityThread?.title || latestThread?.title || "Standby di thread aktif",
     source: "thread",
     kind: "thread"
   };
-  let lastLogAt = latestThread?.updatedAt || 0;
+  let lastLogAt = activityThread?.updatedAt || latestThread?.updatedAt || 0;
   let threadLogs = [];
 
-  if (latestThread?.id) {
+  if (activityThread?.id) {
     try {
       const logsMessageColumn = await detectLogsMessageColumn(logsDb);
-      const logSql = buildThreadLogsSql(latestThread.id, 500, 320, logsMessageColumn);
+      const logSql = buildThreadLogsSql(activityThread.id, 500, 320, logsMessageColumn);
 
       const [rawThreadLogs, globalLogs] = await Promise.all([
         sqliteJson(logsDb, logSql),
@@ -1252,7 +1453,7 @@ async function getStatus() {
   let agentJobs = [];
   if (latestThread?.id) {
     try {
-      agentJobs = await sqliteJson(stateDb, buildAgentJobItemsSql(latestThread.id));
+      agentJobs = await readAgentJobsForThread({ threadId: latestThread.id });
     } catch {
       // optional enrichment only
     }
@@ -1786,6 +1987,10 @@ export function contentType(filePath) {
 
   if (filePath.endsWith(".jpg")) {
     return "image/jpeg";
+  }
+
+  if (filePath.endsWith(".webp")) {
+    return "image/webp";
   }
 
   return "text/plain; charset=utf-8";

@@ -1,7 +1,10 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { createStatusTransport } from "../public/status-stream.js";
+import {
+  STATUS_FRESHNESS_TIMEOUT_MS,
+  createStatusTransport
+} from "../public/status-stream.js";
 
 class FakeEventSource {
   constructor(url) {
@@ -190,4 +193,46 @@ test("createStatusTransport switches to polling after a stream error", async () 
   assert.deepEqual(fetchCalls, ["/api/status"]);
   assert.deepEqual(modes, ["polling"]);
   assert.equal(timers.intervals.length, 1);
+});
+
+test("createStatusTransport drops a silent stream after the freshness watchdog expires", async () => {
+  const timers = createFakeTimers();
+  const source = [];
+  const fetchCalls = [];
+  const errors = [];
+
+  const transport = createStatusTransport({
+    EventSourceCtor: class extends FakeEventSource {
+      constructor(url) {
+        super(url);
+        source.push(this);
+      }
+    },
+    fetchImpl: async (url) => {
+      fetchCalls.push(url);
+      return {
+        ok: true,
+        json: async () => ({ room: { phase: "standby" } })
+      };
+    },
+    timers: timers.api,
+    onTransportError(error) {
+      errors.push(error);
+    }
+  });
+
+  transport.start();
+  source[0].emitOpen();
+  const watchdog = timers.timeouts.find(
+    (handle) => handle.ms === STATUS_FRESHNESS_TIMEOUT_MS && !handle.cleared
+  );
+  assert.ok(watchdog, "expected an armed stream freshness watchdog");
+
+  watchdog.fn();
+  await Promise.resolve();
+
+  assert.equal(source[0].closed, true);
+  assert.equal(transport.getMode(), "polling");
+  assert.deepEqual(fetchCalls, ["/api/status"]);
+  assert.match(errors[0]?.message || "", /stale/i);
 });
