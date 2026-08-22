@@ -5,6 +5,10 @@ import fs from "node:fs/promises";
 const indexUrl = new URL("../public/index.html", import.meta.url);
 const stylesUrl = new URL("../public/styles.css", import.meta.url);
 const appUrl = new URL("../public/app.js", import.meta.url);
+const reiSmartUrl = new URL("../public/rei-smart.js", import.meta.url);
+const petOverlayHtmlUrl = new URL("../public/pet-overlay.html", import.meta.url);
+const petOverlayScriptUrl = new URL("../public/pet-overlay.js", import.meta.url);
+const petOverlaySwiftUrl = new URL("../tools/reiko-pet-overlay.swift", import.meta.url);
 const gitignoreUrl = new URL("../.gitignore", import.meta.url);
 const dockerignoreUrl = new URL("../.dockerignore", import.meta.url);
 const dockerfileUrl = new URL("../Dockerfile", import.meta.url);
@@ -29,6 +33,139 @@ test("public controls have explicit labels and visible keyboard focus", async ()
     assert.match(html, new RegExp(`<label[^>]+for="${id}"`));
   }
   assert.match(css, /:focus-visible/);
+});
+
+test("Agent Garden is an accessible persisted view backed by the pet atlas renderer", async () => {
+  const [html, app, css] = await Promise.all([
+    fs.readFile(indexUrl, "utf8"),
+    fs.readFile(appUrl, "utf8"),
+    fs.readFile(stylesUrl, "utf8")
+  ]);
+
+  assert.match(
+    html,
+    /id="pet-garden-toggle"[^>]+aria-pressed="false"[^>]*>\s*Agent Garden\s*<\/button>/
+  );
+  assert.match(html, /id="pet-garden-status"[^>]+aria-live="polite"/);
+  assert.match(html, /id="room-canvas"[^>]+aria-describedby="pet-garden-status"/);
+  assert.match(html, /id="pet-garden-roster"[^>]+aria-label="Agent Garden role and task status"/);
+  assert.match(app, /PET_GARDEN_STORAGE_KEY/);
+  assert.match(app, /petFrameAt\(/);
+  assert.match(app, /context\.drawImage\(\s*petSprite/);
+  assert.match(app, /let petSpriteFailed = false/);
+  assert.match(app, /petGardenToggle\.disabled = petSpriteFailed/);
+  assert.match(app, /petSpriteFailed = true/);
+  assert.match(app, /function renderPetGardenRoster\(/);
+  assert.match(app, /petOverlayAgents\(renderState\.statusFresh \? renderState\.data : null, VISUAL_CAST\)/);
+  assert.match(app, /petGardenRenderActors\(/);
+  assert.match(app, /petAgentStatusLabel\(agent/);
+  assert.match(app, /petLabelBox\(/);
+  assert.match(app, /context\.measureText\(label\)\.width/);
+  assert.match(app, /petGardenActiveStatus\(agents,\s*\{\s*demo:/);
+  assert.doesNotMatch(app, /Six animated Reiko pets/);
+  assert.match(app, /workstream\.source_status \|\| workstream\.status/);
+  assert.match(css, /body\.pet-garden-mode[\s\S]+#pet-garden-toggle/);
+  assert.match(css, /\.pet-garden-roster/);
+  assert.match(css, /\.stream-item\.failed/);
+});
+
+test("desktop pet overlay announces compact and squad states and drops stale transport state", async () => {
+  const [html, script] = await Promise.all([
+    fs.readFile(petOverlayHtmlUrl, "utf8"),
+    fs.readFile(petOverlayScriptUrl, "utf8")
+  ]);
+
+  assert.match(html, /aria-label="Animated Reiko pet/);
+  assert.match(html, /id="pet-overlay-status"[^>]+aria-live="polite"/);
+  assert.match(script, /petOverlayAgents\(state\.status, VISUAL_CAST\)/);
+  assert.match(script, /petLabelBox\(/);
+  assert.match(script, /context\.measureText\(label\)\.width/);
+  assert.match(script, /petOverlayModeForWidth\(/);
+  assert.match(script, /petRoamingState\(/);
+  assert.match(script, /petAmbientRoamingAllowed\(agents\)/);
+  assert.match(script, /petSpotlightAgent\(/);
+  assert.match(script, /petOverlayAgents\(/);
+  assert.match(script, /petVisualState\(/);
+  assert.match(script, /addEventListener\("reiko-overlay-roaming"/);
+  assert.match(script, /addEventListener\("reiko-overlay-react"/);
+  assert.match(script, /roaming:\s*false/);
+  assert.match(script, /window\.addEventListener\("resize"/);
+  assert.match(script, /onTransportError\(\)\s*{\s*state\.status = null;/);
+  assert.match(script, /SAFE DEMO · SIMULATED/);
+  assert.match(script, /const agentKind = isDemo \? "simulated Reiko" : "live Reiko"/);
+  assert.match(script, /petWorkPropForPose\(pose\)/);
+  assert.match(script, /drawWorkProp\(/);
+  assert.match(script, /const status = petAgentStatusLabel\(agent\)/);
+  assert.doesNotMatch(script, /laptop:\s*"typing"/);
+  assert.doesNotMatch(script, /coffee:\s*"paused"/);
+  assert.match(script, /postMessage\("ready"\)/);
+  assert.match(
+    script,
+    /action:\s*"setSquadCount",\s*count,\s*demo,\s*roamingAllowed\s*\}/
+  );
+});
+
+test("main Agent Garden marks transport failures stale instead of animating the last payload", async () => {
+  const app = await fs.readFile(appUrl, "utf8");
+
+  assert.match(app, /statusFresh:\s*false/);
+  assert.match(app, /function visibleAgentStates\(/);
+  assert.match(app, /renderState\.statusFresh = false/);
+  assert.match(app, /Agent Garden offline\. Last live agent state was cleared\./);
+});
+
+test("smart digest follows live room status instead of waiting for its slow polling cycle", async () => {
+  const [app, smart] = await Promise.all([
+    fs.readFile(appUrl, "utf8"),
+    fs.readFile(reiSmartUrl, "utf8")
+  ]);
+
+  assert.match(app, /dispatchEvent\(new CustomEvent\("rei-status-updated"/);
+  assert.match(smart, /addEventListener\("rei-status-updated"/);
+  assert.match(smart, /digestState\.status = event\.detail/);
+});
+
+test("native pet overlay is compact, draggable, expandable, and restores a safe position", async () => {
+  const swift = await fs.readFile(petOverlaySwiftUrl, "utf8");
+
+  assert.match(swift, /compactOverlaySize\s*=\s*NSSize\(width:\s*300,\s*height:\s*280\)/);
+  assert.match(swift, /expandedOverlaySize\s*=\s*NSSize\(width:\s*840,\s*height:\s*230\)/);
+  assert.match(swift, /final class DragSurfaceView:\s*NSView/);
+  assert.match(swift, /window\.performDrag\(with:\s*event\)/);
+  assert.match(swift, /action:\s*#selector\(toggleSquad\)/);
+  assert.match(swift, /action:\s*#selector\(toggleRoaming\)/);
+  assert.match(swift, /accessibilityDisplayShouldReduceMotion/);
+  assert.match(swift, /clampedOverlaySize\(/);
+  assert.match(swift, /animate:\s*!NSWorkspace\.shared\.accessibilityDisplayShouldReduceMotion/);
+  assert.match(swift, /scheduledTimer\(withTimeInterval:\s*1\.0\s*\/\s*30\.0/);
+  assert.match(swift, /private func stepRoaming\(\)/);
+  assert.match(swift, /private enum RoamPhase/);
+  assert.match(swift, /private func enterObserve\(/);
+  assert.match(swift, /private func enterTravel\(/);
+  assert.match(swift, /panel\.setFrameOrigin\(/);
+  assert.match(swift, /onDragBegan/);
+  assert.match(swift, /onDragEnded/);
+  assert.match(swift, /onClick/);
+  assert.match(swift, /reiko-overlay-roaming/);
+  assert.match(swift, /reiko-overlay-react/);
+  assert.match(swift, /setSquadCount/);
+  assert.match(swift, /squadButton\?\.isHidden/);
+  assert.match(swift, /UserDefaults\.standard/);
+  assert.match(swift, /windowDidMove/);
+  assert.match(swift, /NSButton/);
+  assert.match(swift, /action:\s*#selector\(closeOverlay\)/);
+  assert.match(swift, /accessibilityLabel:\s*"Show Reiko agents"/);
+  assert.match(swift, /private var isSafeDemo = false/);
+  assert.match(swift, /payload\["demo"\] as\? Bool/);
+  assert.match(swift, /payload\["roamingAllowed"\] as\? Bool/);
+  assert.match(swift, /runtimeRoamingAllowed/);
+  assert.match(swift, /Roaming paused while Reiko works/);
+  assert.match(swift, /isSafeDemo \? "simulated" : "live"/);
+  assert.match(swift, /button\.setAccessibilityLabel\(accessibilityLabel\)/);
+  assert.match(swift, /didFailProvisionalNavigation/);
+  assert.match(swift, /scheduledTimer\(withTimeInterval:\s*3/);
+  assert.match(swift, /NSApplication\.shared\.terminate/);
+  assert.doesNotMatch(swift, /collectionBehavior\s*=\s*\[[^\]]*\.stationary/);
 });
 
 test("public demo explains its isolation and touch targets meet the 44px baseline", async () => {
@@ -132,7 +269,15 @@ test("README gives visitors a truthful 60-second proof path", async () => {
   assert.match(proofSection, /ghcr\.io\/wallens11\/rei-ops-room:0\.3\.1/);
   assert.match(proofSection, /simulated/i);
   assert.match(proofSection, /does not connect to GitHub or launch an AI runtime/i);
-  assert.match(proofSection, /539 automated tests/i);
+  assert.match(proofSection, /500\+ automated tests/i);
+});
+
+test("README describes a runtime-backed pet roster instead of a synthetic six-agent squad", async () => {
+  const readme = await fs.readFile(readmeUrl, "utf8");
+
+  assert.match(readme, /Specialist\s+pets appear only when live agent jobs exist/i);
+  assert.match(readme, /squad\s+control stays hidden while Reiko is working solo/i);
+  assert.doesNotMatch(readme, /full six-agent squad remains one click away/i);
 });
 
 test("README demo proof includes a lightweight preview and a real video capture", async () => {

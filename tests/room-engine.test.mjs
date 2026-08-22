@@ -105,6 +105,68 @@ test("working phase keeps focused actor close to the assigned desk", () => {
   assert.ok(distance < 54, `database actor is not settled at the desk: ${distance}`);
 });
 
+test("generic running work uses a desk route instead of continuous patrol", () => {
+  const zones = createDefaultZones();
+  const actors = stepCrewActors(buildCrewActors(zones), {
+    frame: 1,
+    status: "busy",
+    focusZone: "lab",
+    roomPhase: "execution",
+    agents: buildAgentState({
+      lead: { activity: "running", assigned_zone: "lab" }
+    }),
+    zones
+  });
+
+  const lead = actors.find((actor) => actor.id === "lead");
+  assert.equal(lead.routeType, "seat");
+});
+
+test("waiting workers without observer duty stay at their desk", () => {
+  const zones = createDefaultZones();
+  const actors = stepCrewActors(buildCrewActors(zones), {
+    frame: 1,
+    status: "busy",
+    focusZone: "backend",
+    roomPhase: "execution",
+    agents: buildAgentState({
+      ui: {
+        activity: "waiting",
+        assigned_zone: "frontend",
+        idle_behavior: null
+      }
+    }),
+    zones
+  });
+
+  const ui = actors.find((actor) => actor.id === "ui");
+  assert.equal(ui.routeType, "seat");
+});
+
+test("initial runtime sync places workers at their current desks without fake travel", () => {
+  const zones = createDefaultZones();
+  const actors = stepCrewActors(buildCrewActors(zones), {
+    frame: 1,
+    status: "busy",
+    focusZone: "backend",
+    roomPhase: "execution",
+    snapToRoute: true,
+    agents: buildAgentState({
+      lead: { activity: "reading", assigned_zone: "lab" },
+      ui: { activity: "coding", assigned_zone: "frontend" },
+      api: { activity: "debugging", assigned_zone: "backend" },
+      db: { activity: "reading", assigned_zone: "database" },
+      docs: { activity: "reviewing", assigned_zone: "review" }
+    }),
+    zones
+  });
+
+  for (const actor of actors.filter((entry) => entry.id !== "scout")) {
+    assert.equal(actor.routeType, "seat", `${actor.id} did not use its current desk`);
+    assert.equal(actor.moving, false, `${actor.id} faked a travel animation during sync`);
+  }
+});
+
 test("scout stays near the lab when there is no handoff event", () => {
   const zones = createDefaultZones();
   let actors = buildCrewActors(zones);

@@ -16,6 +16,7 @@
   "scripts": {
     "start": "node server.mjs",
     "demo": "node demo.mjs",
+    "pet-overlay": "swift tools/reiko-pet-overlay.swift",
     "test": "node --test tests/*.test.mjs",
     "room": "node tools/rei-cli.mjs activate room",
     "widget": "node tools/rei-cli.mjs activate widget",

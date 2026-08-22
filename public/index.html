@@ -50,6 +50,14 @@
             <button class="view-button is-active" data-mode="room" type="button">Room</button>
             <button class="view-button" data-mode="widget" type="button">Widget</button>
           </div>
+          <button
+            id="pet-garden-toggle"
+            class="ghost-button"
+            type="button"
+            aria-pressed="false"
+          >
+            Agent Garden
+          </button>
           <button id="editor-toggle" class="ghost-button" type="button" aria-expanded="false">
             Layout Edit
           </button>
@@ -94,7 +102,17 @@
               width="640"
               height="420"
               aria-label="Rei operations room"
+              aria-describedby="pet-garden-status"
             ></canvas>
+            <p id="pet-garden-status" class="sr-only" aria-live="polite">
+              Pixel crew view active.
+            </p>
+            <ul
+              id="pet-garden-roster"
+              class="pet-garden-roster"
+              aria-label="Agent Garden role and task status"
+              hidden
+            ></ul>
           </div>
 
           <div class="scene-detail-card">

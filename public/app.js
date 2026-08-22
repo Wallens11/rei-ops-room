@@ -74,10 +74,28 @@ import {
   createStatusTransport,
   STATUS_POLL_FALLBACK_MS
 } from "./status-stream.js";
+import {
+  PET_ATLAS,
+  PET_GARDEN_STORAGE_KEY,
+  petAgentStatusLabel,
+  petFrameAt,
+  petGardenActiveStatus,
+  petGardenAgentStates,
+  petGardenRenderActors,
+  petLabelBox,
+  petOverlayAgents,
+  petSpawnLabelOffset,
+  petSpawnState,
+  shouldLoadPetSprite
+} from "./pet-garden.js";
 
 const canvas = document.getElementById("room-canvas");
 const context = canvas.getContext("2d");
 context.imageSmoothingEnabled = false;
+const petSprite = new Image();
+let petSpriteReady = false;
+let petSpriteFailed = false;
+let petSpriteLoadStarted = false;
 
 const COLORS = {
   bg0: "#171210",
@@ -227,6 +245,9 @@ const elements = {
   eventList: document.getElementById("event-list"),
   runtimePanel: document.getElementById("runtime-panel"),
   viewButtons: [...document.querySelectorAll("[data-mode]")],
+  petGardenToggle: document.getElementById("pet-garden-toggle"),
+  petGardenStatus: document.getElementById("pet-garden-status"),
+  petGardenRoster: document.getElementById("pet-garden-roster"),
   editorToggle: document.getElementById("editor-toggle"),
   editorPanel: document.getElementById("layout-editor"),
   editorEntityList: document.getElementById("editor-entity-list"),
@@ -250,6 +271,7 @@ const renderState = {
   zones: INITIAL_ZONES,
   mode: "room",
   transportMode: "connecting",
+  statusFresh: false,
   actors: buildCrewActors(INITIAL_ZONES),
   hotspots: [],
   hoveredHotspot: null,
@@ -270,6 +292,7 @@ const renderState = {
   taskQueue: { tasks: [], submitting: false },
   autopilot: loadReportOnlyAutopilotState(),
   reducedMotion: false,
+  petGardenEnabled: false,
   editorActive: false,
   editorSelectionId: "zone:lab",
   editorStep: 8,
@@ -666,6 +689,26 @@ function workstreamStatusLabel(status) {
     return "Done";
   }
 
+  if (status === "failed") {
+    return "Failed";
+  }
+
+  if (status === "error") {
+    return "Error";
+  }
+
+  if (status === "blocked") {
+    return "Blocked";
+  }
+
+  if (status === "unknown") {
+    return "Unknown";
+  }
+
+  if (status === "stale") {
+    return "Stale";
+  }
+
   return "Queued";
 }
 
@@ -754,6 +797,98 @@ function initMode() {
   renderState.mode = requested || saved || "room";
   applyMode(renderState.mode);
 }
+
+function updatePetGardenUi(message = null) {
+  const enabled = renderState.petGardenEnabled;
+  elements.petGardenToggle?.setAttribute("aria-pressed", String(enabled));
+  if (elements.petGardenToggle) {
+    elements.petGardenToggle.disabled = petSpriteFailed;
+    elements.petGardenToggle.setAttribute(
+      "title",
+      petSpriteFailed
+      ? "Reiko pet atlas unavailable. Reload to retry."
+      : enabled ? "Show the pixel crew" : "Show animated pets for every agent"
+    );
+  }
+  document.body.classList.toggle("pet-garden-mode", enabled);
+
+  if (elements.petGardenStatus) {
+    elements.petGardenStatus.textContent = message || (enabled
+      ? petGardenActiveStatus(visibleAgentStates(), {
+          demo: renderState.statusFresh && renderState.data?.demo === true
+        })
+      : "Pixel crew view active.");
+  }
+
+  renderPetGardenRoster();
+}
+
+function ensurePetSpriteLoaded() {
+  if (!shouldLoadPetSprite({
+    enabled: renderState.petGardenEnabled,
+    ready: petSpriteReady,
+    failed: petSpriteFailed,
+    started: petSpriteLoadStarted
+  })) {
+    return;
+  }
+
+  petSpriteLoadStarted = true;
+  petSprite.decoding = "async";
+  petSprite.src = "/pets/reiko/spritesheet.webp";
+}
+
+function applyPetGarden(enabled, { persist = true } = {}) {
+  const requested = Boolean(enabled);
+  renderState.petGardenEnabled = requested && !petSpriteFailed;
+
+  if (persist) {
+    localStorage.setItem(PET_GARDEN_STORAGE_KEY, String(renderState.petGardenEnabled));
+  }
+
+  ensurePetSpriteLoaded();
+  if (renderState.petGardenEnabled && renderState.statusFresh) {
+    syncPetGardenActorsToStatus();
+  }
+  updatePetGardenUi(
+    requested && petSpriteFailed
+      ? "Agent Garden is unavailable because the Reiko pet atlas could not load. Pixel crew view remains active."
+      : renderState.petGardenEnabled && !petSpriteReady
+      ? "Agent Garden selected. Loading the Reiko pet atlas."
+      : null
+  );
+  drawScene();
+}
+
+function initPetGarden() {
+  const params = new URLSearchParams(window.location.search);
+  const requested = params.get("garden");
+  const saved = localStorage.getItem(PET_GARDEN_STORAGE_KEY);
+  const enabled = requested === "1" || (requested !== "0" && saved === "true");
+
+  petSprite.addEventListener("load", () => {
+    petSpriteFailed = false;
+    petSpriteReady = true;
+    updatePetGardenUi();
+    drawScene();
+  });
+  petSprite.addEventListener("error", () => {
+    petSpriteFailed = true;
+    petSpriteReady = false;
+    petSpriteLoadStarted = false;
+    renderState.petGardenEnabled = false;
+    updatePetGardenUi(
+      "Agent Garden could not load the Reiko pet atlas. Pixel crew view restored; reload to retry."
+    );
+    drawScene();
+  });
+
+  applyPetGarden(enabled, { persist: false });
+}
+
+elements.petGardenToggle?.addEventListener("click", () => {
+  applyPetGarden(!renderState.petGardenEnabled);
+});
 
 function readSessionJson(key) {
   if (typeof sessionStorage === "undefined") {
@@ -1293,11 +1428,12 @@ function renderWorkstreams(workstreams) {
 
   workstreams.forEach((workstream) => {
     const item = document.createElement("li");
-    item.className = `stream-item ${workstream.status}`;
+    const displayStatus = workstream.source_status || workstream.status;
+    item.className = `stream-item ${displayStatus}`;
     item.innerHTML = `
       <div class="item-head">
         <strong>${escapeHtml(workstream.owner.toUpperCase())}</strong>
-        <span class="item-chip">${escapeHtml(workstreamStatusLabel(workstream.status))}</span>
+        <span class="item-chip">${escapeHtml(workstreamStatusLabel(displayStatus))}</span>
       </div>
       <p>${escapeHtml(truncate(workstream.task, 92))}</p>
       <p class="dim mono">${escapeHtml(workstream.zone)}</p>
@@ -1424,10 +1560,15 @@ function applyStatus(data) {
     demoBannerShown = true;
   }
 
+  const wasStatusFresh = renderState.statusFresh;
+  renderState.statusFresh = true;
   const previousPhase = renderState.data?.room?.phase || null;
   const previousSubstate = renderState.data?.room?.substate || null;
   renderState.data = data;
   renderState.status = data.status;
+  if (renderState.petGardenEnabled && !wasStatusFresh) {
+    syncPetGardenActorsToStatus();
+  }
   if (previousPhase !== data.room.phase || previousSubstate !== (data.room.substate || null)) {
     cleanupOnPhaseEnter(data.room.phase, data.room.substate || null);
   }
@@ -1519,10 +1660,12 @@ function applyStatus(data) {
   renderWorkstreams(data.workstreams || []);
   renderEvents(data.recent_events || []);
   renderCrewList(data.agents || [], data.workstreams || []);
+  renderPetGardenRoster();
   renderWorkspaceDock(data.workspace || {});
   renderGithubInbox(renderState.githubInbox);
   renderState.hotspots = buildInteractiveHotspots();
   updateSceneDetailCard();
+  window.dispatchEvent(new CustomEvent("rei-status-updated", { detail: data }));
 }
 
 async function refreshGithubInbox() {
@@ -3408,11 +3551,7 @@ function collectActorDrawables(drawables, actors, agentStates, primaryActorId, f
   actors.forEach((actor, index) => {
     let spawn = agentSpawnState.get(actor.id);
     if (!spawn) {
-      spawn = {
-        releaseFrame: frame + index * SPAWN_STAGGER_FRAMES,
-        entering: true,
-        burstDone: false
-      };
+      spawn = petSpawnState({ frame, index, staggerFrames: SPAWN_STAGGER_FRAMES });
       agentSpawnState.set(actor.id, spawn);
       actor.x = DOOR_ENTRY.x;
       actor.y = DOOR_ENTRY.y;
@@ -3796,11 +3935,171 @@ function drawCharacterSprite(cx, ty, {
   }
 }
 
+function petRoleLabel(actorId, agent = {}) {
+  const explicit = String(agent.role_label || "").trim();
+  if (explicit) return explicit;
+
+  return {
+    lead: "Reiko",
+    ui: "UI",
+    api: "API",
+    db: "DB",
+    docs: "Docs",
+    scout: "Scout"
+  }[actorId] || String(actorId || "Agent");
+}
+
+function visibleAgentStates() {
+  return petOverlayAgents(renderState.statusFresh ? renderState.data : null, VISUAL_CAST);
+}
+
+function syncPetGardenActorsToStatus() {
+  if (!renderState.petGardenEnabled || !renderState.statusFresh) return;
+
+  const agents = visibleAgentStates();
+  renderState.actors = stepCrewActors(renderState.actors, {
+    frame: renderState.frame,
+    status: renderState.status,
+    focusZone: renderState.data.room?.focus_zone || "lab",
+    roomPhase: renderState.data.room?.phase || "standby",
+    agents,
+    scene: renderState.data.scene || {},
+    zones: renderState.zones,
+    snapToRoute: true
+  });
+  agents.forEach((agent, index) => {
+    agentSpawnState.set(agent.id, petSpawnState({
+      frame: renderState.frame,
+      index,
+      staggerFrames: SPAWN_STAGGER_FRAMES,
+      synced: true
+    }));
+  });
+}
+
+function renderPetGardenRoster() {
+  if (!elements.petGardenRoster) return;
+
+  elements.petGardenRoster.replaceChildren();
+  elements.petGardenRoster.hidden = !renderState.petGardenEnabled;
+  if (!renderState.petGardenEnabled) return;
+
+  const agents = visibleAgentStates();
+
+  agents.forEach((agent) => {
+    const item = document.createElement("li");
+    item.textContent = `${petRoleLabel(agent.id, agent)} · ${petAgentStatusLabel(agent)}`;
+    elements.petGardenRoster.appendChild(item);
+  });
+
+  if (elements.petGardenStatus && petSpriteReady && renderState.statusFresh) {
+    elements.petGardenStatus.textContent = petGardenActiveStatus(agents, {
+      demo: renderState.data?.demo === true
+    });
+  }
+}
+
+function drawPetAgent(actor, agentState, isPrimary) {
+  const zone = zoneById(agentState.assigned_zone === "between_zones" ? "lab" : actor.currentZone);
+  const { accent } = actorPalette(actor.id, zone.color);
+  const animation = petFrameAt({
+    activity: agentState.activity,
+    moving: actor.moving,
+    facing: actor.facing || 1,
+    pose: actor.pose,
+    frame: renderState.frame,
+    actorId: actor.id,
+    reducedMotion: renderState.reducedMotion
+  });
+  const petHeight = isPrimary ? 68 : 62;
+  const petWidth = petHeight * (PET_ATLAS.cellWidth / PET_ATLAS.cellHeight);
+  const floorY = actor.y + 7;
+  const drawX = actor.x - petWidth / 2;
+  const drawY = floorY - petHeight;
+
+  context.save();
+  context.globalAlpha = isPrimary ? 0.34 : 0.24;
+  context.fillStyle = accent;
+  context.beginPath();
+  context.ellipse(actor.x, floorY - 2, isPrimary ? 19 : 16, 5, 0, 0, Math.PI * 2);
+  context.fill();
+  context.restore();
+
+  context.save();
+  context.imageSmoothingEnabled = true;
+  context.drawImage(
+    petSprite,
+    animation.column * PET_ATLAS.cellWidth,
+    animation.row * PET_ATLAS.cellHeight,
+    PET_ATLAS.cellWidth,
+    PET_ATLAS.cellHeight,
+    drawX,
+    drawY,
+    petWidth,
+    petHeight
+  );
+  context.restore();
+
+  const label = `${petRoleLabel(actor.id, agentState)} · ${petAgentStatusLabel(agentState, animation.state)}`;
+  const spawn = agentSpawnState.get(actor.id);
+  const labelY = floorY + 1 + petSpawnLabelOffset({
+    entering: spawn?.entering,
+    index: spawn?.labelIndex
+  });
+  context.save();
+  context.font = `600 7px 'Spline Sans Mono', monospace`;
+  const labelBox = petLabelBox({
+    textWidth: context.measureText(label).width,
+    preferredX: actor.x,
+    viewportWidth: CANVAS_WIDTH,
+    minWidth: 60,
+    maxWidth: 150,
+    padding: 14,
+    margin: 8
+  });
+  context.fillStyle = "rgba(20, 14, 10, 0.9)";
+  context.strokeStyle = withAlpha(accent, isPrimary ? 0.95 : 0.7);
+  context.lineWidth = 1;
+  context.beginPath();
+  context.roundRect(labelBox.centerX - labelBox.width / 2, labelY, labelBox.width, 12, 4);
+  context.fill();
+  context.stroke();
+  context.fillStyle = isPrimary ? COLORS.white : "#d9d2c2";
+  context.textAlign = "center";
+  context.textBaseline = "middle";
+  context.fillText(label, labelBox.centerX, labelY + 6.5, labelBox.maxTextWidth);
+  context.restore();
+
+  if (agentState.runtime && ["coding", "debugging"].includes(agentState.activity)) {
+    const runtimeLabel = agentState.runtime === "claude-code" ? "CC" :
+      agentState.runtime === "codex" ? "CX" : "AI";
+    context.save();
+    context.fillStyle = "rgba(20, 14, 10, 0.92)";
+    context.strokeStyle = accent;
+    context.lineWidth = 1;
+    context.beginPath();
+    context.roundRect(drawX + petWidth - 13, drawY + 5, 16, 11, 3);
+    context.fill();
+    context.stroke();
+    context.fillStyle = accent;
+    context.font = "bold 7px 'Spline Sans Mono', monospace";
+    context.textAlign = "center";
+    context.textBaseline = "middle";
+    context.fillText(runtimeLabel, drawX + petWidth - 5, drawY + 10.5);
+    context.restore();
+  }
+}
+
 function drawAgent(actor, agentState, isPrimary) {
   const zone = zoneById(agentState.assigned_zone === "between_zones" ? "lab" : actor.currentZone);
   const frame = renderState.frame;
   const { accent } = actorPalette(actor.id, zone.color);
   const costume = actorCostume(actor.id);
+
+  if (renderState.petGardenEnabled && petSpriteReady) {
+    drawPetAgent(actor, agentState, isPrimary);
+    return;
+  }
 
   // Micro-pose: transient "moment of life" overlay (coffee, yawn, stretch).
   // Expires when actor.microPoseUntil < frame. If active and the actor is seated,
@@ -4128,10 +4427,19 @@ function drawScene() {
   });
   drawables.push({ depth: 372, draw: () => drawPlant(34, 360) });
 
+  const agentStates = petGardenAgentStates({
+    runtimeAgents: renderState.data?.agents || [],
+    gardenAgents: visibleAgentStates(),
+    enabled: renderState.petGardenEnabled
+  });
   collectActorDrawables(
     drawables,
-    renderState.actors,
-    renderState.data?.agents || [],
+    petGardenRenderActors({
+      actors: renderState.actors,
+      agents: agentStates,
+      enabled: renderState.petGardenEnabled
+    }),
+    agentStates,
     primaryActorId,
     renderState.frame
   );
@@ -4337,8 +4645,12 @@ window.addEventListener("keydown", (event) => {
 });
 
 function showTransportError(error) {
+  renderState.statusFresh = false;
+  renderState.status = "idle";
+  renderState.runtimeSnapshot = null;
   elements.runtimeLiveTitle.textContent = "Failed to read local status.";
   elements.runtimeLiveMeta.textContent = error instanceof Error ? error.message : String(error);
+  updatePetGardenUi("Agent Garden offline. Last live agent state was cleared.");
 }
 
 function animate() {
@@ -4348,13 +4660,18 @@ function animate() {
     renderState.runtimeSnapshot,
     Date.now()
   );
+  const agents = petGardenAgentStates({
+    runtimeAgents: renderState.statusFresh ? renderState.data?.agents || [] : [],
+    gardenAgents: visibleAgentStates(),
+    enabled: renderState.petGardenEnabled
+  });
   renderState.actors = stepCrewActors(renderState.actors, {
     frame: renderState.frame,
-    status: renderState.status,
-    focusZone: renderState.data.room?.focus_zone || "lab",
-    roomPhase: renderState.data.room?.phase || "standby",
-    agents: renderState.data.agents || [],
-    scene: renderState.data.scene || {},
+    status: renderState.statusFresh ? renderState.status : "idle",
+    focusZone: renderState.statusFresh ? renderState.data.room?.focus_zone || "lab" : "lab",
+    roomPhase: renderState.statusFresh ? renderState.data.room?.phase || "standby" : "standby",
+    agents,
+    scene: renderState.statusFresh ? renderState.data.scene || {} : {},
     zones: renderState.zones
   });
   renderState.hotspots = buildInteractiveHotspots();
@@ -4364,6 +4681,7 @@ function animate() {
 loadSavedLayout();
 syncDerivedLayout();
 initMode();
+initPetGarden();
 renderEditorControls();
 renderState.hotspots = buildInteractiveHotspots();
 renderDailyHandoff(renderState.dailyHandoff);

@@ -102,6 +102,7 @@ const REVIEW_STAGE_REGROUP_MAX = 60;
 const REVIEW_STAGE_COOLDOWN_MIN = 90;
 const LIVE_RUNTIME_MAX_SECONDS = 10;
 const RECENT_RUNTIME_MAX_SECONDS = 60;
+const SPAWN_EDGE_HEARTBEAT_MAX_SECONDS = 90;
 
 // 1c: Named thresholds — menggantikan magic numbers di baseSignals & inferOrchestration
 const ZONE_FOCUS_MIN_SCORE = 1.2;          // skor minimum agar zona dianggap fokus (bukan "lab")
@@ -579,7 +580,7 @@ function normalizeAgentJobStatus(status) {
     return "completed";
   }
 
-  if (["running", "in_progress", "processing", "active"].includes(normalized)) {
+  if (["running", "in_progress", "processing", "active", "open"].includes(normalized)) {
     return "active";
   }
 
@@ -594,10 +595,33 @@ function normalizeAgentJobStatus(status) {
   return normalized || "queued";
 }
 
-function normalizeAgentJobs(agentJobs = []) {
+function normalizeAgentJobs(agentJobs = [], nowSeconds = null) {
   return agentJobs.map((agentJob) => {
     const task = summarizeAgentJobTask(agentJob);
     const row = parseJsonObject(agentJob.row_json);
+    const updatedAt = parseTimestampSeconds(
+      agentJob.heartbeat_at || agentJob.updated_at || agentJob.created_at
+    );
+    const ageSeconds = Number.isFinite(nowSeconds) && Number.isFinite(updatedAt)
+      ? Math.max(0, nowSeconds - updatedAt)
+      : null;
+    const sourceStatus = normalizeAgentJobStatus(agentJob.status);
+    const sourceKind = String(agentJob.source_kind || "agent_job_item");
+    const maxRuntimeSeconds = Number(agentJob.max_runtime_seconds);
+    let status = sourceStatus;
+    if (sourceStatus === "active" && sourceKind === "thread_spawn_edge") {
+      status = Number.isFinite(ageSeconds) && ageSeconds <= SPAWN_EDGE_HEARTBEAT_MAX_SECONDS
+        ? "active"
+        : "unknown";
+    } else if (
+      sourceStatus === "active" &&
+      Number.isFinite(ageSeconds) &&
+      Number.isFinite(maxRuntimeSeconds) &&
+      maxRuntimeSeconds > 0 &&
+      ageSeconds > maxRuntimeSeconds
+    ) {
+      status = "stale";
+    }
     const zone = inferZoneFromText(
       normalizeText(row?.task, row?.title, row?.instruction, agentJob.instruction)
     );
@@ -609,7 +633,12 @@ function normalizeAgentJobs(agentJobs = []) {
       zone,
       owner: ZONE_TO_AGENT[zone] || "lead",
       task: humanizeSummary(task, { zoneId: zone }),
-      status: normalizeAgentJobStatus(agentJob.status),
+      status,
+      raw_status: agentJob.status || null,
+      source_kind: sourceKind,
+      updated_at: updatedAt,
+      age_seconds: ageSeconds,
+      max_runtime_seconds: maxRuntimeSeconds > 0 ? maxRuntimeSeconds : null,
       assigned_thread_id: agentJob.assigned_thread_id || null,
       result_summary:
         humanizeSummary(
@@ -743,9 +772,15 @@ function baseSignals({ thread, repoContext, activity, logs, status, agentJobs = 
   const newRequest = (thread?.updatedAgeSeconds ?? Number.POSITIVE_INFINITY) <= 45;
   const passiveMode = activity?.kind === "rest" || activity?.kind === "observer";
   const toolBurst = clamp(toolCalls / 3, 0, 4);
-  const normalizedAgentJobs = normalizeAgentJobs(agentJobs);
+  const nowSeconds = inferNowSeconds(thread, activity);
+  const normalizedAgentJobs = normalizeAgentJobs(agentJobs, nowSeconds);
   const activeAgentJobs = normalizedAgentJobs.filter((job) => job.status === "active");
   const completedAgentJobs = normalizedAgentJobs.filter((job) => job.status === "completed");
+  const liveAgentJobs = normalizedAgentJobs.filter(
+    (job) => !["stale", "unknown"].includes(job.status)
+  );
+  const staleAgentJobs = normalizedAgentJobs.filter((job) => job.status === "stale");
+  const unknownAgentJobs = normalizedAgentJobs.filter((job) => job.status === "unknown");
   if (completedAgentJobs.length > 0) {
     reviewEvidence.hits.push("completed_agent_job");
     reviewEvidence.score += 2.6;
@@ -766,7 +801,7 @@ function baseSignals({ thread, repoContext, activity, logs, status, agentJobs = 
     delegation.score +
     (secondaryLaneEligible ? 1.6 : 0) +
     (toolBurst >= 1.5 ? 0.4 : 0);
-  const multiFromAgentJobs = activeAgentJobs.length > 0 || normalizedAgentJobs.length >= 2;
+  const multiFromAgentJobs = activeAgentJobs.length > 0 || liveAgentJobs.length >= 2;
   const focusZone =
     passiveMode && status !== "busy" ? "lab" : top.score >= ZONE_FOCUS_MIN_SCORE ? top.zoneId : "lab";
   // 1c: formula confidence yang lebih linear — clamp(top / (top + second + damping), 0.2, 0.99)
@@ -814,8 +849,11 @@ function baseSignals({ thread, repoContext, activity, logs, status, agentJobs = 
       agent_jobs: {
         items: normalizedAgentJobs,
         total_count: normalizedAgentJobs.length,
+        live_count: liveAgentJobs.length,
         active_count: activeAgentJobs.length,
-        completed_count: completedAgentJobs.length
+        completed_count: completedAgentJobs.length,
+        stale_count: staleAgentJobs.length,
+        unknown_count: unknownAgentJobs.length
       },
       completion_age_seconds: completionAgeSeconds
     }
@@ -862,7 +900,7 @@ function inferOrchestration(taskIntelligence, { status, thread, activity }) {
     !thread ||
     signals.passive_mode ||
     (status === "idle" && (activity?.lastLogAgeSeconds ?? Number.POSITIVE_INFINITY) > 20 * 60);
-  const explicitAgentJobs = signals.agent_jobs?.total_count > 0;
+  const explicitAgentJobs = signals.agent_jobs?.live_count > 0;
   const activeDeskEvidence =
     (signals.runtime_active ? 0.8 : 0) +
     (signals.tool_burst >= 0.66 ? 0.7 : 0) +
@@ -1264,9 +1302,10 @@ function buildWorkstreams(taskIntelligence, orchestration) {
   const streams = [];
   const dominantZone = taskIntelligence.dominant_zone;
   const focusOwner = ZONE_TO_AGENT[dominantZone] || "lead";
-  const agentJobs = taskIntelligence.signals.agent_jobs?.items || [];
+  const agentJobs = (taskIntelligence.signals.agent_jobs?.items || [])
+    .filter((job) => !["stale", "unknown"].includes(job.status));
   const activeAgentJobs = agentJobs.filter((job) => job.status === "active");
-  const docsJobActive = agentJobs.some((job) => job.owner === "docs");
+  const docsJobActive = activeAgentJobs.some((job) => job.owner === "docs");
   const secondaries = taskIntelligence.sorted_zones
     .filter((entry) => entry.zoneId !== dominantZone && entry.score >= 2.8)
     .slice(0, 2);
@@ -1323,10 +1362,11 @@ function buildWorkstreams(taskIntelligence, orchestration) {
         owner: job.owner,
         zone: job.zone,
         task: job.task,
+        source_status: job.status,
         status:
           orchestration.room_phase === "review_wrap" && job.status === "completed"
             ? "completed"
-            : job.status === "failed"
+            : ["failed", "stale", "unknown"].includes(job.status)
               ? "queued"
               : job.status
       });
@@ -2240,7 +2280,11 @@ function buildAgentStates(workstreams, orchestration, taskIntelligence, scene) {
     }
 
     const ownedStreams = workstreamsByOwner[agent.id] || [];
-    const primaryStream = ownedStreams.find((stream) => stream.status === "active") || ownedStreams[0];
+    const failedStream = ownedStreams.find((stream) => stream.source_status === "failed");
+    const primaryStream =
+      failedStream ||
+      ownedStreams.find((stream) => stream.status === "active") ||
+      ownedStreams[0];
     const idleBehavior = idleBehaviorForAgent(agent, orchestration, taskIntelligence, scene);
     const assignedZone =
       orchestration.room_phase === "planning_huddle"
@@ -2292,6 +2336,10 @@ function buildAgentStates(workstreams, orchestration, taskIntelligence, scene) {
 
     if (orchestration.cooling_down) {
       activity = "idle";
+    }
+
+    if (failedStream) {
+      activity = "failed";
     }
 
     return {

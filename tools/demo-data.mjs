@@ -293,11 +293,11 @@ export function buildDemoRoomStatus() {
       status: "busy",
       current_task: "Fix N+1 query in /api/users endpoint",
       current_repo: "my-app",
-      mode: "execute",
+      mode: "multi",
       substate: null,
       resting: false,
       skills: [],
-      phase_reason: "Agent is actively executing a backend task via claude-code.",
+      phase_reason: "Three coordinated agent lanes are executing with backend as the primary focus.",
       focus_reason: "Backend zone is dominant — API query optimization in progress.",
       rest_corner: null
     },
@@ -325,7 +325,7 @@ export function buildDemoRoomStatus() {
       active_room: {
         repo: "demo-user/my-app",
         recent_thread_count: 3,
-        active_lane_count: 1,
+        active_lane_count: 3,
         status: "active",
         phase: "coding",
         latest_title: "Fix N+1 query in /api/users endpoint",
@@ -352,16 +352,95 @@ export function buildDemoRoomStatus() {
       room_phase: "coding",
       phase_confidence: 0.91,
       review_stage: null,
-      mode: "execute",
+      mode: "multi",
       cooling_down: false
     },
-    workstreams: [],
-    agents: [],
+    workstreams: [
+      {
+        id: "demo-backend",
+        owner: "api",
+        zone: "backend",
+        task: "Fix N+1 query and verify the profiler result",
+        status: "active"
+      },
+      {
+        id: "demo-ui",
+        owner: "ui",
+        zone: "frontend",
+        task: "Keep request progress and error states visible",
+        status: "active"
+      },
+      {
+        id: "demo-docs",
+        owner: "docs",
+        zone: "review",
+        task: "Review regression notes before handoff",
+        status: "active"
+      }
+    ],
+    agents: [
+      {
+        id: "lead",
+        display_name: "Lead Rei",
+        home_zone: "lab",
+        assigned_zone: "lab",
+        visual_role: "coordinator",
+        activity: "reviewing",
+        assigned_workstream_ids: ["demo-backend"]
+      },
+      {
+        id: "ui",
+        display_name: "UI Rei",
+        home_zone: "frontend",
+        assigned_zone: "frontend",
+        visual_role: "worker",
+        activity: "coding",
+        assigned_workstream_ids: ["demo-ui"]
+      },
+      {
+        id: "api",
+        display_name: "API Rei",
+        home_zone: "backend",
+        assigned_zone: "backend",
+        visual_role: "worker",
+        activity: "debugging",
+        runtime: "claude-code",
+        assigned_workstream_ids: ["demo-backend"]
+      },
+      {
+        id: "db",
+        display_name: "DB Rei",
+        home_zone: "database",
+        assigned_zone: "database",
+        visual_role: "worker",
+        activity: "reading",
+        assigned_workstream_ids: ["demo-backend"]
+      },
+      {
+        id: "docs",
+        display_name: "Docs Rei",
+        home_zone: "review",
+        assigned_zone: "review",
+        visual_role: "worker",
+        activity: "reviewing",
+        assigned_workstream_ids: ["demo-docs"]
+      },
+      {
+        id: "scout",
+        display_name: "Scout Rei",
+        home_zone: "lab",
+        assigned_zone: "lab",
+        visual_role: "courier",
+        activity: "waiting",
+        idle_behavior: "idle_observe",
+        assigned_workstream_ids: []
+      }
+    ],
     recent_events: [],
     skills: [],
     scene: {
       phase_title: "Executing",
-      phase_reason: "Agent is actively running a task.",
+      phase_reason: "Three coordinated agent lanes are actively running tasks.",
       focus_title: "Backend Rack",
       focus_label: "Active Desk",
       focus_chip_title: "Backend Rack",
