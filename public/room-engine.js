@@ -16,8 +16,19 @@ const SETTLED_ACTIVITIES = new Set([
   "reading",
   "coding",
   "debugging",
+  "executing",
+  "running",
   "summarizing",
-  "reviewing"
+  "reviewing",
+  "tooling"
+]);
+
+const TYPING_ACTIVITIES = new Set([
+  "coding",
+  "debugging",
+  "executing",
+  "running",
+  "tooling"
 ]);
 
 const OBSERVATION_ACTIVITIES = new Set(["waiting", "idle"]);
@@ -351,6 +362,10 @@ function routeForActor(actor, agentState, { focusZone, roomPhase, zones, scene }
     return createObservationLoop(actor, zones, assignedZoneId, roomPhase);
   }
 
+  if (OBSERVATION_ACTIVITIES.has(agentState.activity)) {
+    return stableWorkRoute(actor, targetZone);
+  }
+
   return {
     zoneId: assignedZoneId,
     routeType:
@@ -406,7 +421,7 @@ function speedForActor(actor, agentState, { roomPhase, status, scene }) {
 }
 
 function poseForActivity(activity) {
-  if (activity === "coding" || activity === "debugging") {
+  if (TYPING_ACTIVITIES.has(activity)) {
     return "type";
   }
 
@@ -426,7 +441,7 @@ function actorPhaseOffset(actor) {
 function deriveDeskLoop(actor, agentState, frame) {
   const phase = (frame + actorPhaseOffset(actor) * 5) % 72;
 
-  if (agentState.activity === "coding" || agentState.activity === "debugging") {
+  if (TYPING_ACTIVITIES.has(agentState.activity)) {
     if (phase < 28) {
       return { motionState: "SEATED", pose: "type" };
     }
@@ -556,7 +571,8 @@ export function stepCrewActors(
     status = "idle",
     agents = [],
     scene = {},
-    zones
+    zones,
+    snapToRoute = false
   }
 ) {
   return actors.map((actor) => {
@@ -569,6 +585,45 @@ export function stepCrewActors(
     });
     const points = route.points;
     const pointCount = Math.max(1, points.length);
+
+    if (
+      snapToRoute &&
+      agentState.activity !== "moving" &&
+      route.routeType !== "dispatch" &&
+      route.routeType !== "scout"
+    ) {
+      const snapIndex = route.routeType === "observe" ? 0 : pointCount - 1;
+      const target = points[snapIndex] || { x: actor.x, y: actor.y };
+      const motion = deriveActorMovement(
+        actor,
+        agentState,
+        route,
+        false,
+        0,
+        snapIndex,
+        frame
+      );
+
+      return {
+        ...actor,
+        currentZone: route.zoneId,
+        x: target.x,
+        y: target.y,
+        patrolIndex: snapIndex,
+        facing: route.seat?.facing || actor.facing,
+        moving: false,
+        roomPhase,
+        activity: agentState.activity,
+        stepFrame: frame,
+        holdFrames: 0,
+        holdIndex: null,
+        routeType: route.routeType,
+        seatId: route.seat?.id || null,
+        motionState: motion.motionState,
+        pose: motion.pose
+      };
+    }
+
     const routeChanged = actor.routeType !== route.routeType || actor.currentZone !== route.zoneId;
     const basePatrolIndex = routeChanged ? 0 : actor.patrolIndex;
     const currentIndex = basePatrolIndex % pointCount;

@@ -101,6 +101,28 @@ test("spawning pets use temporary label lanes to avoid stacked text", () => {
   assert.equal(petSpawnLabelOffset({ entering: false, index: 2 }), 0);
 });
 
+test("initially synced pets skip the decorative door-entry animation", () => {
+  assert.equal(typeof petGarden.petSpawnState, "function");
+  assert.deepEqual(
+    petGarden.petSpawnState({ frame: 20, index: 2, staggerFrames: 7 }),
+    {
+      releaseFrame: 34,
+      entering: true,
+      burstDone: false,
+      labelIndex: 2
+    }
+  );
+  assert.deepEqual(
+    petGarden.petSpawnState({ frame: 20, index: 2, staggerFrames: 7, synced: true }),
+    {
+      releaseFrame: 20,
+      entering: false,
+      burstDone: true,
+      labelIndex: 2
+    }
+  );
+});
+
 test("pet frames animate independently and stop under reduced motion", () => {
   const lead = petFrameAt({ activity: "coding", frame: 12, actorId: "lead" });
   const api = petFrameAt({ activity: "coding", frame: 12, actorId: "api" });
@@ -208,6 +230,21 @@ test("desktop roaming uses walking direction only in compact motion-enabled mode
   });
 });
 
+test("native ambient roaming is limited to one idle pet", () => {
+  assert.equal(typeof petGarden.petAmbientRoamingAllowed, "function");
+  assert.equal(petGarden.petAmbientRoamingAllowed([{ id: "lead", activity: "idle" }]), true);
+  assert.equal(petGarden.petAmbientRoamingAllowed([{ id: "lead", activity: "waiting" }]), true);
+  assert.equal(petGarden.petAmbientRoamingAllowed([{ id: "lead", activity: "running" }]), false);
+  assert.equal(petGarden.petAmbientRoamingAllowed([{ id: "lead", activity: "reading" }]), false);
+  assert.equal(
+    petGarden.petAmbientRoamingAllowed([
+      { id: "lead", activity: "idle" },
+      { id: "api", activity: "idle" }
+    ]),
+    false
+  );
+});
+
 test("pet visual reactions temporarily outrank travel and settled work", () => {
   assert.deepEqual(
     petVisualState({ activity: "coding", roaming: true, reaction: "wave" }),
@@ -282,6 +319,33 @@ test("specialist roles appear only when backed by real agent jobs", () => {
   assert.equal(petAgentStatusLabel(agents[1]), "working");
 });
 
+test("coordinating Reiko stays in a work pose while specialists execute", () => {
+  const agents = petOverlayAgents({
+    status: "busy",
+    room: { phase: "squad_split" },
+    taskIntelligence: {
+      signals: {
+        agent_jobs: {
+          items: [{ id: "job_api", owner: "api", status: "active" }]
+        }
+      }
+    },
+    agents: [
+      { id: "lead", activity: "moving", assigned_zone: "lab", assigned_workstream_ids: [] },
+      {
+        id: "api",
+        activity: "coding",
+        assigned_zone: "backend",
+        assigned_workstream_ids: ["job_api"]
+      }
+    ]
+  });
+
+  assert.equal(agents[0].id, "lead");
+  assert.equal(agents[0].status_label, "coordinating");
+  assert.equal(agents[0].activity, "reading");
+});
+
 test("lead-owned child jobs receive distinct neutral pet slots instead of collapsing into Reiko", () => {
   const agents = petOverlayAgents({
     status: "busy",
@@ -346,8 +410,8 @@ test("Agent Garden renders only the runtime-backed roster while pixel mode keeps
 
 test("Agent Garden status distinguishes simulated demo agents from live jobs", () => {
   assert.equal(
-    petGardenActiveStatus([{ id: "lead" }]),
-    "Agent Garden active. Reiko reflects the live task state."
+    petGardenActiveStatus([{ id: "lead", status_label: "handling this chat" }]),
+    "Agent Garden active. Solo mode: Reiko is handling this chat; no sub-agents are running."
   );
   assert.equal(
     petGardenActiveStatus([{ id: "lead" }, { id: "api" }], { demo: true }),
@@ -355,7 +419,7 @@ test("Agent Garden status distinguishes simulated demo agents from live jobs", (
   );
   assert.equal(
     petGardenActiveStatus([{ id: "lead" }, { id: "api" }]),
-    "Agent Garden active. 2 animated Reiko pets reflect real agent jobs."
+    "Agent Garden active. Multi-agent mode: Reiko plus 1 task agent is shown from runtime jobs."
   );
 });
 

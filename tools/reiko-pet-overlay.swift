@@ -58,6 +58,7 @@ final class ReikoOverlayDelegate: NSObject, NSApplicationDelegate, NSWindowDeleg
   private var isSquadExpanded = false
   private var isSafeDemo = false
   private var roamingEnabled = true
+  private var runtimeRoamingAllowed = false
   private var isDragging = false
   private var isProgrammaticRoamMove = false
   private var suppressPositionSave = false
@@ -170,6 +171,7 @@ final class ReikoOverlayDelegate: NSObject, NSApplicationDelegate, NSWindowDeleg
     self.webView = webView
     self.roamButton = roamButton
     self.squadButton = squadButton
+    updateRoamButton()
 
     guard let url = overlayURL() else {
       fputs("Invalid Reiko overlay URL. Use a loopback http URL.\n", stderr)
@@ -201,7 +203,11 @@ final class ReikoOverlayDelegate: NSObject, NSApplicationDelegate, NSWindowDeleg
       return
     }
     if action == "setSquadCount", let count = payload["count"] as? NSNumber {
-      setSquadCount(count.intValue, demo: payload["demo"] as? Bool ?? false)
+      setSquadCount(
+        count.intValue,
+        demo: payload["demo"] as? Bool ?? false,
+        roamingAllowed: payload["roamingAllowed"] as? Bool ?? false
+      )
     } else {
       handleBridgeAction(action)
     }
@@ -252,6 +258,7 @@ final class ReikoOverlayDelegate: NSObject, NSApplicationDelegate, NSWindowDeleg
   }
 
   @objc private func toggleRoaming() {
+    guard runtimeRoamingAllowed else { return }
     roamingEnabled.toggle()
     if roamingEnabled {
       enterObserve(duration: 0.8)
@@ -259,10 +266,25 @@ final class ReikoOverlayDelegate: NSObject, NSApplicationDelegate, NSWindowDeleg
       reportWebRoaming(active: false)
     }
 
+    updateRoamButton()
+  }
+
+  private func updateRoamButton() {
+    guard let roamButton else { return }
+    if !runtimeRoamingAllowed {
+      let label = "Roaming paused while Reiko works"
+      roamButton.title = "●"
+      roamButton.isEnabled = false
+      roamButton.toolTip = label
+      roamButton.setAccessibilityLabel(label)
+      return
+    }
+
     let label = roamingEnabled ? "Pause Reiko roaming" : "Resume Reiko roaming"
-    roamButton?.title = roamingEnabled ? "Ⅱ" : "▶"
-    roamButton?.toolTip = label
-    roamButton?.setAccessibilityLabel(label)
+    roamButton.title = roamingEnabled ? "Ⅱ" : "▶"
+    roamButton.isEnabled = true
+    roamButton.toolTip = label
+    roamButton.setAccessibilityLabel(label)
   }
 
   private func beginManualDrag() {
@@ -311,6 +333,7 @@ final class ReikoOverlayDelegate: NSObject, NSApplicationDelegate, NSWindowDeleg
     guard let panel else { return }
     guard
       roamingEnabled,
+      runtimeRoamingAllowed,
       !isSquadExpanded,
       !isDragging,
       !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion,
@@ -380,9 +403,14 @@ final class ReikoOverlayDelegate: NSObject, NSApplicationDelegate, NSWindowDeleg
     webView?.evaluateJavaScript(script)
   }
 
-  private func setSquadCount(_ rawCount: Int, demo: Bool) {
+  private func setSquadCount(_ rawCount: Int, demo: Bool, roamingAllowed: Bool) {
     isSafeDemo = demo
     availableSquadCount = min(6, max(1, rawCount))
+    runtimeRoamingAllowed = roamingAllowed && availableSquadCount == 1
+    if !runtimeRoamingAllowed {
+      reportWebRoaming(active: false)
+    }
+    updateRoamButton()
     squadButton?.isHidden = availableSquadCount <= 1
     if availableSquadCount <= 1 && isSquadExpanded {
       setSquadExpanded(false)

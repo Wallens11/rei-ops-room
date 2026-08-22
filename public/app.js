@@ -85,6 +85,7 @@ import {
   petLabelBox,
   petOverlayAgents,
   petSpawnLabelOffset,
+  petSpawnState,
   shouldLoadPetSprite
 } from "./pet-garden.js";
 
@@ -846,6 +847,9 @@ function applyPetGarden(enabled, { persist = true } = {}) {
   }
 
   ensurePetSpriteLoaded();
+  if (renderState.petGardenEnabled && renderState.statusFresh) {
+    syncPetGardenActorsToStatus();
+  }
   updatePetGardenUi(
     requested && petSpriteFailed
       ? "Agent Garden is unavailable because the Reiko pet atlas could not load. Pixel crew view remains active."
@@ -1556,11 +1560,15 @@ function applyStatus(data) {
     demoBannerShown = true;
   }
 
+  const wasStatusFresh = renderState.statusFresh;
   renderState.statusFresh = true;
   const previousPhase = renderState.data?.room?.phase || null;
   const previousSubstate = renderState.data?.room?.substate || null;
   renderState.data = data;
   renderState.status = data.status;
+  if (renderState.petGardenEnabled && !wasStatusFresh) {
+    syncPetGardenActorsToStatus();
+  }
   if (previousPhase !== data.room.phase || previousSubstate !== (data.room.substate || null)) {
     cleanupOnPhaseEnter(data.room.phase, data.room.substate || null);
   }
@@ -1657,6 +1665,7 @@ function applyStatus(data) {
   renderGithubInbox(renderState.githubInbox);
   renderState.hotspots = buildInteractiveHotspots();
   updateSceneDetailCard();
+  window.dispatchEvent(new CustomEvent("rei-status-updated", { detail: data }));
 }
 
 async function refreshGithubInbox() {
@@ -3542,12 +3551,7 @@ function collectActorDrawables(drawables, actors, agentStates, primaryActorId, f
   actors.forEach((actor, index) => {
     let spawn = agentSpawnState.get(actor.id);
     if (!spawn) {
-      spawn = {
-        releaseFrame: frame + index * SPAWN_STAGGER_FRAMES,
-        entering: true,
-        burstDone: false,
-        labelIndex: index
-      };
+      spawn = petSpawnState({ frame, index, staggerFrames: SPAWN_STAGGER_FRAMES });
       agentSpawnState.set(actor.id, spawn);
       actor.x = DOOR_ENTRY.x;
       actor.y = DOOR_ENTRY.y;
@@ -3947,6 +3951,30 @@ function petRoleLabel(actorId, agent = {}) {
 
 function visibleAgentStates() {
   return petOverlayAgents(renderState.statusFresh ? renderState.data : null, VISUAL_CAST);
+}
+
+function syncPetGardenActorsToStatus() {
+  if (!renderState.petGardenEnabled || !renderState.statusFresh) return;
+
+  const agents = visibleAgentStates();
+  renderState.actors = stepCrewActors(renderState.actors, {
+    frame: renderState.frame,
+    status: renderState.status,
+    focusZone: renderState.data.room?.focus_zone || "lab",
+    roomPhase: renderState.data.room?.phase || "standby",
+    agents,
+    scene: renderState.data.scene || {},
+    zones: renderState.zones,
+    snapToRoute: true
+  });
+  agents.forEach((agent, index) => {
+    agentSpawnState.set(agent.id, petSpawnState({
+      frame: renderState.frame,
+      index,
+      staggerFrames: SPAWN_STAGGER_FRAMES,
+      synced: true
+    }));
+  });
 }
 
 function renderPetGardenRoster() {

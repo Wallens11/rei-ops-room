@@ -1,6 +1,7 @@
 import {
   PET_ATLAS,
   petAgentStatusLabel,
+  petAmbientRoamingAllowed,
   petFrameAt,
   petLabelBox,
   petOverlayAgents,
@@ -62,16 +63,19 @@ function postNativeMessage(message) {
 }
 
 function syncSquadCount() {
-  const count = Math.max(1, visibleAgents().length);
+  const agents = visibleAgents();
+  const count = Math.max(1, agents.length);
   const demo = state.status?.demo === true;
+  const roamingAllowed = Boolean(state.status) && petAmbientRoamingAllowed(agents);
   if (
     state.reportedSquadState?.count === count &&
-    state.reportedSquadState?.demo === demo
+    state.reportedSquadState?.demo === demo &&
+    state.reportedSquadState?.roamingAllowed === roamingAllowed
   ) {
     return;
   }
-  state.reportedSquadState = { count, demo };
-  postNativeMessage({ action: "setSquadCount", count, demo });
+  state.reportedSquadState = { count, demo, roamingAllowed };
+  postNativeMessage({ action: "setSquadCount", count, demo, roamingAllowed });
 }
 
 function setReaction(kind) {

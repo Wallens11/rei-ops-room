@@ -25,6 +25,7 @@ const WORKING_ACTIVITIES = new Set(["coding", "debugging", "executing", "running
 const REVIEW_ACTIVITIES = new Set(["reading", "reviewing", "summarizing", "completed", "done"]);
 const MOVING_ACTIVITIES = new Set(["moving"]);
 const REACTION_ACTIVITIES = new Set(["waving", "jumping"]);
+const AMBIENT_ROAM_ACTIVITIES = new Set(["idle", "waiting"]);
 const HIDDEN_JOB_STATUSES = new Set(["stale", "unknown"]);
 const PET_ROLE_LABELS = Object.freeze({
   lead: "Reiko",
@@ -59,6 +60,11 @@ export function petRoamingState({
     active: Boolean(enabled) && !expanded && !reducedMotion,
     facing: Number(direction) < 0 ? -1 : 1
   };
+}
+
+export function petAmbientRoamingAllowed(agents = []) {
+  if (!Array.isArray(agents) || agents.length !== 1) return false;
+  return AMBIENT_ROAM_ACTIVITIES.has(normalizeActivity(agents[0]?.activity));
 }
 
 export function petLabelBox({
@@ -96,6 +102,24 @@ export function petLabelBox({
 export function petSpawnLabelOffset({ entering = false, index = 0 } = {}) {
   if (!entering) return 0;
   return Math.max(0, Math.floor(Number(index) || 0) % 3) * 14;
+}
+
+export function petSpawnState({
+  frame = 0,
+  index = 0,
+  staggerFrames = 7,
+  synced = false
+} = {}) {
+  const safeFrame = Math.max(0, Math.floor(Number(frame) || 0));
+  const safeIndex = Math.max(0, Math.floor(Number(index) || 0));
+  const safeStagger = Math.max(0, Math.floor(Number(staggerFrames) || 0));
+
+  return {
+    releaseFrame: synced ? safeFrame : safeFrame + safeIndex * safeStagger,
+    entering: !synced,
+    burstDone: Boolean(synced),
+    labelIndex: safeIndex
+  };
 }
 
 export function petSpotlightAgent(agents = []) {
@@ -160,6 +184,7 @@ export function petOverlayAgents(status = {}, visualCast = []) {
   const realJobs = (Array.isArray(agentJobs) ? agentJobs : [])
     .filter((job) => job?.id && !HIDDEN_JOB_STATUSES.has(normalizeActivity(job.status)));
   const rootActivity = rootOverlayActivity(status);
+  const leadRuntimeActivity = normalizeActivity(runtimeById.get("lead")?.activity);
   const lead = {
     ...(castById.get("lead") || {}),
     ...(runtimeById.get("lead") || {}),
@@ -167,7 +192,7 @@ export function petOverlayAgents(status = {}, visualCast = []) {
     display_name: "Reiko",
     role_label: "Reiko",
     activity: realJobs.length > 0
-      ? runtimeById.get("lead")?.activity || "reading"
+      ? FAILED_ACTIVITIES.has(leadRuntimeActivity) ? leadRuntimeActivity : "reading"
       : rootActivity,
     status_label: rootOverlayStatusLabel(status, realJobs.length > 0)
   };
@@ -252,9 +277,13 @@ export function petGardenActiveStatus(agents = [], { demo = false } = {}) {
     return `Agent Garden active. ${count} simulated Safe Demo agents are shown.`;
   }
   if (count === 1) {
-    return "Agent Garden active. Reiko reflects the live task state.";
+    const statusLabel = petAgentStatusLabel(agents[0]);
+    return `Agent Garden active. Solo mode: Reiko is ${statusLabel}; no sub-agents are running.`;
   }
-  return `Agent Garden active. ${count} animated Reiko pets reflect real agent jobs.`;
+  const taskAgentCount = Math.max(0, count - 1);
+  const agentNoun = taskAgentCount === 1 ? "agent" : "agents";
+  const verb = taskAgentCount === 1 ? "is" : "are";
+  return `Agent Garden active. Multi-agent mode: Reiko plus ${taskAgentCount} task ${agentNoun} ${verb} shown from runtime jobs.`;
 }
 
 export function petAgentStatusLabel(agent = {}, animationState = "idle") {

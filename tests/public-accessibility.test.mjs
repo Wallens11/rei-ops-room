@@ -5,6 +5,7 @@ import fs from "node:fs/promises";
 const indexUrl = new URL("../public/index.html", import.meta.url);
 const stylesUrl = new URL("../public/styles.css", import.meta.url);
 const appUrl = new URL("../public/app.js", import.meta.url);
+const reiSmartUrl = new URL("../public/rei-smart.js", import.meta.url);
 const petOverlayHtmlUrl = new URL("../public/pet-overlay.html", import.meta.url);
 const petOverlayScriptUrl = new URL("../public/pet-overlay.js", import.meta.url);
 const petOverlaySwiftUrl = new URL("../tools/reiko-pet-overlay.swift", import.meta.url);
@@ -81,6 +82,7 @@ test("desktop pet overlay announces compact and squad states and drops stale tra
   assert.match(script, /context\.measureText\(label\)\.width/);
   assert.match(script, /petOverlayModeForWidth\(/);
   assert.match(script, /petRoamingState\(/);
+  assert.match(script, /petAmbientRoamingAllowed\(agents\)/);
   assert.match(script, /petSpotlightAgent\(/);
   assert.match(script, /petOverlayAgents\(/);
   assert.match(script, /petVisualState\(/);
@@ -97,7 +99,10 @@ test("desktop pet overlay announces compact and squad states and drops stale tra
   assert.doesNotMatch(script, /laptop:\s*"typing"/);
   assert.doesNotMatch(script, /coffee:\s*"paused"/);
   assert.match(script, /postMessage\("ready"\)/);
-  assert.match(script, /action:\s*"setSquadCount",\s*count,\s*demo\s*\}/);
+  assert.match(
+    script,
+    /action:\s*"setSquadCount",\s*count,\s*demo,\s*roamingAllowed\s*\}/
+  );
 });
 
 test("main Agent Garden marks transport failures stale instead of animating the last payload", async () => {
@@ -107,6 +112,17 @@ test("main Agent Garden marks transport failures stale instead of animating the 
   assert.match(app, /function visibleAgentStates\(/);
   assert.match(app, /renderState\.statusFresh = false/);
   assert.match(app, /Agent Garden offline\. Last live agent state was cleared\./);
+});
+
+test("smart digest follows live room status instead of waiting for its slow polling cycle", async () => {
+  const [app, smart] = await Promise.all([
+    fs.readFile(appUrl, "utf8"),
+    fs.readFile(reiSmartUrl, "utf8")
+  ]);
+
+  assert.match(app, /dispatchEvent\(new CustomEvent\("rei-status-updated"/);
+  assert.match(smart, /addEventListener\("rei-status-updated"/);
+  assert.match(smart, /digestState\.status = event\.detail/);
 });
 
 test("native pet overlay is compact, draggable, expandable, and restores a safe position", async () => {
@@ -141,6 +157,9 @@ test("native pet overlay is compact, draggable, expandable, and restores a safe 
   assert.match(swift, /accessibilityLabel:\s*"Show Reiko agents"/);
   assert.match(swift, /private var isSafeDemo = false/);
   assert.match(swift, /payload\["demo"\] as\? Bool/);
+  assert.match(swift, /payload\["roamingAllowed"\] as\? Bool/);
+  assert.match(swift, /runtimeRoamingAllowed/);
+  assert.match(swift, /Roaming paused while Reiko works/);
   assert.match(swift, /isSafeDemo \? "simulated" : "live"/);
   assert.match(swift, /button\.setAccessibilityLabel\(accessibilityLabel\)/);
   assert.match(swift, /didFailProvisionalNavigation/);

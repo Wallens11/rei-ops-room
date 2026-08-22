@@ -84,6 +84,13 @@ const digestText = $("smart-digest-text");
 const digestSync = $("smart-digest-sync");
 
 let issueCache = [];
+const digestState = {
+  status: null,
+  metrics: null,
+  costs: null,
+  issues: null,
+  queue: []
+};
 
 function plural(n, word) {
   return `${n} ${word}${n === 1 ? "" : "s"}`;
@@ -125,6 +132,24 @@ function composeDigest({ status, metrics, costs, issues, queue }) {
   return bits.join(" · ") + ".";
 }
 
+function renderDigest({ markSynced = false } = {}) {
+  if (digestText) {
+    digestText.innerHTML = composeDigest(digestState);
+  }
+  if (markSynced && digestSync) {
+    digestSync.textContent = `synced ${new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`;
+  }
+
+  setTabBadge(
+    "mission",
+    (digestState.issues?.summary?.todo ?? 0) + (digestState.issues?.summary?.blocked ?? 0)
+  );
+  setTabBadge(
+    "activity",
+    digestState.queue.filter((task) => task.status === "running").length
+  );
+}
+
 async function refreshDigest() {
   const [status, metrics, costs, issues, queueData] = await Promise.all([
     fetchJson("/api/status"),
@@ -137,16 +162,19 @@ async function refreshDigest() {
   const queue = queueData?.tasks || [];
   if (Array.isArray(issues?.issues)) issueCache = issues.issues;
 
-  if (digestText) {
-    digestText.innerHTML = composeDigest({ status, metrics, costs, issues, queue });
-  }
-  if (digestSync) {
-    digestSync.textContent = `synced ${new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`;
-  }
-
-  setTabBadge("mission", (issues?.summary?.todo ?? 0) + (issues?.summary?.blocked ?? 0));
-  setTabBadge("activity", (queue || []).filter((t) => t.status === "running").length);
+  digestState.status = status;
+  digestState.metrics = metrics;
+  digestState.costs = costs;
+  digestState.issues = issues;
+  digestState.queue = queue;
+  renderDigest({ markSynced: true });
 }
+
+window.addEventListener("rei-status-updated", (event) => {
+  if (!event.detail) return;
+  digestState.status = event.detail;
+  renderDigest();
+});
 
 refreshDigest();
 setInterval(refreshDigest, REFRESH_MS);
